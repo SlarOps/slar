@@ -1,0 +1,17 @@
+{
+  "indexed_sources": [
+    {
+      "id": "2fa582c75c89",
+      "url": "https://github.com/vanchonlee/dns-proxy/blob/main/README.md",
+      "branch": "main",
+      "source_type": "github_file",
+      "indexed_at": "2025-09-21T19:28:32.977751",
+      "user_id": "5a22f755-bf7f-4a17-8e19-a84d0e42e824",
+      "files_processed": 1,
+      "chunks_indexed": 3,
+      "status": "active"
+    }
+  ],
+  "last_reindex": "2025-09-21T19:28:32.977764",
+  "total_sources": 1
+}

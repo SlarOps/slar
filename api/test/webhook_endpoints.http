@@ -1,0 +1,200 @@
+### Test Webhook Endpoints
+### These endpoints receive alerts from external monitoring systems
+
+# Test Prometheus AlertManager webhook
+POST http://localhost:8080/webhook/prometheus/0017ccd0-efd0-4a75-b032-5e8ccdfb1c2f
+Content-Type: application/json
+
+{
+  "receiver": "slar-webhook",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighCPUUsage",
+        "instance": "prod-web-server-01:9100",
+        "job": "node-exporter",
+        "severity": "critical",
+        "service": "web-frontend",
+        "environment": "production",
+        "region": "us-east-1",
+        "availability_zone": "us-east-1a",
+        "team": "platform",
+        "application": "ecommerce-frontend",
+        "cluster": "prod-k8s-cluster",
+        "namespace": "default",
+        "pod": "web-frontend-deployment-7d8f9c6b5d-x4m2p",
+        "container": "nginx",
+        "node": "ip-10-0-1-45.ec2.internal"
+      },
+      "annotations": {
+        "summary": "Critical CPU usage detected on production web server 3",
+        "description": "CPU usage has been consistently above 90% for the past 8 minutes on prod-web-server-01. Current usage: 94.7%. This may impact user experience and cause service degradation. Immediate investigation required.",
+        "runbook_url": "https://wiki.company.com/runbooks/high-cpu-usage",
+        "dashboard_url": "https://grafana.company.com/d/node-exporter/node-exporter?var-instance=prod-web-server-01:9100",
+        "impact": "High - May cause slow response times and potential service unavailability",
+        "suggested_actions": "1. Check for resource-intensive processes 2. Scale horizontally if needed 3. Investigate memory leaks 4. Review recent deployments",
+        "escalation_policy": "Page SRE team if not resolved within 15 minutes",
+        "business_impact": "Customer checkout process may be affected, potential revenue loss",
+        "affected_users": "~5000 active users on this server instance"
+      },
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph?g0.expr=100%20-%20(avg%20by%20(instance)%20(rate(node_cpu_seconds_total%7Bmode%3D%22idle%22%7D%5B5m%5D))%20*%20100)%20%3E%2090",
+      "fingerprint": "7c7c4ce9f8a2b1d"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "HighCPUUsage",
+    "instance": "prod-web-server-01:9100",
+    "service": "web-frontend"
+  },
+  "commonLabels": {
+    "environment": "production",
+    "region": "us-east-1",
+    "team": "platform",
+    "service": "web-frontend",
+    "instance": "prod-web-server-01:9100"
+  },
+  "commonAnnotations": {
+    "runbook_base_url": "https://wiki.company.com/runbooks/",
+    "escalation_contact": "sre-team@company.com",
+    "incident_commander": "john.doe@company.com"
+  },
+  "externalURL": "http://alertmanager-prod.company.com:9093",
+  "version": "4",
+  "groupKey": "{environment=\"production\", service=\"web-frontend\"}:{alertname=\"HighCPUUsage\", instance=\"prod-web-server-01:9100\"}"
+}
+
+###
+
+# Test Datadog webhook
+POST http://localhost:8080/webhook/datadog/8ff29deb-5361-4c99-aaa1-fc39abafad24
+Content-Type: application/json
+
+{
+  "alert_name": "High Memory Usage",
+  "alert_transition": "triggered",
+  "priority": "P1",
+  "body": "Memory usage is critically high on production servers",
+  "title": "Memory Alert - Production Environment",
+  "link": "https://app.datadoghq.com/monitors/12345",
+  "org_name": "MyCompany",
+  "tags": ["env:production", "service:web-server"],
+  "date": "2024-01-15T10:30:00.000Z"
+}
+
+###
+
+# Test Grafana webhook
+POST http://localhost:8080/webhook/grafana/550e8400-e29b-41d4-a716-446655440002
+Content-Type: application/json
+
+{
+  "dashboardId": 1,
+  "evalMatches": [
+    {
+      "value": 95.5,
+      "metric": "cpu_usage",
+      "tags": {
+        "host": "server-01"
+      }
+    }
+  ],
+  "imageUrl": "https://grafana.example.com/render/d-solo/...",
+  "message": "CPU usage alert triggered",
+  "orgId": 1,
+  "panelId": 2,
+  "ruleId": 1,
+  "ruleName": "CPU Usage Alert",
+  "ruleUrl": "https://grafana.example.com/alerting/list",
+  "state": "alerting",
+  "tags": {
+    "environment": "production"
+  },
+  "title": "Grafana Alert - CPU Usage"
+}
+
+###
+
+# Test AWS CloudWatch webhook (via SNS)
+POST http://localhost:8080/webhook/aws/550e8400-e29b-41d4-a716-446655440003
+Content-Type: application/json
+
+{
+  "Type": "Notification",
+  "MessageId": "12345678-1234-1234-1234-123456789012",
+  "TopicArn": "arn:aws:sns:us-east-1:123456789012:cloudwatch-alarms",
+  "Subject": "ALARM: \"HighCPUUtilization\" in US East (N. Virginia)",
+  "Message": "{\"AlarmName\":\"HighCPUUtilization\",\"AlarmDescription\":\"Alarm when server CPU exceeds 80%\",\"AWSAccountId\":\"123456789012\",\"NewStateValue\":\"ALARM\",\"NewStateReason\":\"Threshold Crossed: 1 out of the last 1 datapoints [85.0 (15/01/24 10:30:00)] was greater than the threshold (80.0).\",\"StateChangeTime\":\"2024-01-15T10:30:00.000+0000\",\"Region\":\"US East (N. Virginia)\",\"AlarmArn\":\"arn:aws:cloudwatch:us-east-1:123456789012:alarm:HighCPUUtilization\",\"OldStateValue\":\"OK\",\"Trigger\":{\"MetricName\":\"CPUUtilization\",\"Namespace\":\"AWS/EC2\",\"StatisticType\":\"Statistic\",\"Statistic\":\"AVERAGE\",\"Unit\":null,\"Dimensions\":[{\"value\":\"i-1234567890abcdef0\",\"name\":\"InstanceId\"}],\"Period\":300,\"EvaluationPeriods\":1,\"ComparisonOperator\":\"GreaterThanThreshold\",\"Threshold\":80.0,\"TreatMissingData\":\"\",\"EvaluateLowSampleCountPercentile\":\"\"}}",
+  "Timestamp": "2024-01-15T10:30:00.000Z"
+}
+
+###
+
+# Test Generic webhook
+POST http://localhost:8080/webhook/webhook/550e8400-e29b-41d4-a716-446655440004
+Content-Type: application/json
+
+{
+  "alert_name": "Custom Alert",
+  "severity": "warning",
+  "status": "firing",
+  "summary": "Custom monitoring system detected an issue",
+  "description": "Detailed description of the custom alert",
+  "labels": {
+    "service": "api-server",
+    "environment": "production",
+    "team": "backend"
+  },
+  "annotations": {
+    "runbook_url": "https://wiki.example.com/runbooks/api-server",
+    "dashboard_url": "https://monitoring.example.com/dashboard/api"
+  }
+}
+
+###
+
+# Test webhook with invalid integration ID (should return 404)
+POST http://localhost:8080/webhook/prometheus/invalid-integration-id
+Content-Type: application/json
+
+{
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "TestAlert"
+      }
+    }
+  ]
+}
+
+###
+
+# Test webhook with mismatched type (should return 400)
+POST http://localhost:8080/webhook/datadog/550e8400-e29b-41d4-a716-446655440000
+Content-Type: application/json
+
+{
+  "alert_name": "Test Alert"
+}
+
+###
+
+# Test webhook with inactive integration
+# First create an inactive integration, then test
+POST http://localhost:8080/webhook/prometheus/inactive-integration-id
+Content-Type: application/json
+
+{
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "TestAlert"
+      }
+    }
+  ]
+}

@@ -1,0 +1,202 @@
+### Variables
+@baseUrl = http://localhost:8080
+@authToken = your_supabase_jwt_token_here
+@apiKey = your_api_key_here
+
+### 1. First, get list of incidents to find the incident ID
+GET {{baseUrl}}/incidents
+Authorization: Bearer {{authToken}}
+
+### 2. Resolve incident via API (Method 1 - Recommended)
+# Replace {incident_id} with actual incident ID from step 1
+POST {{baseUrl}}/incidents/{incident_id}/resolve
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "note": "CPU usage has returned to normal levels after scaling horizontally and optimizing processes",
+  "resolution": "1. Scaled web-frontend deployment from 3 to 5 replicas\n2. Identified and killed resource-intensive background process\n3. Optimized database queries causing high CPU\n4. Implemented CPU monitoring alerts for early detection"
+}
+
+### 3. Resolve incident via Webhook (Method 2 - PagerDuty style)
+POST {{baseUrl}}/webhooks/incident
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "routing_key": "web-frontend-service",
+  "event_action": "resolve",
+  "dedup_key": "high-cpu-usage-prod-web-server-01-2024-01-15",
+  "payload": {
+    "summary": "High CPU usage resolved on prod-web-server-01",
+    "source": "monitoring-system",
+    "severity": "info",
+    "custom_details": {
+      "resolution_method": "horizontal_scaling_and_optimization",
+      "resolved_by": "sre_team",
+      "resolution_time": "15_minutes"
+    }
+  }
+}
+
+### 4. Send resolved alert via Prometheus webhook (Method 3)
+POST {{baseUrl}}/webhook/prometheus/0017ccd0-efd0-4a75-b032-5e8ccdfb1c2f
+Content-Type: application/json
+
+{
+  "receiver": "slar-webhook",
+  "status": "resolved",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "HighCPUUsage",
+        "instance": "prod-web-server-01:9100",
+        "job": "node-exporter",
+        "severity": "critical",
+        "service": "web-frontend",
+        "environment": "production",
+        "region": "us-east-1",
+        "availability_zone": "us-east-1a",
+        "team": "platform",
+        "application": "ecommerce-frontend",
+        "cluster": "prod-k8s-cluster",
+        "namespace": "default",
+        "pod": "web-frontend-deployment-7d8f9c6b5d-x4m2p",
+        "container": "nginx",
+        "node": "ip-10-0-1-45.ec2.internal"
+      },
+      "annotations": {
+        "summary": "Critical CPU usage resolved on production web server 3",
+        "description": "CPU usage has returned to normal levels (below 70%) after implementing scaling and optimization measures. System is now stable.",
+        "runbook_url": "https://wiki.company.com/runbooks/high-cpu-usage",
+        "dashboard_url": "https://grafana.company.com/d/node-exporter/node-exporter?var-instance=prod-web-server-01:9100",
+        "resolution_summary": "Scaled horizontally and optimized resource-intensive processes",
+        "current_cpu_usage": "45.2%",
+        "resolution_time": "15 minutes"
+      },
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "endsAt": "2024-01-15T10:45:00.000Z",
+      "generatorURL": "http://prometheus:9090/graph?g0.expr=100%20-%20(avg%20by%20(instance)%20(rate(node_cpu_seconds_total%7Bmode%3D%22idle%22%7D%5B5m%5D))%20*%20100)%20%3C%2070",
+      "fingerprint": "7c7c4ce9f8a2b1d"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "HighCPUUsage",
+    "instance": "prod-web-server-01:9100",
+    "service": "web-frontend"
+  },
+  "commonLabels": {
+    "environment": "production",
+    "region": "us-east-1",
+    "team": "platform",
+    "service": "web-frontend",
+    "instance": "prod-web-server-01:9100"
+  },
+  "commonAnnotations": {
+    "runbook_base_url": "https://wiki.company.com/runbooks/",
+    "escalation_contact": "sre-team@company.com",
+    "incident_commander": "john.doe@company.com"
+  },
+  "externalURL": "http://alertmanager-prod.company.com:9093",
+  "version": "4",
+  "groupKey": "{environment=\"production\", service=\"web-frontend\"}:{alertname=\"HighCPUUsage\", instance=\"prod-web-server-01:9100\"}"
+}
+
+### 5. Test Prometheus Auto-Resolution with Correct Fingerprint Handling
+### First create a firing alert, then send resolved alert to test auto-resolution
+
+### 5a. Create firing alert (should create new incident with fingerprint)
+POST {{baseUrl}}/webhook/prometheus/0017ccd0-efd0-4a75-b032-5e8ccdfb1c2f
+Content-Type: application/json
+
+{
+  "receiver": "slar-webhook",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "TestAutoResolve",
+        "instance": "test-server-01:9100",
+        "job": "node-exporter",
+        "severity": "critical",
+        "service": "test-service"
+      },
+      "annotations": {
+        "summary": "Test alert for auto-resolution",
+        "description": "This is a test alert to verify auto-resolution works correctly"
+      },
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph",
+      "fingerprint": "test-fingerprint-12345"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "TestAutoResolve"
+  },
+  "commonLabels": {
+    "alertname": "TestAutoResolve",
+    "instance": "test-server-01:9100"
+  },
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "groupKey": "{alertname=\"TestAutoResolve\"}"
+}
+
+### 5b. Send resolved alert (should resolve the incident created above)
+POST {{baseUrl}}/webhook/prometheus/0017ccd0-efd0-4a75-b032-5e8ccdfb1c2f
+Content-Type: application/json
+
+{
+  "receiver": "slar-webhook",
+  "status": "resolved",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "TestAutoResolve",
+        "instance": "test-server-01:9100",
+        "job": "node-exporter",
+        "severity": "critical",
+        "service": "test-service"
+      },
+      "annotations": {
+        "summary": "Test alert resolved",
+        "description": "Test alert has been resolved automatically"
+      },
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "endsAt": "2024-01-15T10:35:00.000Z",
+      "generatorURL": "http://prometheus:9090/graph",
+      "fingerprint": "test-fingerprint-12345"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "TestAutoResolve"
+  },
+  "commonLabels": {
+    "alertname": "TestAutoResolve",
+    "instance": "test-server-01:9100"
+  },
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "groupKey": "{alertname=\"TestAutoResolve\"}"
+}
+
+### 5. Acknowledge incident first (if needed)
+POST {{baseUrl}}/incidents/{incident_id}/acknowledge
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "note": "Investigating high CPU usage. Scaling deployment and checking for resource-intensive processes."
+}
+
+### 6. Check incident status after resolution
+GET {{baseUrl}}/incidents/{incident_id}
+Authorization: Bearer {{authToken}}
+
+### 7. Get incident events/timeline
+GET {{baseUrl}}/incidents/{incident_id}/events
+Authorization: Bearer {{authToken}}

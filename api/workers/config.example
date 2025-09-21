@@ -1,0 +1,36 @@
+# Slack Worker Configuration
+# Copy this file to .env and configure with your actual values
+
+# ===== SLACK CONFIGURATION =====
+# Get these from https://api.slack.com/apps
+# Create a new Slack app and get the tokens from:
+# - OAuth & Permissions page (Bot User OAuth Token)
+# - App-Level Tokens page (App-Level Token with connections:write scope)
+
+SLACK_BOT_TOKEN=<your-slack-bot-token>
+SLACK_APP_TOKEN=<your-slack-app-token>
+
+# ===== DATABASE CONFIGURATION =====
+# PostgreSQL connection URL with PGMQ extension enabled
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/slar
+
+# ===== API CONFIGURATION =====
+# Base URL for your SLAR API (used for incident links in Slack messages)
+API_BASE_URL=http://localhost:8080
+
+# ===== WORKER CONFIGURATION =====
+# How often to poll PGMQ for new messages (seconds)
+POLL_INTERVAL=1
+
+# Maximum number of messages to process in each batch
+BATCH_SIZE=10
+
+# Maximum retry attempts for failed notifications
+MAX_RETRIES=3
+
+# ===== LOGGING CONFIGURATION =====
+# Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+LOG_LEVEL=INFO
+
+# Log file location (optional, defaults to slack_worker.log)
+LOG_FILE=slack_worker.log

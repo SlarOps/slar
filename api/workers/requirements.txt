@@ -1,0 +1,22 @@
+# Slack Worker Dependencies
+# Core Slack integration
+slack_bolt>=1.18.0
+slack_sdk>=3.23.0
+
+# Database connectivity
+psycopg2-binary>=2.9.7
+
+# HTTP requests and JSON handling
+requests>=2.31.0
+
+# Async support
+asyncio>=3.4.3
+
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# Development dependencies (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+black>=23.7.0
+flake8>=6.0.0

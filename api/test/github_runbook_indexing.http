@@ -1,0 +1,128 @@
+### Test GitHub Runbook Indexing
+### These endpoints test the GitHub runbook indexing functionality
+
+# Make sure the AI service is running: cd api/ai && python main.py
+# The service should be running on http://localhost:8002
+
+###
+
+# 1. Test API connection
+GET http://localhost:8002/history
+Accept: application/json
+
+###
+
+# 2. Test indexing from a specific GitHub markdown file
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/kubernetes/website/blob/main/content/en/docs/tasks/debug-application-cluster/debug-running-pod.md",
+  "user_id": "test-user",
+  "branch": "main"
+}
+
+###
+
+# 3. Test indexing from a GitHub repository (will index all .md files)
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/your-org/runbooks",
+  "user_id": "test-user",
+  "branch": "main"
+}
+
+###
+
+# 4. Test indexing from a public runbook repository
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/etsy/runbook-template/blob/master/runbook-template.md",
+  "user_id": "test-user",
+  "branch": "master"
+}
+
+###
+
+# 5. Test with invalid GitHub URL (should fail)
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://gitlab.com/some-repo/runbooks",
+  "user_id": "test-user"
+}
+
+###
+
+# 6. Test with non-existent repository (should fail)
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/non-existent-user/non-existent-repo",
+  "user_id": "test-user"
+}
+
+###
+
+# 7. After indexing, test runbook retrieval with Kubernetes-related incident
+POST http://localhost:8002/runbook/retrieve
+Content-Type: application/json
+
+{
+  "incident_id": "k8s-debug-001",
+  "incident_title": "Pod stuck in CrashLoopBackOff state",
+  "incident_description": "Kubernetes pod is failing to start and stuck in CrashLoopBackOff. Need to debug the running pod and check container logs.",
+  "severity": "high",
+  "keywords": ["kubernetes", "pod", "debug", "crashloopbackoff", "container"]
+}
+
+###
+
+# 8. Test retrieval with general debugging incident
+POST http://localhost:8002/runbook/retrieve
+Content-Type: application/json
+
+{
+  "incident_id": "debug-001",
+  "incident_title": "Application debugging required",
+  "incident_description": "Need to debug application issues and check logs for troubleshooting",
+  "severity": "medium",
+  "keywords": ["debug", "troubleshooting", "logs", "application"]
+}
+
+###
+
+# 9. Reindex all runbooks (including GitHub content)
+POST http://localhost:8002/runbook/reindex
+Content-Type: application/json
+
+###
+
+# 10. Test runbook retrieval system
+GET http://localhost:8002/runbook/test
+Accept: application/json
+
+###
+
+# Example GitHub URLs for testing:
+
+# Public Kubernetes documentation:
+# https://github.com/kubernetes/website/blob/main/content/en/docs/tasks/debug-application-cluster/debug-running-pod.md
+
+# SRE runbook examples:
+# https://github.com/etsy/runbook-template/blob/master/runbook-template.md
+
+# Incident response runbooks:
+# https://github.com/monzo/response/blob/master/docs/runbooks/
+
+# Your own organization's runbooks:
+# https://github.com/your-org/runbooks
+# https://github.com/your-org/sre-docs/tree/main/runbooks
+
+###

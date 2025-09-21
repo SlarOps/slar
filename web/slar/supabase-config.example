@@ -1,0 +1,24 @@
+# Supabase Configuration for SLAR Web App
+# Copy this file to .env.local and update with your actual values
+
+# Supabase Project Configuration
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+
+# API Configuration
+NEXT_PUBLIC_API_URL=http://localhost:8080
+
+# App Configuration
+NEXT_PUBLIC_APP_NAME=SLAR
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+# Instructions:
+# 1. Go to https://supabase.com and create a new project
+# 2. Copy your project URL and anon key from the project settings
+# 3. Replace the values above with your actual Supabase credentials
+# 4. Rename this file to .env.local
+# 5. Set up authentication in your Supabase project:
+#    - Go to Authentication -> Settings
+#    - Configure your site URL: http://localhost:3000
+#    - Enable email auth provider
+#    - Optionally enable other providers (Google, GitHub, etc.)

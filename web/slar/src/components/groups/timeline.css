@@ -1,0 +1,13 @@
+
+.vis-grid.vis-today {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.dark .vis-grid.vis-today {
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+.vis-timeline {
+  border-radius: 5px;
+}
+

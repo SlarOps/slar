@@ -1,0 +1,31 @@
+{
+  "name": "slar",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.7",
+    "@heroicons/react": "^2.2.0",
+    "@supabase/supabase-js": "^2.55.0",
+    "highlight.js": "^11.11.1",
+    "next": "15.5.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-hot-toast": "^2.6.0",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^15.6.6",
+    "rehype-highlight": "^7.0.2",
+    "rehype-starry-night": "^2.2.0",
+    "remark-gfm": "^4.0.1",
+    "vis-data": "^8.0.1",
+    "vis-timeline": "^8.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "tailwindcss": "^4"
+  }
+}

@@ -1,0 +1,113 @@
+### Test Reindex System
+### These endpoints test the JSON-based reindex functionality
+
+# Make sure the AI service is running: cd api/ai && python main.py
+# The service should be running on http://localhost:8002
+
+###
+
+# 1. Test API connection
+GET http://localhost:8002/history
+Accept: application/json
+
+###
+
+# 2. Index a GitHub file (this will save to JSON)
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/kubernetes/website/blob/main/content/en/docs/tasks/debug-application-cluster/debug-running-pod.md",
+  "user_id": "test-user",
+  "branch": "main"
+}
+
+###
+
+# 3. Index another GitHub repository (this will also save to JSON)
+POST http://localhost:8002/runbook/index-github
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/etsy/runbook-template",
+  "user_id": "test-user",
+  "branch": "master"
+}
+
+###
+
+# 4. List all indexed sources (from JSON file)
+GET http://localhost:8002/runbook/sources
+Accept: application/json
+
+###
+
+# 5. Get document statistics
+GET http://localhost:8002/runbook/stats
+Accept: application/json
+
+###
+
+# 6. List all documents (should show grouped documents)
+GET http://localhost:8002/runbook/list-documents
+Accept: application/json
+
+###
+
+# 7. REINDEX ALL - This will:
+#    - Read sources from JSON file
+#    - Clear all existing data from ChromaDB
+#    - Re-index all sources from JSON
+#    - Update JSON with new timestamps
+POST http://localhost:8002/runbook/reindex
+Content-Type: application/json
+
+###
+
+# 8. Verify reindex worked - check stats again
+GET http://localhost:8002/runbook/stats
+Accept: application/json
+
+###
+
+# 9. Verify reindex worked - list documents again
+GET http://localhost:8002/runbook/list-documents
+Accept: application/json
+
+###
+
+# 10. Test runbook retrieval after reindex
+POST http://localhost:8002/runbook/retrieve
+Content-Type: application/json
+
+{
+  "incident_id": "test-reindex-001",
+  "incident_title": "Pod stuck in CrashLoopBackOff",
+  "incident_description": "Kubernetes pod failing to start with container restart loop",
+  "severity": "high",
+  "keywords": ["kubernetes", "pod", "debug", "crashloop"]
+}
+
+###
+
+# 11. Remove a source from tracking (optional)
+# Replace {source_id} with actual ID from step 4
+# DELETE http://localhost:8002/runbook/sources/{source_id}
+
+###
+
+# Expected Flow:
+# 1. Index some GitHub sources (steps 2-3) -> Sources saved to indexed_sources.json
+# 2. List sources (step 4) -> Should show sources from JSON
+# 3. Reindex (step 7) -> Should clear ChromaDB and re-index from JSON
+# 4. Verify (steps 8-10) -> Should show same data but with new timestamps
+
+###
+
+# Notes:
+# - The indexed_sources.json file will be created in api/ai/ directory
+# - Each index operation saves source info to JSON for future reindex
+# - Reindex clears ALL data and rebuilds from JSON sources
+# - No duplicate data after reindex because collection is cleared first
+
+###

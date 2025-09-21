@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule Transformer Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-title {
+            color: #2563eb;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .result {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .success { border-left: 4px solid #10b981; }
+        .error { border-left: 4px solid #ef4444; }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Schedule Transformer Test Suite</h1>
+    <p>This page tests the updated <code>transformScheduleDataWithRotation</code> function with yearly rotation generation.</p>
+
+    <div class="test-section">
+        <h2 class="test-title">📅 Test 1: Yearly Rotation (52 weeks)</h2>
+        <button onclick="testYearlyRotation()">Run Test</button>
+        <div id="yearly-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2 class="test-title">📅 Test 2: Quarterly Rotation (12 weeks)</h2>
+        <button onclick="testQuarterlyRotation()">Run Test</button>
+        <div id="quarterly-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2 class="test-title">📅 Test 3: Single Shift Per Member</h2>
+        <button onclick="testSingleShift()">Run Test</button>
+        <div id="single-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2 class="test-title">📅 Test 4: Daily Rotation (1 week)</h2>
+        <button onclick="testDailyRotation()">Run Test</button>
+        <div id="daily-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2 class="test-title">📅 Test 5: Custom Options</h2>
+        <button onclick="testCustomOptions()">Run Test</button>
+        <div id="custom-result" class="result"></div>
+    </div>
+
+    <script type="module">
+        // Import the functions (this will work in a Next.js environment)
+        // For standalone testing, we'll define simplified versions
+
+        // Simplified versions of the functions for testing
+        const getShiftDurationDays = (shiftLength) => {
+            switch (shiftLength) {
+                case 'one_day': return 1;
+                case 'one_week': return 7;
+                case 'two_weeks': return 14;
+                case 'one_month': return 30;
+                default: return 7;
+            }
+        };
+
+        const validateDateTimes = (startDateTime, endDateTime) => {
+            if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
+                throw new Error('Invalid date/time in schedule configuration');
+            }
+            if (endDateTime <= startDateTime) {
+                throw new Error('End time must be after start time');
+            }
+        };
+
+        const generateRotationShifts = (rotation, members, weeksAhead = 52) => {
+            const backendSchedules = [];
+            const shiftDurationDays = getShiftDurationDays(rotation.shiftLength);
+            const rotationStartDateTime = new Date(rotation.startDate + 'T' + rotation.startTime + ':00.000Z');
+            
+            const totalDays = weeksAhead * 7;
+            const totalShifts = Math.ceil(totalDays / shiftDurationDays);
+            
+            for (let shiftIndex = 0; shiftIndex < totalShifts; shiftIndex++) {
+                const memberIndex = shiftIndex % members.length;
+                const member = members[memberIndex];
+                
+                const shiftStartTime = new Date(rotationStartDateTime);
+                shiftStartTime.setDate(rotationStartDateTime.getDate() + (shiftIndex * shiftDurationDays));
+                
+                const shiftEndTime = new Date(shiftStartTime);
+                shiftEndTime.setDate(shiftStartTime.getDate() + shiftDurationDays);
+                
+                if (rotation.handoffTime) {
+                    const [handoffHours, handoffMinutes] = rotation.handoffTime.split(':');
+                    shiftEndTime.setHours(parseInt(handoffHours), parseInt(handoffMinutes), 0, 0);
+                }
+                
+                validateDateTimes(shiftStartTime, shiftEndTime);
+                
+                const backendSchedule = {
+                    user_id: member.user_id,
+                    schedule_type: 'custom',
+                    start_time: shiftStartTime.toISOString(),
+                    end_time: shiftEndTime.toISOString(),
+                    is_recurring: false,
+                    rotation_days: shiftDurationDays
+                };
+                
+                backendSchedules.push(backendSchedule);
+            }
+            
+            return backendSchedules;
+        };
+
+        const transformScheduleDataWithRotation = (scheduleData, options = {}) => {
+            if (!scheduleData.rotations || !scheduleData.members || 
+                scheduleData.rotations.length === 0 || scheduleData.members.length === 0) {
+                throw new Error('Please select members and configure schedule details');
+            }
+
+            const { weeksAhead = 52, generateYearlyShifts = true } = options;
+            const backendSchedules = [];
+
+            for (const rotation of scheduleData.rotations) {
+                if (generateYearlyShifts) {
+                    const yearlyShifts = generateRotationShifts(rotation, scheduleData.members, weeksAhead);
+                    backendSchedules.push(...yearlyShifts);
+                } else {
+                    // Legacy single shift per member logic would go here
+                    for (let memberIndex = 0; memberIndex < scheduleData.members.length; memberIndex++) {
+                        const member = scheduleData.members[memberIndex];
+                        const shiftDurationDays = getShiftDurationDays(rotation.shiftLength);
+                        const rotationStartDateTime = new Date(rotation.startDate + 'T' + rotation.startTime + ':00.000Z');
+                        
+                        const memberStartTime = new Date(rotationStartDateTime);
+                        memberStartTime.setDate(rotationStartDateTime.getDate() + (memberIndex * shiftDurationDays));
+                        
+                        const memberEndTime = new Date(memberStartTime);
+                        memberEndTime.setDate(memberStartTime.getDate() + shiftDurationDays);
+                        
+                        if (rotation.handoffTime) {
+                            const [handoffHours, handoffMinutes] = rotation.handoffTime.split(':');
+                            memberEndTime.setHours(parseInt(handoffHours), parseInt(handoffMinutes), 0, 0);
+                        }
+                        
+                        validateDateTimes(memberStartTime, memberEndTime);
+                        
+                        const backendSchedule = {
+                            user_id: member.user_id,
+                            schedule_type: 'custom',
+                            start_time: memberStartTime.toISOString(),
+                            end_time: memberEndTime.toISOString(),
+                            is_recurring: false,
+                            rotation_days: shiftDurationDays
+                        };
+                        
+                        backendSchedules.push(backendSchedule);
+                    }
+                }
+            }
+
+            return backendSchedules;
+        };
+
+        // Mock data
+        const mockMembers = [
+            { user_id: 'user-1', user_name: 'Alice' },
+            { user_id: 'user-2', user_name: 'Bob' },
+            { user_id: 'user-3', user_name: 'Charlie' }
+        ];
+
+        const mockRotation = {
+            id: 1,
+            name: 'Test Rotation',
+            shiftLength: 'one_week',
+            handoffTime: '09:00',
+            startDate: '2025-01-01',
+            startTime: '09:00',
+            hasEndDate: false,
+            endDate: '',
+            endTime: '23:59'
+        };
+
+        const mockScheduleData = {
+            rotations: [mockRotation],
+            members: mockMembers,
+            schedulerName: 'test-scheduler',
+            schedulerDisplayName: 'Test Scheduler'
+        };
+
+        // Test functions
+        window.testYearlyRotation = () => {
+            const resultDiv = document.getElementById('yearly-result');
+            try {
+                const yearlyShifts = transformScheduleDataWithRotation(mockScheduleData);
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `✅ Generated ${yearlyShifts.length} shifts for the year\n\nFirst 3 shifts:\n` +
+                    yearlyShifts.slice(0, 3).map((shift, index) => {
+                        const member = mockMembers.find(m => m.user_id === shift.user_id);
+                        return `${index + 1}. ${member.user_name}: ${shift.start_time} → ${shift.end_time}`;
+                    }).join('\n');
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Error: ${error.message}`;
+            }
+        };
+
+        window.testQuarterlyRotation = () => {
+            const resultDiv = document.getElementById('quarterly-result');
+            try {
+                const quarterlyShifts = transformScheduleDataWithRotation(mockScheduleData, { weeksAhead: 12 });
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `✅ Generated ${quarterlyShifts.length} shifts for 12 weeks\n\nAll shifts:\n` +
+                    quarterlyShifts.map((shift, index) => {
+                        const member = mockMembers.find(m => m.user_id === shift.user_id);
+                        const startDate = new Date(shift.start_time).toLocaleDateString();
+                        const endDate = new Date(shift.end_time).toLocaleDateString();
+                        return `${index + 1}. ${member.user_name}: ${startDate} → ${endDate}`;
+                    }).join('\n');
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Error: ${error.message}`;
+            }
+        };
+
+        window.testSingleShift = () => {
+            const resultDiv = document.getElementById('single-result');
+            try {
+                const singleShifts = transformScheduleDataWithRotation(mockScheduleData, { generateYearlyShifts: false });
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `✅ Generated ${singleShifts.length} shifts (one per member)\n\nShifts:\n` +
+                    singleShifts.map((shift, index) => {
+                        const member = mockMembers.find(m => m.user_id === shift.user_id);
+                        return `${index + 1}. ${member.user_name}: ${shift.start_time} → ${shift.end_time}`;
+                    }).join('\n');
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Error: ${error.message}`;
+            }
+        };
+
+        window.testDailyRotation = () => {
+            const resultDiv = document.getElementById('daily-result');
+            try {
+                const dailyRotation = { ...mockRotation, shiftLength: 'one_day' };
+                const dailyScheduleData = { ...mockScheduleData, rotations: [dailyRotation] };
+                const dailyShifts = transformScheduleDataWithRotation(dailyScheduleData, { weeksAhead: 1 });
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `✅ Generated ${dailyShifts.length} daily shifts for 1 week\n\nShifts:\n` +
+                    dailyShifts.map((shift, index) => {
+                        const member = mockMembers.find(m => m.user_id === shift.user_id);
+                        const startDate = new Date(shift.start_time).toLocaleDateString();
+                        return `Day ${index + 1}: ${member.user_name} (${startDate})`;
+                    }).join('\n');
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Error: ${error.message}`;
+            }
+        };
+
+        window.testCustomOptions = () => {
+            const resultDiv = document.getElementById('custom-result');
+            try {
+                const customShifts = transformScheduleDataWithRotation(mockScheduleData, {
+                    weeksAhead: 4,
+                    generateYearlyShifts: true
+                });
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `✅ Generated ${customShifts.length} shifts for 4 weeks\n\nRotation pattern:\n` +
+                    customShifts.map((shift, index) => {
+                        const member = mockMembers.find(m => m.user_id === shift.user_id);
+                        const startDate = new Date(shift.start_time).toLocaleDateString();
+                        return `Week ${index + 1}: ${member.user_name} (starts ${startDate})`;
+                    }).join('\n');
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Error: ${error.message}`;
+            }
+        };
+    </script>
+</body>
+</html>
