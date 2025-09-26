@@ -1,0 +1,7 @@
+INSERT INTO users (id, name, email, phone, role, team, fcm_token, is_active, created_at, updated_at, provider, provider_id) VALUES
+('00000000-0000-0000-0000-000000000001', 'Prometheus', 'prometheus@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000001'),
+('00000000-0000-0000-0000-000000000002', 'Datadog', 'datadog@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000002'),
+('00000000-0000-0000-0000-000000000003', 'Grafana', 'grafana@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000003'),
+('00000000-0000-0000-0000-000000000004', 'AWS CloudWatch', 'cloudwatch@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000004'),
+('00000000-0000-0000-0000-000000000005', 'Webhook System', 'webhook@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000005'),
+('00000000-0000-0000-0000-000000000006', 'API System', 'api@system.local', 'system', 'System', 'System', 'System', true, NOW(), NOW(), 'system', '10000000-0000-0000-0000-000000000006');

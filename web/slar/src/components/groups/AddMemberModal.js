@@ -175,7 +175,7 @@ export default function AddMemberModal({ isOpen, onClose, onSubmit, existingMemb
                 <div className="flex items-center gap-2">
                   <div className="text-gray-500">👥</div>
                   <span className="text-sm text-gray-600 dark:text-gray-400">
-                    Search all users • Emails will be visible (like GitHub)
+                    Search all users • Emails will be visible
                   </span>
                 </div>
               </div>
@@ -279,83 +279,6 @@ export default function AddMemberModal({ isOpen, onClose, onSubmit, existingMemb
                     </div>
                   </label>
                 ))}
-              </div>
-            </div>
-
-            {/* Escalation Order */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Escalation Order
-              </label>
-              <input
-                type="number"
-                value={formData.escalation_order}
-                onChange={(e) => setFormData(prev => ({ ...prev, escalation_order: e.target.value }))}
-                min="1"
-                max="10"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Order in which this member will be contacted during escalations
-              </p>
-            </div>
-
-            {/* Notification Preferences */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                Notification Preferences
-              </label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={formData.notification_preferences.fcm}
-                    onChange={(e) => handleNotificationChange('fcm', e.target.checked)}
-                    className="text-blue-600 focus:ring-blue-500"
-                  />
-                  <div>
-                    <div className="font-medium text-gray-900 dark:text-white">
-                      Push Notifications
-                    </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      Mobile app notifications
-                    </div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={formData.notification_preferences.email}
-                    onChange={(e) => handleNotificationChange('email', e.target.checked)}
-                    className="text-blue-600 focus:ring-blue-500"
-                  />
-                  <div>
-                    <div className="font-medium text-gray-900 dark:text-white">
-                      Email Notifications
-                    </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      Email alerts and summaries
-                    </div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={formData.notification_preferences.sms}
-                    onChange={(e) => handleNotificationChange('sms', e.target.checked)}
-                    className="text-blue-600 focus:ring-blue-500"
-                  />
-                  <div>
-                    <div className="font-medium text-gray-900 dark:text-white">
-                      SMS Notifications
-                    </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      Text message alerts for critical issues
-                    </div>
-                  </div>
-                </label>
               </div>
             </div>
           </form>

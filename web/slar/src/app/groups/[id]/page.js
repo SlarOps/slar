@@ -129,7 +129,7 @@ export default function GroupDetailPage() {
       // Refresh group data to show new member
       const updatedGroup = await apiClient.getGroupWithMembers(params.id);
       setGroup(updatedGroup);
-      setShowAddMember(false);
+      // setShowAddMember(false);
       
       // Show success message
       alert(`Successfully added ${selectedUser.name} to the group!`);
