@@ -127,7 +127,7 @@ affinity: {}
 components:
   ai:
     image:
-      repository: your-registry/slar-ai
+      repository: ghcr.io/slarops/slar-ai
       tag: latest
       pullPolicy: IfNotPresent
     service:
@@ -152,7 +152,7 @@ components:
 
   api:
     image:
-      repository: your-registry/slar-api
+      repository: ghcr.io/slarops/slar-api
       tag: latest
       pullPolicy: IfNotPresent
     service:
@@ -173,7 +173,7 @@ components:
 
   worker:
     image:
-      repository: your-registry/slar-api
+      repository: ghcr.io/slarops/slar-api
       tag: latest
       pullPolicy: IfNotPresent
     service:
@@ -201,7 +201,7 @@ components:
 
   slack-worker:
     image:
-      repository: your-registry/slar-slack-worker
+      repository: ghcr.io/slarops/slar-slack-worker
       tag: latest
       pullPolicy: IfNotPresent
     service:
@@ -228,7 +228,7 @@ components:
 
   web:
     image:
-      repository: your-registry/slar-web
+      repository: ghcr.io/slarops/slar-web
       tag: latest
       pullPolicy: IfNotPresent
     service:
