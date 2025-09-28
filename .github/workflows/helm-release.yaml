@@ -1,0 +1,61 @@
+name: Helm Chart Release
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'deploy/helm/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+
+env:
+  CHART_PATH: deploy/helm/slar
+  # Optional: set repository variable HELM_REGISTRY to your OCI registry base (e.g., ghcr.io/<owner>/charts).
+  # If not set, we'll default to ghcr.io/<repo_owner>/charts.
+
+jobs:
+
+  helm-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Resolve Helm OCI Repo
+        id: resolve_repo
+        run: |
+            echo "helm_repo=oci://ghcr.io/${{ github.repository_owner }}/charts" >> $GITHUB_OUTPUT
+
+      - name: Get Chart Name
+        id: get_chart_name
+        run: |
+          chart_name=$(grep '^name:' deploy/helm/slar/Chart.yaml | awk '{print $2}')
+          echo "chart_name=${chart_name}" >> $GITHUB_OUTPUT
+
+      - name: Get Chart Version
+        id: get_chart_version
+        run: |
+          chart_version=$(grep '^version:' "${CHART_PATH}/Chart.yaml" | awk '{print $2}')
+          echo "chart_version=${chart_version}" >> $GITHUB_OUTPUT
+
+      - name: Lint Helm Chart
+        run: helm lint "${CHART_PATH}"
+
+      - name: Package and Push Helm Chart
+        run: |
+          helm package "${CHART_PATH}" --version ${{ steps.get_chart_version.outputs.chart_version }}
+          helm push ${{ steps.get_chart_name.outputs.chart_name }}-${{ steps.get_chart_version.outputs.chart_version }}.tgz "${{ steps.resolve_repo.outputs.helm_repo }}"

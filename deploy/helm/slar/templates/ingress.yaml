@@ -1,0 +1,47 @@
+{{- $root := . -}}
+{{- range $name, $comp := ( .Values.components | default dict ) }}
+{{- if and $comp.ingress $comp.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}
+  labels:
+    {{- include "slar.componentLabels" (dict "root" $root "name" $name) | nindent 4 }}
+  {{- with $comp.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $comp.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $comp.ingress.tls }}
+  tls:
+    {{- range $comp.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range $comp.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            {{- with .pathType }}
+            pathType: {{ . }}
+            {{- end }}
+            backend:
+              service:
+                name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}
+                port:
+                  number: {{ $comp.service.port }}
+          {{- end }}
+    {{- end }}
+---
+{{- end }}
+{{- end }}

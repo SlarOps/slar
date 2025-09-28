@@ -1,0 +1,87 @@
+# version: "3.9"
+
+services:
+  ai:
+    container_name: slar-ai
+    build:
+      context: ../api/ai
+    # image: slar-ai:latest
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-your-openai-api-key}
+    restart: unless-stopped
+
+  api:
+    container_name: slar-api
+    build:
+      context: ../api
+    # image: slar-api:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
+      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
+    restart: unless-stopped
+
+  worker:
+    container_name: slar-worker
+    build:
+      context: ../api
+    image: slar-api:latest
+    command: ["./worker"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-your-slack-app-token}
+      - API_BASE_URL=http://api:8080
+      - POLL_INTERVAL=1
+      - BATCH_SIZE=10
+      - MAX_RETRIES=3
+      - LOG_LEVEL=DEBUG
+      - LOG_FILE=/app/worker.log
+    restart: unless-stopped
+  
+  slack-worker:
+    container_name: slar-slack-worker
+    build:
+      context: ../api/workers
+    # image: slar-slack-worker:latest
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-your-slack-app-token}
+      - API_BASE_URL=http://api:8080
+      - POLL_INTERVAL=1
+      - BATCH_SIZE=10
+      - MAX_RETRIES=3
+      - LOG_LEVEL=DEBUG
+      - LOG_FILE=/app/slack_worker.log
+    restart: unless-stopped
+
+  web:
+    container_name: slar-web
+    build:
+      context: ../web/slar
+    # image: slar-web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-your-supabase-anon-key}
+      - NEXT_PUBLIC_API_URL=http://api:8080
+      - NEXT_PUBLIC_WS_URL=ws://api:8002/ws/chat
+      - NEXT_PUBLIC_APP_NAME=SLAR
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+      - NEXT_PUBLIC_AI_BASE_URL=http://ai:8002
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+
