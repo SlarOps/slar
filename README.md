@@ -108,6 +108,59 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 
 **Slack Integration**: Create Slack app, enable Socket Mode, add scopes: `chat:write`, `channels:read`, `users:read`
 
+## Deployment
+
+### Option A: Docker Compose (local)
+- Create a .env file at the repo root with your credentials (or rely on defaults in the compose file):
+
+````bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+OPENAI_API_KEY=your-openai-api-key
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_JWT_SECRET=your-jwt-secret
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+````
+
+- Build and start all services:
+````bash
+docker compose -f deploy/docker/docker-compose.yaml up -d
+````
+
+- Open the app: http://localhost:3000 (web), API at http://localhost:8080, AI at http://localhost:8002
+
+### Option B: Kubernetes (Helm)
+- Ensure container images exist and are accessible to your cluster. Defaults in the chart use ghcr.io/slarops images; change .Values.components.*.image.repository if pushing to your own registry.
+- Create a minimal override file (values.slar.yaml) with your environment and optional ingress:
+
+````yaml
+components:
+  api:
+    env:
+      - name: DATABASE_URL
+        value: postgres://user:pass@db:5432/postgres?sslmode=disable
+      - name: SUPABASE_URL
+        value: https://your-project-ref.supabase.co
+      - name: SUPABASE_ANON_KEY
+        value: your-anon-key
+  web:
+    ingress:
+      enabled: true
+      hosts: [{ host: slar.example.com, paths: [{ path: /, pathType: Prefix }] }]
+````
+
+- Install/upgrade the chart:
+````bash
+helm upgrade --install slar ./deploy/helm/slar -n slar --create-namespace -f values.slar.yaml
+````
+
+- Uninstall:
+````bash
+helm uninstall slar -n slar
+````
+
 ## Usage
 
 ### Schedule Management
