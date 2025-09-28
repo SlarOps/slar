@@ -12,149 +12,63 @@ permissions:
   id-token: write
 
 jobs:
-  changes:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      ai: ${{ steps.filter.outputs.ai }}
-      api: ${{ steps.filter.outputs.api }}
-      workers: ${{ steps.filter.outputs.workers }}
-      web: ${{ steps.filter.outputs.web }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Detect changed Dockerfiles
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          token: ${{ github.token }}
-          filters: |
-            ai:
-              - 'api/ai/Dockerfile'
-            api:
-              - 'api/Dockerfile'
-            workers:
-              - 'api/workers/Dockerfile'
-            web:
-              - 'web/slar/Dockerfile'
-
-  build-ai:
-    needs: changes
-    if: needs.changes.outputs.ai == 'true'
-    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ai
+            context: api/ai
+            dockerfile: api/ai/Dockerfile
+            image: ghcr.io/${{ github.repository_owner }}/slar-ai
+          - name: api
+            context: api
+            dockerfile: api/Dockerfile
+            image: ghcr.io/${{ github.repository_owner }}/slar-api
+          - name: workers
+            context: api/workers
+            dockerfile: api/workers/Dockerfile
+            image: ghcr.io/${{ github.repository_owner }}/slar-slack-worker
+          - name: web
+            context: web/slar
+            dockerfile: web/slar/Dockerfile
+            image: ghcr.io/${{ github.repository_owner }}/slar-web
     steps:
       - uses: actions/checkout@v4
+
       - uses: docker/setup-buildx-action@v3
+
       - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta (ai)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/slar-ai
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build and push (ai)
-        uses: docker/build-push-action@v6
-        with:
-          context: api/ai
-          file: api/ai/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
 
-  build-api:
-    needs: changes
-    if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta (api)
+      - name: Docker meta (${{ matrix.name }})
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/slar-api
+          images: ${{ matrix.image }}
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build and push (api)
-        uses: docker/build-push-action@v6
-        with:
-          context: api
-          file: api/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+            type=ref,event=tag
 
-  build-workers:
-    needs: changes
-    if: needs.changes.outputs.workers == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta (slack-worker)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/slar-slack-worker
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build and push (slack-worker)
+      - name: Build and push (${{ matrix.name }})
         uses: docker/build-push-action@v6
         with:
-          context: api/workers
-          file: api/workers/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-  build-web:
-    needs: changes
-    if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta (web)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/slar-web
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build and push (web)
-        uses: docker/build-push-action@v6
-        with:
-          context: web/slar
-          file: web/slar/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: true
