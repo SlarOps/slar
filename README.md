@@ -140,7 +140,7 @@ components:
   api:
     env:
       - name: DATABASE_URL
-        value: postgres://user:pass@db:5432/postgres?sslmode=disable
+        value: postgres://<USER>:<PASS>@<HOST>:5432/postgres?sslmode=disable
       - name: SUPABASE_URL
         value: https://your-project-ref.supabase.co
       - name: SUPABASE_ANON_KEY

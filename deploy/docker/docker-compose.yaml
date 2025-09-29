@@ -22,8 +22,8 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
-      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
     restart: unless-stopped
