@@ -4,7 +4,7 @@
 
 # SLAR - Smart Live Alert & Response
 
-Enterprise-grade on-call management platform with AI-powered incident response and intelligent alerting.
+🚧 SLAR is currently in active development (MVP stage). An open-source on-call management platform with AI-powered incident response and intelligent alerting.
 
 <p align="center">
 <img width=""
@@ -212,7 +212,7 @@ Documentation available at `/docs` when server is running.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
@@ -220,5 +220,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Documentation**: [Project Wiki](https://github.com/vanchonlee/slar/wiki)
 
 ---
-
-**Enterprise-grade on-call management with AI-powered incident response**
