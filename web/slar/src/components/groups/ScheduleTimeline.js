@@ -1,8 +1,6 @@
 'use client';
 
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
-import { Timeline } from 'vis-timeline/standalone';
-import { DataSet } from 'vis-data';
 import './timeline.css';
 
 // Color scheme for different members
@@ -11,10 +9,10 @@ const MEMBER_COLORS = [
   '#ef4444', '#6366f1', '#14b8a6', '#f97316'
 ];
 
-const ScheduleTimeline = forwardRef(({ 
-  rotations, 
-  members, 
-  selectedMembers, 
+const ScheduleTimeline = forwardRef(({
+  rotations,
+  members,
+  selectedMembers,
   viewMode = 'week',
   onTimelineReady,
   onCurrentOnCallChange,
@@ -28,10 +26,32 @@ const ScheduleTimeline = forwardRef(({
   const resizeObserverRef = useRef(null);
   const timelineInstanceRef = useRef(null); // Track timeline instance
   const componentIdRef = useRef(`timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const [visLibs, setVisLibs] = useState({ Timeline: null, DataSet: null });
 
   // Set client flag after hydration
   useEffect(() => {
     setIsClient(true);
+  }, []);
+
+
+  // Load vis-timeline and vis-data only on client to avoid SSR issues
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [visTimeline, visData] = await Promise.all([
+          import('vis-timeline/standalone'),
+          import('vis-data')
+        ]);
+        if (!cancelled) {
+          setVisLibs({ Timeline: visTimeline.Timeline, DataSet: visData.DataSet });
+        }
+      } catch (e) {
+        console.error('Failed to load vis libs:', e);
+      }
+    };
+    if (typeof window !== 'undefined') load();
+    return () => { cancelled = true; };
   }, []);
 
   // Force timeline redraw method (without changing view window)
@@ -64,13 +84,13 @@ const ScheduleTimeline = forwardRef(({
   useImperativeHandle(ref, () => ({
     // Redraw timeline without changing view window (recommended for data updates)
     forceRedraw: forceTimelineRedraw,
-    
+
     // Fit timeline to show all data (use sparingly, only when user explicitly requests)
     fitToWindow: fitTimelineToWindow,
-    
+
     // Get raw timeline instance for advanced operations
     getTimeline: () => timeline,
-    
+
     // Refresh timeline data without changing view window
     refresh: () => {
       if (timeline) {
@@ -118,7 +138,7 @@ const ScheduleTimeline = forwardRef(({
       const timer = setTimeout(() => {
         forceTimelineRedraw();
       }, 300);
-      
+
       return () => clearTimeout(timer);
     } else if (!isVisible && timeline) {
       console.log(`[${componentIdRef.current}] Timeline hidden`);
@@ -127,8 +147,8 @@ const ScheduleTimeline = forwardRef(({
 
   // Convert schedule data to vis-timeline format
   const generateTimelineData = () => {
-    const items = new DataSet();
-    const groups = new DataSet();
+    const items = new visLibs.DataSet();
+    const groups = new visLibs.DataSet();
 
     console.log(`[${componentIdRef.current}] generateTimelineData - rotations:`, rotations, 'selectedMembers:', selectedMembers);
 
@@ -153,20 +173,20 @@ const ScheduleTimeline = forwardRef(({
 
     // Check if data is schedule format (has start_time/end_time) or rotation format (has startDate/shiftLength)
     const isScheduleFormat = rotations[0] && rotations[0].start_time;
-    
+
     if (isScheduleFormat) {
       // Handle schedule data format
       console.log(`[${componentIdRef.current}] Processing schedule format data`);
       const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
-      
+
       rotations.forEach((schedule, scheduleIndex) => {
         const scheduleStart = new Date(schedule.start_time);
         const scheduleEnd = new Date(schedule.end_time);
-        
+
         // Find member for this schedule
-        const member = selectedMembers.find(m => m.user_id === schedule.user_id) || 
+        const member = selectedMembers.find(m => m.user_id === schedule.user_id) ||
                       selectedMembers.find(m => m.user_id === schedule.effective_user_id);
-        
+
         if (!member) {
           console.warn(`[${componentIdRef.current}] Member not found for schedule:`, schedule);
           return;
@@ -174,7 +194,7 @@ const ScheduleTimeline = forwardRef(({
 
         const memberIndex = selectedMembers.findIndex(m => m.user_id === member.user_id);
         const isCurrentShift = typeof window !== 'undefined' && now >= scheduleStart && now < scheduleEnd;
-        
+
         console.log(`[${componentIdRef.current}] Adding schedule item:`, {
           member: member.user_name,
           start: scheduleStart,
@@ -212,31 +232,31 @@ const ScheduleTimeline = forwardRef(({
         console.warn(`[${componentIdRef.current}] Invalid rotation format:`, rotation);
         return { items, groups };
       }
-      
+
       const startDate = new Date(rotation.startDate);
       const shiftDurationDays = getShiftDurationInDays(rotation.shiftLength);
-      
+
       // Generate 60 days of schedule data
       const totalDays = 365;
       const totalShifts = Math.ceil(totalDays / shiftDurationDays);
-      
+
       for (let shiftIndex = 0; shiftIndex < totalShifts; shiftIndex++) {
         const memberIndex = shiftIndex % selectedMembers.length;
         const member = selectedMembers[memberIndex];
-        
+
         const shiftStart = new Date(startDate);
         shiftStart.setDate(startDate.getDate() + (shiftIndex * shiftDurationDays));
-        
+
         const shiftEnd = new Date(shiftStart);
         shiftEnd.setDate(shiftStart.getDate() + shiftDurationDays);
-        
+
         // Don't show shifts that are too far in the past
         const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
         const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        
+
         if (shiftEnd > oneWeekAgo) {
           const isCurrentShift = typeof window !== 'undefined' && now >= shiftStart && now < shiftEnd;
-          
+
           items.add({
             id: `shift-${shiftIndex}`,
             group: member.user_id,
@@ -286,7 +306,7 @@ const ScheduleTimeline = forwardRef(({
   const getTimelineOptions = () => {
     // Use a stable date for SSR, will be updated on client
     const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
-    
+
     let start, end;
     switch (viewMode) {
       case 'day':
@@ -313,27 +333,27 @@ const ScheduleTimeline = forwardRef(({
     return {
       // Current time indicator
       showCurrentTime: true,
-      
+
       // View configuration
       orientation: 'top',
       stack: false,
-      
+
       // Time window - fixed window, don't auto-adjust
       start: start,
       end: end,
-      
+
       // Prevent auto-fitting when data changes
       autoResize: true, // Allow container resize but don't auto-fit data
-      
+
       // Zoom and pan
       zoomable: true,
       moveable: true,
       zoomMin: 1000 * 60 * 60, // 1 hour
       zoomMax: 1000 * 60 * 60 * 24 * 365, // 1 year
-      
+
       // Height
       height: '300px',
-      
+
       // Margins
       margin: {
         item: {
@@ -341,7 +361,7 @@ const ScheduleTimeline = forwardRef(({
           vertical: 10
         }
       },
-      
+
       // Time axis formatting
       format: {
         minorLabels: {
@@ -357,11 +377,11 @@ const ScheduleTimeline = forwardRef(({
           month: 'YYYY'
         }
       },
-      
+
       // Styling
       selectable: true,
       multiselect: false,
-      
+
       // Group styling
       groupOrder: function (a, b) {
         return a.content.localeCompare(b.content);
@@ -372,8 +392,8 @@ const ScheduleTimeline = forwardRef(({
   // Initialize timeline - only on client side
   useEffect(() => {
     // Ensure this only runs on client side to avoid hydration mismatch
-    if (typeof window === 'undefined' || !timelineRef.current || !isVisible) return;
-    
+    if (typeof window === 'undefined' || !timelineRef.current || !isVisible || !visLibs.Timeline || !visLibs.DataSet) return;
+
     // Prevent duplicate timeline creation
     if (timelineInstanceRef.current) {
       console.log(`[${componentIdRef.current}] Timeline already exists, skipping initialization`);
@@ -394,19 +414,19 @@ const ScheduleTimeline = forwardRef(({
       const options = getTimelineOptions();
 
       try {
-        const newTimeline = new Timeline(timelineRef.current, items, groups, options);
+        const newTimeline = new visLibs.Timeline(timelineRef.current, items, groups, options);
         timelineInstanceRef.current = newTimeline;
         setTimeline(newTimeline);
-        
+
         console.log(`[${componentIdRef.current}] Timeline created successfully`);
-        
+
         // Initial render without forcing fit to avoid unwanted zoom changes
         setTimeout(() => {
           if (timelineInstanceRef.current === newTimeline) {
             newTimeline.redraw();
           }
         }, 50);
-        
+
         // Notify parent component that timeline is ready with redraw method
         if (onTimelineReady) {
           onTimelineReady({
@@ -434,11 +454,11 @@ const ScheduleTimeline = forwardRef(({
             // Preserve current window to prevent auto-zoom when updating items
             const currentWindow = newTimeline.getWindow();
             newTimeline.setCurrentTime(new Date());
-            
+
             // Update current on-call member
             const { items: newItems } = generateTimelineData();
             newTimeline.setItems(newItems);
-            
+
             // Restore window
             newTimeline.setWindow(currentWindow.start, currentWindow.end, { animation: false });
           }
@@ -467,7 +487,25 @@ const ScheduleTimeline = forwardRef(({
         timelineInstanceRef.current = null;
       }
     };
-  }, [rotations, selectedMembers, isVisible]);
+  }, [rotations, selectedMembers, isVisible, visLibs]);
+
+  // Update timeline items/groups when data changes (without re-initializing)
+  useEffect(() => {
+    if (!timeline || !visLibs.DataSet) return;
+    try {
+      const currentWindow = timeline.getWindow();
+      const { items, groups } = generateTimelineData();
+      timeline.setItems(items);
+      timeline.setGroups(groups);
+      // Restore previous window to avoid zoom jumps
+      timeline.setWindow(currentWindow.start, currentWindow.end, { animation: false });
+      timeline.redraw();
+      console.log(`[${componentIdRef.current}] Data changed -> items/groups updated`);
+    } catch (e) {
+      console.warn('Failed to update timeline with new data:', e);
+    }
+  }, [rotations, selectedMembers, timeline, visLibs]);
+
 
   // Update timeline when view mode changes (intentional user action)
   useEffect(() => {
@@ -525,8 +563,8 @@ const ScheduleTimeline = forwardRef(({
       )}
 
       {/* Timeline Container */}
-      <div 
-        ref={timelineRef} 
+      <div
+        ref={timelineRef}
         id={componentIdRef.current}
         className="timeline-container dark:border-gray-700 rounded-lg"
         style={{ width: '100%', minHeight: '300px' }}
@@ -538,7 +576,7 @@ const ScheduleTimeline = forwardRef(({
         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Team Members:</span>
         {selectedMembers.map((member, index) => (
           <div key={member.user_id} className="flex items-center gap-2">
-            <div 
+            <div
               className="w-3 h-3 rounded"
               style={{ backgroundColor: MEMBER_COLORS[index % MEMBER_COLORS.length] }}
             ></div>

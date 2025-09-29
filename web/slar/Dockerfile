@@ -14,8 +14,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
 COPY --from=deps /app/node_modules ./node_modules
 
-ENV NEXT_PUBLIC_SUPABASE_URL=""
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=""
 RUN npm run build
 
 # 3) Runner (standalone)
