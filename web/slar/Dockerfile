@@ -34,9 +34,6 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Copy custom server for runtime env injection
-COPY --from=builder /app/server.js ./server.js
-
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
