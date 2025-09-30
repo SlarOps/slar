@@ -226,7 +226,7 @@ components:
     image:
       repository: ghcr.io/slarops/slar-web
       tag: sha-de04aec
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP

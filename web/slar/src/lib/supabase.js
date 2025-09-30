@@ -1,9 +1,29 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Prefer runtime-injected env (e.g., window.__SLAR_ENV) and fall back to build-time env, then defaults
-const __runtimeEnv = (typeof window !== 'undefined' && window.__SLAR_ENV) ? window.__SLAR_ENV : {};
-const supabaseUrl = __runtimeEnv.NEXT_PUBLIC_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://localhost:8000';
-const supabaseAnonKey = __runtimeEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '1234567890';
+// Get runtime environment variables from window.__SLAR_ENV
+// This allows building once and changing env vars at runtime (e.g., in Docker)
+// The server.js will inject these values from process.env at runtime
+const getRuntimeEnv = () => {
+  if (typeof window !== 'undefined' && window.__SLAR_ENV) {
+    return window.__SLAR_ENV;
+  }
+  // Fallback for SSR or when __SLAR_ENV is not available
+  return {};
+};
+
+const runtimeEnv = getRuntimeEnv();
+const supabaseUrl = runtimeEnv.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:8000';
+const supabaseAnonKey = runtimeEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY || '1234567890';
+
+// Log configuration for debugging
+if (typeof window !== 'undefined') {
+  console.log('Supabase Configuration:', {
+    url: supabaseUrl,
+    hasAnonKey: !!supabaseAnonKey,
+    anonKeyLength: supabaseAnonKey?.length,
+    source: window.__SLAR_ENV ? 'runtime' : 'fallback'
+  });
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
