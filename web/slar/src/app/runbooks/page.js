@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../../components/ui';
+import { apiClient } from '../../lib/api';
 
 export default function RunbooksPage() {
   const { session } = useAuth();
@@ -22,59 +23,50 @@ export default function RunbooksPage() {
   const loadIndexedFiles = async () => {
     try {
       // Load document statistics
-      const statsResponse = await fetch('http://localhost:8002/runbook/stats');
-      if (statsResponse.ok) {
-        const stats = await statsResponse.json();
-        setDocumentStats(stats);
-      }
+      const stats = await apiClient.getRunbookStats();
+      setDocumentStats(stats);
 
       // Load actual indexed documents
-      const docsResponse = await fetch('http://localhost:8002/runbook/list-documents');
-      if (docsResponse.ok) {
-        const docsData = await docsResponse.json();
+      const docsData = await apiClient.listRunbookDocuments();
 
-        // Transform the documents into the format expected by the UI
-        const transformedFiles = docsData.documents.map((doc, index) => {
-          // Extract title from source_display or metadata
-          let name = "Untitled Document";
-          if (doc.source_display) {
-            // For GitHub files, extract filename without extension
-            if (doc.source_display.includes('/')) {
-              name = doc.source_display.split('/').pop().replace(/\.(md|txt|rst)$/i, '');
-            } else {
-              name = doc.source_display.replace(/\.(md|txt|rst)$/i, '');
-            }
-          } else if (doc.metadata?.path) {
-            name = doc.metadata.path.split('/').pop().replace(/\.(md|txt|rst)$/i, '');
-          } else if (doc.content_preview) {
-            // Try to extract title from first line of content
-            const firstLine = doc.content_preview.split('\n')[0];
-            if (firstLine.startsWith('#')) {
-              name = firstLine.replace(/^#+\s*/, '').trim();
-            } else if (firstLine.length > 0 && firstLine.length < 100) {
-              name = firstLine.trim();
-            }
+      // Transform the documents into the format expected by the UI
+      const transformedFiles = docsData.documents.map((doc, index) => {
+        // Extract title from source_display or metadata
+        let name = "Untitled Document";
+        if (doc.source_display) {
+          // For GitHub files, extract filename without extension
+          if (doc.source_display.includes('/')) {
+            name = doc.source_display.split('/').pop().replace(/\.(md|txt|rst)$/i, '');
+          } else {
+            name = doc.source_display.replace(/\.(md|txt|rst)$/i, '');
           }
+        } else if (doc.metadata?.path) {
+          name = doc.metadata.path.split('/').pop().replace(/\.(md|txt|rst)$/i, '');
+        } else if (doc.content_preview) {
+          // Try to extract title from first line of content
+          const firstLine = doc.content_preview.split('\n')[0];
+          if (firstLine.startsWith('#')) {
+            name = firstLine.replace(/^#+\s*/, '').trim();
+          } else if (firstLine.length > 0 && firstLine.length < 100) {
+            name = firstLine.trim();
+          }
+        }
 
-          return {
-            id: doc.id || index,
-            name: name,
-            source: doc.metadata?.github_url || doc.metadata?.source || 'Unknown source',
-            source_display: doc.source_display || 'Unknown file',
-            path: doc.metadata?.path || '',
-            indexed_at: new Date().toISOString(), // We don't have this info, use current time
-            status: "active",
-            content_preview: doc.content_preview || '',
-            chunk_count: doc.chunk_count || 1,
-            total_chunks: doc.chunks?.length || 1
-          };
-        });
+        return {
+          id: doc.id || index,
+          name: name,
+          source: doc.metadata?.github_url || doc.metadata?.source || 'Unknown source',
+          source_display: doc.source_display || 'Unknown file',
+          path: doc.metadata?.path || '',
+          indexed_at: new Date().toISOString(), // We don't have this info, use current time
+          status: "active",
+          content_preview: doc.content_preview || '',
+          chunk_count: doc.chunk_count || 1,
+          total_chunks: doc.chunks?.length || 1
+        };
+      });
 
-        setIndexedFiles(transformedFiles);
-      } else {
-        console.error("Failed to load documents:", docsResponse.status);
-        setIndexedFiles([]);
-      }
+      setIndexedFiles(transformedFiles);
     } catch (err) {
       console.error("Error loading indexed files:", err);
       setError("Failed to load indexed documents. Make sure the AI service is running.");
@@ -109,30 +101,18 @@ export default function RunbooksPage() {
 
     try {
       // Call the AI service to index runbooks from GitHub
-      const response = await fetch('http://localhost:8002/runbook/index-github', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          github_url: githubUrl,
-          user_id: session?.user?.id || 'anonymous'
-        })
-      });
+      const result = await apiClient.indexRunbooksFromGithub(
+        githubUrl,
+        session?.user?.id || 'anonymous'
+      );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      
       setIndexingStatus("Indexing completed successfully!");
       setSuccess(`Successfully indexed ${result.files_processed || 0} files with ${result.chunks_indexed || 0} chunks`);
       setGithubUrl("");
-      
+
       // Reload the indexed files list
       await loadIndexedFiles();
-      
+
     } catch (err) {
       console.error("Error indexing runbooks:", err);
       setError(`Failed to index runbooks: ${err.message}`);
@@ -149,18 +129,7 @@ export default function RunbooksPage() {
     setIndexingStatus("Reindexing all runbooks...");
 
     try {
-      const response = await fetch('http://localhost:8002/runbook/reindex', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
+      const result = await apiClient.reindexRunbooks();
       setSuccess(`Successfully reindexed ${result.sources_reindexed || 0} sources with ${result.chunks_indexed || 0} chunks`);
       setIndexingStatus("");
 
@@ -178,13 +147,8 @@ export default function RunbooksPage() {
 
   const handleTestRetrieval = async () => {
     try {
-      const response = await fetch('http://localhost:8002/runbook/test');
-      if (response.ok) {
-        const result = await response.json();
-        setSuccess(`Test completed! Found runbooks for ${result.total_tests} test cases`);
-      } else {
-        throw new Error('Test failed');
-      }
+      const result = await apiClient.testRunbookRetrieval();
+      setSuccess(`Test completed! Found runbooks for ${result.total_tests} test cases`);
     } catch (err) {
       setError(`Test failed: ${err.message}`);
     }

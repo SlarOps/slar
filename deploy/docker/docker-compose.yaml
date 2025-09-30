@@ -6,20 +6,24 @@ services:
     build:
       context: ../../api/ai
     # image: slar-ai:latest
-    ports:
-      - "8002:8002"
+    # Không expose port ra ngoài - chỉ truy cập qua Kong
+    expose:
+      - "8002"
     environment:
       - PORT=8002
       - OPENAI_API_KEY=${OPENAI_API_KEY:-your-openai-api-key}
     restart: unless-stopped
+    networks:
+      - slar-network
 
   api:
     container_name: slar-api
     build:
       context: ../../api
     # image: slar-api:latest
-    ports:
-      - "8080:8080"
+    # Không expose port ra ngoài - chỉ truy cập qua Kong
+    expose:
+      - "8080"
     environment:
       - PORT=8080
       - DATABASE_URL=${DATABASE_URL}
@@ -27,6 +31,8 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
     restart: unless-stopped
+    networks:
+      - slar-network
 
   worker:
     container_name: slar-worker
@@ -45,7 +51,9 @@ services:
       - LOG_LEVEL=DEBUG
       - LOG_FILE=/app/worker.log
     restart: unless-stopped
-  
+    networks:
+      - slar-network
+
   slack-worker:
     container_name: slar-slack-worker
     build:
@@ -62,26 +70,66 @@ services:
       - LOG_LEVEL=DEBUG
       - LOG_FILE=/app/slack_worker.log
     restart: unless-stopped
+    networks:
+      - slar-network
 
   web:
     container_name: slar-web
     build:
       context: ../../web/slar
     # image: slar-web:latest
-    ports:
-      - "3000:3000"
+    # Không expose port ra ngoài - chỉ truy cập qua Kong
+    expose:
+      - "3000"
     environment:
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:8000}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-your-supabase-anon-key}
-      - NEXT_PUBLIC_API_URL=http://api:8080
-      - NEXT_PUBLIC_WS_URL=ws://api:8002/ws/chat
+      # Truy cập API qua Kong
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws/chat
       - NEXT_PUBLIC_APP_NAME=SLAR
-      - NEXT_PUBLIC_APP_URL=http://localhost:3000
-      - NEXT_PUBLIC_AI_BASE_URL=http://ai:8002
+      - NEXT_PUBLIC_APP_URL=http://localhost:8000
+      - NEXT_PUBLIC_AI_BASE_URL=http://localhost:8000/ai
     depends_on:
       - api
     restart: unless-stopped
+    networks:
+      - slar-network
+  
+  kong:
+    container_name: kong
+    image: kong:2.8.1
+    ports:
+      # Chỉ expose Kong port - đây là entry point duy nhất
+      - "8000:8000/tcp"
+      - "8443:8443/tcp"
+      # Admin API (optional - để quản lý Kong)
+      - "8001:8001/tcp"
+    volumes:
+      - ./volumes/api/kong.yaml:/home/kong/temp.yml:ro,z
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      # https://github.com/supabase/cli/issues/14
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-supabase-anon-key}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-your-supabase-service-key}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-admin}
+    depends_on:
+      - api
+      - ai
+      - web
+    restart: unless-stopped
+    networks:
+      - slar-network
+    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
 
-volumes:
-  pgdata:
+networks:
+  slar-network:
+    driver: bridge
+
 
