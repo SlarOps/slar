@@ -9,11 +9,21 @@ metadata:
     {{- include "slar.componentLabels" (dict "root" $root "name" $name) | nindent 4 }}
 spec:
   type: {{ default "ClusterIP" $comp.service.type }}
+  {{- if $comp.service.ports }}
+  ports:
+    {{- range $comp.service.ports }}
+    - port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      protocol: {{ .protocol }}
+      name: {{ .name }}
+    {{- end }}
+  {{- else }}
   ports:
     - port: {{ $comp.service.port }}
       targetPort: http
       protocol: TCP
       name: http
+  {{- end }}
   selector:
     {{- include "slar.componentSelectorLabels" (dict "root" $root "name" $name) | nindent 4 }}
 ---

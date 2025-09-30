@@ -1,24 +1,40 @@
 apiVersion: v2
 name: slar
-description: A Helm chart for Kubernetes
+description: SLAR - Smart Live Alert & Response System Helm Chart
 
-# A chart can be either an 'application' or a 'library' chart.
-#
-# Application charts are a collection of templates that can be packaged into versioned archives
-# to be deployed.
-#
-# Library charts provide useful utilities or functions for the chart developer. They're included as
-# a dependency of application charts to inject those utilities and functions into the rendering
-# pipeline. Library charts do not define any templates and therefore cannot be deployed.
+# This chart deploys the complete SLAR stack including:
+# - AI Service (AI processing and WebSocket chat)
+# - API Service (Main backend API)
+# - Worker (Background task processor)
+# - Slack Worker (Slack integration)
+# - Web Frontend (Next.js UI)
+# - Kong API Gateway (Traffic routing and management)
+
 type: application
 
-# This is the chart version. This version number should be incremented each time you make changes
-# to the chart and its templates, including the app version.
-# Versions are expected to follow Semantic Versioning (https://semver.org/)
+# Chart version - increment when making changes to the chart
 version: 0.1.0
 
-# This is the version number of the application being deployed. This version number should be
-# incremented each time you make changes to the application. Versions are not expected to
-# follow Semantic Versioning. They should reflect the version the application is using.
-# It is recommended to use it with quotes.
-appVersion: "1.16.0"
+# Application version - the version of SLAR being deployed
+appVersion: "1.0.0"
+
+# Maintainers
+maintainers:
+  - name: SLAR Team
+    email: team@slar.io
+
+# Keywords for chart discovery
+keywords:
+  - slar
+  - alerting
+  - monitoring
+  - slack
+  - ai
+  - api-gateway
+
+# Home page
+home: https://github.com/slarops/slar
+
+# Sources
+sources:
+  - https://github.com/slarops/slar
