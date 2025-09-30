@@ -113,7 +113,7 @@ components:
   ai:
     image:
       repository: ghcr.io/slarops/slar-ai
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: true
@@ -123,12 +123,15 @@ components:
       - name: PORT
         value: "8002"
       - name: OPENAI_API_KEY
-        value: ""  # Set via custom values or secrets
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: openai-api-key
 
   api:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: true
@@ -138,25 +141,40 @@ components:
       - name: PORT
         value: "8080"
       - name: DATABASE_URL
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: SUPABASE_URL
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-url
       - name: SUPABASE_ANON_KEY
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-anon-key
       - name: SUPABASE_JWT_SECRET
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-jwt-secret
 
   worker:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: false
     command: ["./worker"]
     env:
       - name: DATABASE_URL
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: POLL_INTERVAL
         value: "1"
       - name: BATCH_SIZE
@@ -171,17 +189,26 @@ components:
   slack-worker:
     image:
       repository: ghcr.io/slarops/slar-slack-worker
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: false
     env:
       - name: DATABASE_URL
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: SLACK_BOT_TOKEN
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: slack-bot-token
       - name: SLACK_APP_TOKEN
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: slack-app-token
       - name: API_BASE_URL
         value: "http://slar-api:8080"
       - name: POLL_INTERVAL
@@ -198,7 +225,7 @@ components:
   web:
     image:
       repository: ghcr.io/slarops/slar-web
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: true
@@ -206,19 +233,25 @@ components:
       port: 3000
     env:
       - name: NEXT_PUBLIC_SUPABASE_URL
-        value: "http://localhost:8000"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-url
       - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
-        value: ""
-    # ingress:
-    #   enabled: false
-    #   className: ""
-    #   annotations: {}
-    #   hosts:
-    #     - host: slar.example.com
-    #       paths:
-    #         - path: /
-    #           pathType: Prefix
-    #   tls: []
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-anon-key
+    ingress:
+      enabled: true
+      className: ""
+      annotations: {}
+      hosts:
+        - host: slarhq.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
 
   kong:
     image:

@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:8000'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '1234567890'
+// Prefer runtime-injected env (e.g., window.__SLAR_ENV) and fall back to build-time env, then defaults
+const __runtimeEnv = (typeof window !== 'undefined' && window.__SLAR_ENV) ? window.__SLAR_ENV : {};
+const supabaseUrl = __runtimeEnv.NEXT_PUBLIC_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://localhost:8000';
+const supabaseAnonKey = __runtimeEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '1234567890';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
