@@ -1,6 +1,6 @@
 // API client for SLAR backend
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = '/api'
+const AI_BASE_URL = '/ai'
 
 class APIClient {
   constructor() {
