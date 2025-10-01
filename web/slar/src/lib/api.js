@@ -1,6 +1,6 @@
 // API client for SLAR backend
-const API_BASE_URL = '/api'
-const AI_BASE_URL = '/ai'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+const AI_BASE_URL =  process.env.NEXT_PUBLIC_AI_URL || '/ai'
 
 class APIClient {
   constructor() {
@@ -34,6 +34,11 @@ class APIClient {
       console.error('API request failed:', error);
       throw error;
     }
+  }
+
+  // Get environment configuration (unified config endpoint)
+  async getEnvConfig() {
+    return this.request('/env', {}, this.baseURL);
   }
 
   // Dashboard endpoints

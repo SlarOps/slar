@@ -3,7 +3,6 @@ import MobileNav from "../components/MobileNav";
 import { AuthProvider } from "../contexts/AuthContext";
 import AuthWrapper from "../components/auth/AuthWrapper";
 import { Toaster } from 'react-hot-toast';
-import EnvInjector from "../components/EnvInjector";
 
 export const metadata = {
   title: "SLAR Web",
@@ -20,10 +19,6 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <head>
-        {/* Inject runtime environment variables before any other scripts */}
-        <EnvInjector />
-      </head>
       <body className="font-sans antialiased">
         <AuthProvider>
           <AuthWrapper>
