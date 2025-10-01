@@ -131,8 +131,8 @@ components:
   api:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: sha-de04aec
-      pullPolicy: IfNotPresent
+      tag: sha-cdba6c5
+      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
@@ -160,6 +160,8 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-jwt-secret
+      - name: SLAR_ENV
+        value: "production"
 
   worker:
     image:
@@ -225,7 +227,7 @@ components:
   web:
     image:
       repository: ghcr.io/slarops/slar-web
-      tag: sha-de04aec
+      tag: sha-cdba6c5
       pullPolicy: Always
     service:
       enabled: true
@@ -243,7 +245,7 @@ components:
             name: slar-secrets
             key: supabase-anon-key
     ingress:
-      enabled: true
+      enabled: false
       className: ""
       annotations: {}
       hosts:
@@ -261,6 +263,7 @@ components:
     service:
       enabled: true
       type: LoadBalancer
+      port: 8000
       ports:
         - name: proxy
           port: 8000
@@ -294,4 +297,15 @@ components:
     configMap:
       enabled: true
       name: kong-config
+    
+    ingress:
+      enabled: true
+      className: ""
+      annotations: {}
+      hosts:
+        - host: slarhq.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
 
