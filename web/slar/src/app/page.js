@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Button } from '@ui';
 import { useState, useEffect } from 'react';
+import EnvironmentBadge from '../components/EnvironmentBadge';
 
 export default function HomePage() {
   const [isVisible, setIsVisible] = useState(false);
@@ -117,8 +118,9 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
-      {/* Navigation */}
+      <EnvironmentBadge />
 
+      {/* Navigation */}
       {/* Hero Section */}
       <section className="relative px-4 py-24 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">

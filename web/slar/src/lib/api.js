@@ -1,9 +1,11 @@
 // API client for SLAR backend
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+const AI_BASE_URL =  process.env.NEXT_PUBLIC_AI_URL || '/ai'
 
 class APIClient {
   constructor() {
     this.baseURL = API_BASE_URL;
+    this.aiBaseURL = AI_BASE_URL;
     this.token = null;
   }
 
@@ -11,8 +13,8 @@ class APIClient {
     this.token = token;
   }
 
-  async request(endpoint, options = {}) {
-    const url = `${this.baseURL}${endpoint}`;
+  async request(endpoint, options = {}, baseURL = null) {
+    const url = `${baseURL || this.baseURL}${endpoint}`;
     const config = {
       headers: {
         'Content-Type': 'application/json',
@@ -32,6 +34,11 @@ class APIClient {
       console.error('API request failed:', error);
       throw error;
     }
+  }
+
+  // Get environment configuration (unified config endpoint)
+  async getEnvConfig() {
+    return this.request('/env', {}, this.baseURL);
   }
 
   // Dashboard endpoints
@@ -850,6 +857,52 @@ class APIClient {
       method: 'PUT',
       body: JSON.stringify(userData)
     });
+  }
+
+  // ===========================
+  // AI AGENT APIs (port 8002)
+  // ===========================
+
+  // Get chat history
+  async getChatHistory() {
+    return this.request('/history', {}, this.aiBaseURL);
+  }
+
+  // ===========================
+  // RUNBOOK APIs (port 8002)
+  // ===========================
+
+  // Get runbook statistics
+  async getRunbookStats() {
+    return this.request('/runbook/stats', {}, this.aiBaseURL);
+  }
+
+  // List indexed runbook documents
+  async listRunbookDocuments() {
+    return this.request('/runbook/list-documents', {}, this.aiBaseURL);
+  }
+
+  // Index runbooks from GitHub
+  async indexRunbooksFromGithub(githubUrl, userId) {
+    return this.request('/runbook/index-github', {
+      method: 'POST',
+      body: JSON.stringify({
+        github_url: githubUrl,
+        user_id: userId
+      })
+    }, this.aiBaseURL);
+  }
+
+  // Reindex all runbooks
+  async reindexRunbooks() {
+    return this.request('/runbook/reindex', {
+      method: 'POST'
+    }, this.aiBaseURL);
+  }
+
+  // Test runbook retrieval
+  async testRunbookRetrieval() {
+    return this.request('/runbook/test', {}, this.aiBaseURL);
   }
 }
 

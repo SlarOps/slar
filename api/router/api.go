@@ -3,6 +3,7 @@ package router
 import (
 	"database/sql"
 	"log"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -76,10 +77,24 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	// PUBLIC ENDPOINTS (no authentication required)
 
 	// Health check and info endpoints
-	r.GET("/health", func(c *gin.Context) {
+	r.GET("/env", func(c *gin.Context) {
+		// Set environment header for frontend
+		env := os.Getenv("SLAR_ENV")
+		if env == "" {
+			env = "development"
+		}
+		c.Header("x-slar-env", env)
+
+		// Get Supabase config to send to frontend
+		supabaseURL := os.Getenv("SUPABASE_URL")
+		supabaseAnonKey := os.Getenv("SUPABASE_ANON_KEY")
+
 		c.JSON(200, gin.H{
-			"status":  "healthy",
-			"message": "SLAR API is running",
+			"status":            "healthy",
+			"message":           "SLAR API is running",
+			"env":               env,
+			"supabase_url":      supabaseURL,
+			"supabase_anon_key": supabaseAnonKey,
 		})
 	})
 

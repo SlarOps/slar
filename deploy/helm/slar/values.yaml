@@ -1,25 +1,24 @@
-# Default values for slar.
+# Default values for SLAR Helm Chart
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+# Default replica count for components (can be overridden per component)
 replicaCount: 1
 
-# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+# Default image settings
 image:
   repository: nginx
-  # This sets the pull policy for images.
   pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
   tag: ""
 
-# This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+# Image pull secrets for private registries
 imagePullSecrets: []
-# This is to override the chart name.
+
+# Override chart name
 nameOverride: ""
 fullnameOverride: ""
 
-# This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+# Service account configuration
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
@@ -31,16 +30,17 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
-# This is for setting Kubernetes Annotations to a Pod.
-# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+# Pod annotations
 podAnnotations: {}
-# This is for setting Kubernetes Labels to a Pod.
-# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+
+# Pod labels
 podLabels: {}
 
+# Pod security context
 podSecurityContext: {}
   # fsGroup: 2000
 
+# Container security context
 securityContext: {}
   # capabilities:
   #   drop:
@@ -49,35 +49,25 @@ securityContext: {}
   # runAsNonRoot: true
   # runAsUser: 1000
 
-# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+# Default service configuration
 service:
-  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
   type: ClusterIP
-  # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
   port: 80
 
-# This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
+# Ingress configuration
 ingress:
   enabled: false
   className: ""
   annotations: {}
-    # kubernetes.io/ingress.class: nginx
-    # kubernetes.io/tls-acme: "true"
   hosts:
     - host: chart-example.local
       paths:
         - path: /
           pathType: ImplementationSpecific
   tls: []
-  #  - secretName: chart-example-tls
-  #    hosts:
-  #      - chart-example.local
 
+# Default resource limits
 resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
   # limits:
   #   cpu: 100m
   #   memory: 128Mi
@@ -85,7 +75,7 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
-# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+# Liveness and readiness probes
 livenessProbe:
   httpGet:
     path: /
@@ -95,7 +85,7 @@ readinessProbe:
     path: /
     port: http
 
-# This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+# Autoscaling configuration
 autoscaling:
   enabled: false
   minReplicas: 1
@@ -103,32 +93,27 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 
-# Additional volumes on the output Deployment definition.
+# Additional volumes
 volumes: []
-# - name: foo
-#   secret:
-#     secretName: mysecret
-#     optional: false
 
-# Additional volumeMounts on the output Deployment definition.
+# Additional volume mounts
 volumeMounts: []
-# - name: foo
-#   mountPath: "/etc/foo"
-#   readOnly: true
 
+# Node selector
 nodeSelector: {}
 
+# Tolerations
 tolerations: []
 
+# Affinity rules
 affinity: {}
-
 
 # Components mapped from docker-compose.yaml
 components:
   ai:
     image:
       repository: ghcr.io/slarops/slar-ai
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: true
@@ -138,23 +123,16 @@ components:
       - name: PORT
         value: "8002"
       - name: OPENAI_API_KEY
-        value: ""
-    # ingress:
-    #   enabled: false
-    #   className: ""
-    #   annotations: {}
-    #   hosts:
-    #     - host: ai.example.com
-    #       paths:
-    #         - path: /
-    #           pathType: Prefix
-    #   tls: []
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: openai-api-key
 
   api:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: latest
-      pullPolicy: IfNotPresent
+      tag: sha-cdba6c5
+      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
@@ -163,31 +141,42 @@ components:
       - name: PORT
         value: "8080"
       - name: DATABASE_URL
-        value: "postgres://postgres:postgres@db:5432/postgres?sslmode=disable"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: SUPABASE_URL
-        value: "http://localhost:8000"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-url
       - name: SUPABASE_ANON_KEY
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-anon-key
       - name: SUPABASE_JWT_SECRET
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-jwt-secret
+      - name: SLAR_ENV
+        value: "production"
 
   worker:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: false
     command: ["./worker"]
     env:
       - name: DATABASE_URL
-        value: "postgres://postgres:postgres@db:5432/postgres?sslmode=disable"
-      - name: SLACK_BOT_TOKEN
-        value: ""
-      - name: SLACK_APP_TOKEN
-        value: ""
-      - name: API_BASE_URL
-        value: "http://slar-api:8080"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: POLL_INTERVAL
         value: "1"
       - name: BATCH_SIZE
@@ -202,17 +191,26 @@ components:
   slack-worker:
     image:
       repository: ghcr.io/slarops/slar-slack-worker
-      tag: latest
+      tag: sha-de04aec
       pullPolicy: IfNotPresent
     service:
       enabled: false
     env:
       - name: DATABASE_URL
-        value: "postgres://postgres:postgres@db:5432/postgres?sslmode=disable"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: database-url
       - name: SLACK_BOT_TOKEN
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: slack-bot-token
       - name: SLACK_APP_TOKEN
-        value: ""
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: slack-app-token
       - name: API_BASE_URL
         value: "http://slar-api:8080"
       - name: POLL_INTERVAL
@@ -229,34 +227,85 @@ components:
   web:
     image:
       repository: ghcr.io/slarops/slar-web
-      tag: latest
-      pullPolicy: IfNotPresent
+      tag: sha-cdba6c5
+      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
       port: 3000
     env:
       - name: NEXT_PUBLIC_SUPABASE_URL
-        value: "http://localhost:8000"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-url
       - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
-        value: ""
-      - name: NEXT_PUBLIC_API_URL
-        value: "http://slar-api:8080"
-      - name: NEXT_PUBLIC_WS_URL
-        value: "ws://slar-ai:8002/ws/chat"
-      - name: NEXT_PUBLIC_APP_NAME
-        value: "SLAR"
-      - name: NEXT_PUBLIC_APP_URL
-        value: "http://localhost:3000"
-      - name: NEXT_PUBLIC_AI_BASE_URL
-        value: "http://slar-ai:8002"
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-anon-key
     ingress:
       enabled: false
       className: ""
       annotations: {}
       hosts:
-        - host: slar.example.com
+        - host: slarhq.com
           paths:
             - path: /
               pathType: Prefix
       tls: []
+
+  kong:
+    image:
+      repository: kong
+      tag: "2.8.1"
+      pullPolicy: IfNotPresent
+    service:
+      enabled: true
+      type: LoadBalancer
+      port: 8000
+      ports:
+        - name: proxy
+          port: 8000
+          targetPort: 8000
+          protocol: TCP
+        - name: proxy-ssl
+          port: 8443
+          targetPort: 8443
+          protocol: TCP
+        - name: admin
+          port: 8001
+          targetPort: 8001
+          protocol: TCP
+    env:
+      - name: KONG_DATABASE
+        value: "off"
+      - name: KONG_DECLARATIVE_CONFIG
+        value: "/home/kong/kong.yml"
+      - name: KONG_DNS_ORDER
+        value: "LAST,A,CNAME"
+      - name: KONG_PLUGINS
+        value: "request-transformer,cors,key-auth,acl,basic-auth"
+      - name: KONG_NGINX_PROXY_PROXY_BUFFER_SIZE
+        value: "160k"
+      - name: KONG_NGINX_PROXY_PROXY_BUFFERS
+        value: "64 160k"
+      - name: DASHBOARD_USERNAME
+        value: "admin"
+      - name: DASHBOARD_PASSWORD
+        value: "admin"
+    configMap:
+      enabled: true
+      name: kong-config
+    
+    ingress:
+      enabled: true
+      className: ""
+      annotations: {}
+      hosts:
+        - host: slarhq.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+

@@ -1,0 +1,78 @@
+{{- $root := . -}}
+{{- range $name, $comp := ( .Values.components | default dict ) }}
+{{- if and $comp.configMap $comp.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}-config
+  labels:
+    {{- include "slar.componentLabels" (dict "root" $root "name" $name) | nindent 4 }}
+data:
+  {{- if eq $name "kong" }}
+  temp.yml: |
+    _format_version: '2.1'
+    _transform: true
+
+    ###
+    ### Consumers / Users
+    ###
+    consumers:
+      - username: DASHBOARD
+
+    ###
+    ### API Routes
+    ###
+    services:
+      ## API Service - Main Backend API
+      - name: api-service
+        _comment: 'API: /api/* -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "api") }}:8080/*'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "api") }}:8080/
+        routes:
+          - name: api-routes
+            strip_path: true
+            paths:
+              - /api
+        plugins:
+          - name: cors
+
+      ## AI Service
+      - name: ai-service
+        _comment: 'AI: /ai/* -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "ai") }}:8002/*'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "ai") }}:8002/
+        routes:
+          - name: ai-routes
+            strip_path: true
+            paths:
+              - /ai/
+        plugins:
+          - name: cors
+
+      ## WebSocket for AI Chat
+      - name: ai-websocket
+        _comment: 'WebSocket: /ws/chat -> ws://{{ include "slar.componentFullname" (dict "root" $root "name" "ai") }}:8002/ws/chat'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "ai") }}:8002
+        protocol: ws
+        routes:
+          - name: ai-ws-route
+            strip_path: false
+            paths:
+              - /ws/chat
+        plugins:
+          - name: cors
+
+      ## Web Frontend
+      - name: web-service
+        _comment: 'Web: /* -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/*'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/
+        routes:
+          - name: web-routes
+            strip_path: false
+            paths:
+              - /
+        plugins:
+          - name: cors
+  {{- end }}
+---
+{{- end }}
+{{- end }}
+

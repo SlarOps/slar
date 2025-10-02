@@ -22,8 +22,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
-ENV NEXT_PUBLIC_SUPABASE_URL=""
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+# These will be injected at runtime, so we don't set them here
+# ENV NEXT_PUBLIC_SUPABASE_URL=""
+# ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=""
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001

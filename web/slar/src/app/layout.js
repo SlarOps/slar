@@ -1,19 +1,8 @@
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import MobileNav from "../components/MobileNav";
 import { AuthProvider } from "../contexts/AuthContext";
 import AuthWrapper from "../components/auth/AuthWrapper";
 import { Toaster } from 'react-hot-toast';
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata = {
   title: "SLAR Web",
@@ -30,7 +19,7 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className="font-sans antialiased">
         <AuthProvider>
           <AuthWrapper>
             <MobileNav />
@@ -38,7 +27,7 @@ export default function RootLayout({ children }) {
               {children}
             </div>
           </AuthWrapper>
-          <Toaster 
+          <Toaster
             position="top-right"
             toastOptions={{
               duration: 4000,

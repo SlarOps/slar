@@ -1,0 +1,61 @@
+_format_version: '2.1'
+_transform: true
+
+###
+### Consumers / Users
+###
+consumers:
+  - username: DASHBOARD
+
+###
+### API Routes
+###
+services:
+  ## API Service - Main Backend API
+  - name: api-service
+    _comment: 'API: /api/* -> http://api:8080/*'
+    url: http://api:8080/
+    routes:
+      - name: api-routes
+        strip_path: true
+        paths:
+          - /api
+    plugins:
+      - name: cors
+
+  ## AI Service
+  - name: ai-service
+    _comment: 'AI: /ai/* -> http://ai:8002/*'
+    url: http://ai:8002/
+    routes:
+      - name: ai-routes
+        strip_path: true
+        paths:
+          - /ai/
+    plugins:
+      - name: cors
+
+  ## WebSocket for AI Chat
+  - name: ai-websocket
+    _comment: 'WebSocket: /ws/chat -> ws://ai:8002/ws/chat'
+    url: http://ai:8002
+    protocol: ws
+    routes:
+      - name: ai-ws-route
+        strip_path: false
+        paths:
+          - /ws/chat
+    plugins:
+      - name: cors
+
+  ## Web Frontend
+  - name: web-service
+    _comment: 'Web: /* -> http://web:3000/*'
+    url: http://web:3000/
+    routes:
+      - name: web-routes
+        strip_path: false
+        paths:
+          - /
+    plugins:
+      - name: cors

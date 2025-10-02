@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { auth, supabase } from '../lib/supabase';
+import { auth, initSupabase } from '../lib/supabase';
 
 const AuthContext = createContext({});
 
@@ -19,27 +19,89 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    const getInitialSession = async () => {
-      const { session } = await auth.getSession();
-      setSession(session);
-      setUser(session?.user || null);
-      setLoading(false);
-    };
+    let subscription = null;
 
-    getInitialSession();
+    // Initialize Supabase and setup auth
+    const initAuth = async () => {
+      try {
+        // Initialize Supabase client first
+        await initSupabase();
 
-    // Listen for auth changes
-    const { data: { subscription } } = auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event, session);
-        setSession(session);
-        setUser(session?.user || null);
+        // Get initial session and validate it
+        const { session, error } = await auth.getSession();
+
+        if (error) {
+          console.error('Session error:', error);
+          // Clear invalid session from storage
+          if (error.message?.includes('session_id claim') ||
+              error.message?.includes('JWT') ||
+              error.message?.includes('does not exist')) {
+            console.log('Clearing invalid session from storage');
+            localStorage.removeItem('slar-auth-token');
+            setSession(null);
+            setUser(null);
+          }
+        } else if (session) {
+          // Validate session by trying to get user
+          const { user: validUser, error: userError } = await auth.getUser();
+
+          if (userError) {
+            console.error('User validation error:', userError);
+            // Session is invalid, clear it
+            console.log('Clearing invalid session');
+            localStorage.removeItem('slar-auth-token');
+            setSession(null);
+            setUser(null);
+          } else {
+            // Session is valid
+            setSession(session);
+            setUser(validUser);
+          }
+        } else {
+          // No session
+          setSession(null);
+          setUser(null);
+        }
+
+        // Listen for auth changes (use async version)
+        const { data } = await auth.onAuthStateChangeAsync(
+          async (event, session) => {
+            console.log('Auth state changed:', event, session);
+
+            if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+              // Clear storage on sign out
+              localStorage.removeItem('slar-auth-token');
+              setSession(null);
+              setUser(null);
+            } else if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+              setSession(session);
+              setUser(session?.user || null);
+            } else {
+              setSession(session);
+              setUser(session?.user || null);
+            }
+          }
+        );
+
+        subscription = data.subscription;
+      } catch (error) {
+        console.error('Failed to initialize auth:', error);
+        // Clear any invalid data
+        localStorage.removeItem('slar-auth-token');
+        setSession(null);
+        setUser(null);
+      } finally {
         setLoading(false);
       }
-    );
+    };
 
-    return () => subscription.unsubscribe();
+    initAuth();
+
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
   }, []);
 
   const signIn = async (email, password) => {
@@ -74,12 +136,24 @@ export const AuthProvider = ({ children }) => {
     setLoading(true);
     try {
       const { error } = await auth.signOut();
-      if (error) throw error;
+
+      // Clear local state even if signOut fails (e.g., session already expired)
       setUser(null);
       setSession(null);
+
+      // Only throw if it's not a session missing error
+      if (error && error.message !== 'Auth session missing!') {
+        throw error;
+      }
+
       return { error: null };
     } catch (error) {
       console.error('Sign out error:', error);
+
+      // Still clear local state on error
+      setUser(null);
+      setSession(null);
+
       return { error };
     } finally {
       setLoading(false);

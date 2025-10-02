@@ -8,7 +8,7 @@ export default function WebhookURLs({ apiKeys }) {
   const [selectedAPIKey, setSelectedAPIKey] = useState('');
   const [copiedURL, setCopiedURL] = useState('');
 
-  const baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://your-domain.com';
+  const baseURL = '/api'
 
   // Auto-select first available API key when apiKeys change
   useEffect(() => {

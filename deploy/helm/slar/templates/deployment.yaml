@@ -42,15 +42,34 @@ spec:
           {{- end }}
           image: "{{ $comp.image.repository }}:{{ $comp.image.tag | default $root.Chart.AppVersion }}"
           imagePullPolicy: {{ default $root.Values.image.pullPolicy $comp.image.pullPolicy | default "IfNotPresent" }}
+          {{- if eq $name "kong" }}
+          {{- if and $comp.service $comp.service.ports }}
+          ports:
+            {{- range $comp.service.ports }}
+            - name: {{ .name }}
+              containerPort: {{ .targetPort }}
+              protocol: {{ .protocol }}
+            {{- end }}
+          {{- end }}
+          {{- else }}
           {{- if and $comp.service $comp.service.port }}
           ports:
             - name: http
               containerPort: {{ $comp.service.port }}
               protocol: TCP
           {{- end }}
+          {{- end }}
           {{- with $comp.command }}
           command:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if eq $name "kong" }}
+          {{- if and $comp.configMap $comp.configMap.enabled }}
+          command:
+            - "/bin/bash"
+            - "-c"
+            - 'eval "echo \"$$(cat /home/kong/temp.yml)\"" > /home/kong/kong.yml && /docker-entrypoint.sh kong docker-start'
+          {{- end }}
           {{- end }}
           {{- with $comp.env }}
           env:
@@ -71,13 +90,32 @@ spec:
           resources:
             {{- toYaml $root.Values.resources | nindent 12 }}
           {{- end }}
+          {{- if eq $name "kong" }}
+          {{- if and $comp.configMap $comp.configMap.enabled }}
+          volumeMounts:
+            - name: kong-config
+              mountPath: /home/kong/temp.yml
+              subPath: temp.yml
+              readOnly: true
+          {{- end }}
+          {{- else }}
           {{- with $root.Values.volumeMounts }}
           volumeMounts:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- end }}
+      {{- if eq $name "kong" }}
+      {{- if and $comp.configMap $comp.configMap.enabled }}
+      volumes:
+        - name: kong-config
+          configMap:
+            name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}-config
+      {{- end }}
+      {{- else }}
       {{- with $root.Values.volumes }}
       volumes:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
       {{- with $root.Values.nodeSelector }}
       nodeSelector:
