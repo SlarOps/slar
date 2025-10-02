@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { MarkdownRenderer } from '../ui';
 
 export default function IncidentsTable({ 
   incidents = [], 
@@ -40,11 +41,10 @@ export default function IncidentsTable({
     if (!priority) return <span className="text-gray-400 text-sm">--</span>;
     
     const priorityStyles = {
-      P0: 'bg-red-600 text-white',
-      P1: 'bg-orange-500 text-white', 
-      P2: 'bg-yellow-500 text-white',
-      P3: 'bg-blue-500 text-white',
-      P4: 'bg-gray-500 text-white'
+      critical: 'bg-red-600 text-white',
+      high: 'bg-orange-500 text-white', 
+      warning: 'bg-yellow-500 text-white',
+      info: 'bg-blue-500 text-white'
     };
 
     return (
@@ -360,7 +360,7 @@ export default function IncidentsTable({
                 </td>
 
                 <td className="px-3 py-4 whitespace-nowrap">
-                  {getPriorityBadge(incident.priority)}
+                  {getPriorityBadge(incident.severity)}
                 </td>
 
                 <td className="px-3 py-4 whitespace-nowrap">
@@ -378,8 +378,12 @@ export default function IncidentsTable({
                   <div className="text-sm text-gray-900 dark:text-white">
                     <div className="font-medium">{incident.title}</div>
                     {incident.description && (
-                      <div className="text-gray-500 dark:text-gray-400 truncate max-w-md">
-                        {incident.description}
+                      <div className="max-w-md line-clamp-1">
+                        <MarkdownRenderer
+                          content={incident.description}
+                          size="sm"
+                          className="text-gray-500 dark:text-gray-400"
+                        />
                       </div>
                     )}
                     {incident.incident_number && (

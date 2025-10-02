@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,6 +159,42 @@ func (h *WebhookHandler) ReceiveWebhook(c *gin.Context) {
 func (h *WebhookHandler) processPrometheusWebhook(payload map[string]interface{}) []ProcessedAlert {
 	var alerts []ProcessedAlert
 
+	// Try to unmarshal into typed struct first
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal Prometheus payload: %v", err)
+		return h.processPrometheusWebhookLegacy(payload)
+	}
+
+	var webhook PrometheusWebhook
+	if err := json.Unmarshal(payloadBytes, &webhook); err != nil {
+		log.Printf("WARN: Failed to unmarshal Prometheus webhook, falling back to legacy: %v", err)
+		return h.processPrometheusWebhookLegacy(payload)
+	}
+
+	// Convert each alert to ProcessedAlert
+	for _, prometheusAlert := range webhook.Alerts {
+		alert := prometheusAlert.ToProcessedAlert()
+
+		// Generate fingerprint if not provided
+		if alert.Fingerprint == "" {
+			alertname := prometheusAlert.Labels["alertname"]
+			instance := prometheusAlert.Labels["instance"]
+			job := prometheusAlert.Labels["job"]
+			alert.Fingerprint = fmt.Sprintf("%s-%s-%s", alertname, instance, job)
+		}
+
+		alerts = append(alerts, alert)
+	}
+
+	log.Printf("INFO: Processed %d Prometheus alerts", len(alerts))
+	return alerts
+}
+
+// Legacy fallback for Prometheus webhook processing
+func (h *WebhookHandler) processPrometheusWebhookLegacy(payload map[string]interface{}) []ProcessedAlert {
+	var alerts []ProcessedAlert
+
 	// Prometheus AlertManager sends alerts in "alerts" array
 	if alertsData, ok := payload["alerts"].([]interface{}); ok {
 		for _, alertData := range alertsData {
@@ -212,23 +249,68 @@ func (h *WebhookHandler) processPrometheusWebhook(payload map[string]interface{}
 func (h *WebhookHandler) processDatadogWebhook(payload map[string]interface{}) []ProcessedAlert {
 	var alerts []ProcessedAlert
 
+	// Try to unmarshal into typed struct first
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal Datadog payload: %v", err)
+		return h.processDatadogWebhookLegacy(payload)
+	}
+
+	var webhook DatadogWebhook
+	if err := json.Unmarshal(payloadBytes, &webhook); err != nil {
+		log.Printf("WARN: Failed to unmarshal Datadog webhook, falling back to legacy: %v", err)
+		return h.processDatadogWebhookLegacy(payload)
+	}
+
+	// Convert to ProcessedAlert
+	alert := webhook.ToProcessedAlert()
+	alerts = append(alerts, alert)
+
+	log.Printf("INFO: Processed Datadog alert: %s (Priority: %s, Transition: %s)",
+		webhook.Title, webhook.AlertPriority, webhook.Transition)
+	return alerts
+}
+
+// Legacy fallback for Datadog webhook processing
+func (h *WebhookHandler) processDatadogWebhookLegacy(payload map[string]interface{}) []ProcessedAlert {
+	var alerts []ProcessedAlert
+
+	// Extract fields from payload
+	title := getStringFromMap(payload, "title", "")
+	transition := getStringFromMap(payload, "alert_transition", "")
+	alertPriority := getStringFromMap(payload, "alert_priority", "")
+
+	// Determine severity based on alert_priority (P1, P2, P3, P4)
+	// If recovered, always use "info" severity
+	severity := "warning"
+	transitionLower := strings.ToLower(transition)
+
+	if strings.Contains(transitionLower, "recovered") {
+		severity = "info"
+	} else {
+		// Use alert_priority to determine severity
+		severity = mapDatadogPriority(alertPriority)
+	}
+
 	// Datadog webhook structure
 	alert := ProcessedAlert{
-		AlertName:   getStringFromMap(payload, "alert_name", "datadog-alert"),
-		Severity:    mapDatadogSeverity(getStringFromMap(payload, "priority", "normal")),
-		Status:      mapDatadogStatus(getStringFromMap(payload, "alert_transition", "triggered")),
-		Summary:     getStringFromMap(payload, "body", ""),
-		Description: getStringFromMap(payload, "title", ""),
+		AlertName:   title,
+		Severity:    severity,
+		Status:      mapDatadogStatus(transition),
+		Summary:     title,
+		Description: getStringFromMap(payload, "body", ""),
 		Labels: map[string]interface{}{
-			"source":   "datadog",
-			"monitor":  getStringFromMap(payload, "alert_name", ""),
-			"priority": getStringFromMap(payload, "priority", ""),
+			"source":         "datadog",
+			"event_id":       getStringFromMap(payload, "id", ""),
+			"event_type":     getStringFromMap(payload, "event_type", ""),
+			"alert_priority": alertPriority,
 		},
 		Annotations: map[string]interface{}{
-			"datadog_url": getStringFromMap(payload, "link", ""),
-			"org_name":    getStringFromMap(payload, "org_name", ""),
+			"org_id":       getStringFromMap(payload, "org.id", ""),
+			"org_name":     getStringFromMap(payload, "org.name", ""),
+			"last_updated": getStringFromMap(payload, "last_updated", ""),
 		},
-		StartsAt: time.Now(),
+		StartsAt: parseDatadogTimestamp(payload),
 	}
 
 	alerts = append(alerts, alert)
@@ -237,6 +319,31 @@ func (h *WebhookHandler) processDatadogWebhook(payload map[string]interface{}) [
 
 // Process Grafana webhook
 func (h *WebhookHandler) processGrafanaWebhook(payload map[string]interface{}) []ProcessedAlert {
+	var alerts []ProcessedAlert
+
+	// Try to unmarshal into typed struct first
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal Grafana payload: %v", err)
+		return h.processGrafanaWebhookLegacy(payload)
+	}
+
+	var webhook GrafanaWebhook
+	if err := json.Unmarshal(payloadBytes, &webhook); err != nil {
+		log.Printf("WARN: Failed to unmarshal Grafana webhook, falling back to legacy: %v", err)
+		return h.processGrafanaWebhookLegacy(payload)
+	}
+
+	// Convert to ProcessedAlert
+	alert := webhook.ToProcessedAlert()
+	alerts = append(alerts, alert)
+
+	log.Printf("INFO: Processed Grafana alert: %s (State: %s)", webhook.RuleName, webhook.State)
+	return alerts
+}
+
+// Legacy fallback for Grafana webhook processing
+func (h *WebhookHandler) processGrafanaWebhookLegacy(payload map[string]interface{}) []ProcessedAlert {
 	var alerts []ProcessedAlert
 
 	alert := ProcessedAlert{
@@ -263,6 +370,39 @@ func (h *WebhookHandler) processGrafanaWebhook(payload map[string]interface{}) [
 
 // Process AWS CloudWatch webhook
 func (h *WebhookHandler) processAWSWebhook(payload map[string]interface{}) []ProcessedAlert {
+	var alerts []ProcessedAlert
+
+	// Try to unmarshal into typed struct first
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal AWS payload: %v", err)
+		return h.processAWSWebhookLegacy(payload)
+	}
+
+	var webhook AWSWebhook
+	if err := json.Unmarshal(payloadBytes, &webhook); err != nil {
+		log.Printf("WARN: Failed to unmarshal AWS webhook, falling back to legacy: %v", err)
+		return h.processAWSWebhookLegacy(payload)
+	}
+
+	// AWS SNS wraps CloudWatch alarm in Message field
+	if webhook.Message != "" {
+		var alarm AWSCloudWatchAlarm
+		if err := json.Unmarshal([]byte(webhook.Message), &alarm); err == nil {
+			alert := alarm.ToProcessedAlert()
+			alerts = append(alerts, alert)
+			log.Printf("INFO: Processed AWS CloudWatch alarm: %s (State: %s)", alarm.AlarmName, alarm.NewStateValue)
+			return alerts
+		}
+		log.Printf("WARN: Failed to unmarshal AWS CloudWatch alarm from Message field")
+	}
+
+	// Fallback to legacy processing
+	return h.processAWSWebhookLegacy(payload)
+}
+
+// Legacy fallback for AWS webhook processing
+func (h *WebhookHandler) processAWSWebhookLegacy(payload map[string]interface{}) []ProcessedAlert {
 	var alerts []ProcessedAlert
 
 	// AWS SNS message structure
@@ -298,6 +438,32 @@ func (h *WebhookHandler) processAWSWebhook(payload map[string]interface{}) []Pro
 
 // Process generic webhook
 func (h *WebhookHandler) processGenericWebhook(payload map[string]interface{}) []ProcessedAlert {
+	var alerts []ProcessedAlert
+
+	// Try to unmarshal into typed struct first
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal generic payload: %v", err)
+		return h.processGenericWebhookLegacy(payload)
+	}
+
+	var webhook GenericWebhook
+	if err := json.Unmarshal(payloadBytes, &webhook); err != nil {
+		log.Printf("WARN: Failed to unmarshal generic webhook, falling back to legacy: %v", err)
+		return h.processGenericWebhookLegacy(payload)
+	}
+
+	// Convert to ProcessedAlert
+	alert := webhook.ToProcessedAlert()
+	alerts = append(alerts, alert)
+
+	log.Printf("INFO: Processed generic alert: %s (Severity: %s, Status: %s)",
+		webhook.AlertName, webhook.Severity, webhook.Status)
+	return alerts
+}
+
+// Legacy fallback for generic webhook processing
+func (h *WebhookHandler) processGenericWebhookLegacy(payload map[string]interface{}) []ProcessedAlert {
 	var alerts []ProcessedAlert
 
 	alert := ProcessedAlert{
@@ -792,22 +958,42 @@ func getMapFromMap(m map[string]interface{}, key string) map[string]interface{} 
 	return make(map[string]interface{})
 }
 
-// Severity mapping functions
-func mapDatadogSeverity(priority string) string {
-	switch strings.ToLower(priority) {
-	case "p1", "critical":
+// Parse Datadog timestamp (milliseconds since epoch)
+func parseDatadogTimestamp(payload map[string]interface{}) time.Time {
+	// Try to get timestamp from 'date' or 'last_updated' field
+	timestampStr := getStringFromMap(payload, "date", "")
+	if timestampStr == "" {
+		timestampStr = getStringFromMap(payload, "last_updated", "")
+	}
+
+	if timestampStr != "" {
+		// Datadog sends timestamp in milliseconds
+		if timestampMs, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+			return time.Unix(0, timestampMs*int64(time.Millisecond))
+		}
+	}
+
+	// Fallback to current time if parsing fails
+	return time.Now()
+}
+
+// Priority mapping functions
+func mapDatadogPriority(priority string) string {
+	switch strings.ToUpper(priority) {
+	case "P1":
 		return "critical"
-	case "p2", "high":
+	case "P2":
 		return "high"
-	case "p3", "normal":
+	case "P3":
 		return "warning"
-	case "p4", "low":
+	case "P4":
 		return "info"
 	default:
 		return "warning"
 	}
 }
 
+// Status mapping functions
 func mapDatadogStatus(transition string) string {
 	switch strings.ToLower(transition) {
 	case "triggered", "alerting":

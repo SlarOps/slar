@@ -1,6 +1,7 @@
 // UI Components Export
 export { default as Toast, toast } from './Toast';
 export { default as Modal, ModalFooter, ModalButton, ConfirmationModal, LoadingModal } from './Modal';
+export { default as MarkdownRenderer } from './MarkdownRenderer';
 
 // Form Components
 export { default as Input } from './Input';

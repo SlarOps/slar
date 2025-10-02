@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiClient } from '../../../lib/api';
+import { MarkdownRenderer } from '../../../components/ui';
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -206,9 +207,11 @@ export default function IncidentDetailPage() {
                   {incident.title}
                 </h4>
                 {incident.description && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                    {incident.description}
-                  </p>
+                  <MarkdownRenderer
+                    content={incident.description}
+                    size="base"
+                    className="text-sm text-gray-600 dark:text-gray-400"
+                  />
                 )}
               </div>
               

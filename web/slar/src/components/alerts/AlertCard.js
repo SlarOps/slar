@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { MarkdownRenderer } from '../ui';
 
 function getSeverityColor(severity) {
   switch (severity) {
@@ -104,10 +105,12 @@ export default function AlertCard({ alert, onAcknowledge, onResolve, onViewDetai
 
       {/* Description */}
       {alert.description && (
-        <div className="mb-3">
-          <p className={`text-sm text-gray-600 dark:text-gray-400 ${isExpanded ? '' : 'line-clamp-2'}`}>
-            {alert.description}
-          </p>
+        <div className={`mb-3 ${isExpanded ? '' : 'line-clamp-3'}`}>
+          <MarkdownRenderer
+            content={alert.description}
+            size="sm"
+            className="text-sm text-gray-600 dark:text-gray-400"
+          />
         </div>
       )}
 

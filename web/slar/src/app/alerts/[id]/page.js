@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { MarkdownRenderer } from '../../../components/ui';
 
 // Mock detailed alert data
 const MOCK_ALERT_DETAIL = {
@@ -210,10 +211,12 @@ export default function AlertDetailPage() {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
               {alert.title}
             </h2>
-            
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              {alert.description}
-            </p>
+
+            <MarkdownRenderer
+              content={alert.description}
+              size="base"
+              className="text-gray-600 dark:text-gray-400 mb-4"
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div>

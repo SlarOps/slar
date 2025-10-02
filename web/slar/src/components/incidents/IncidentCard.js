@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { MarkdownRenderer } from '../ui';
 
 export default function IncidentCard({ incident, onAction, showActions = true }) {
   const [actionLoading, setActionLoading] = useState(false);
@@ -130,9 +131,13 @@ export default function IncidentCard({ incident, onAction, showActions = true })
 
       {/* Description */}
       {incident.description && (
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 line-clamp-2">
-          {incident.description}
-        </p>
+        <div className="mb-3 line-clamp-2">
+          <MarkdownRenderer
+            content={incident.description}
+            size="sm"
+            className="text-sm text-gray-600 dark:text-gray-400"
+          />
+        </div>
       )}
 
       {/* Metadata */}
