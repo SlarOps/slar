@@ -206,6 +206,7 @@ func (d *DatadogWebhook) ToProcessedAlert() ProcessedAlert {
 		Status:      mapDatadogStatus(d.Transition),
 		Summary:     d.Title, // Summary is the body content
 		Description: d.Body,  // Description is the title
+		Priority:    d.AlertPriority,
 		Labels: map[string]interface{}{
 			"source":         "datadog",
 			"event_id":       d.ID,

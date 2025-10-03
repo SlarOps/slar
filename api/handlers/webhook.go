@@ -50,6 +50,7 @@ type ProcessedAlert struct {
 	StartsAt    time.Time              `json:"starts_at"`
 	EndsAt      *time.Time             `json:"ends_at,omitempty"`
 	Fingerprint string                 `json:"fingerprint"` // For deduplication
+	Priority    string                 `json:"priority"`
 }
 
 // ResolvedServiceInfo holds service resolution results
@@ -266,8 +267,8 @@ func (h *WebhookHandler) processDatadogWebhook(payload map[string]interface{}) [
 	alert := webhook.ToProcessedAlert()
 	alerts = append(alerts, alert)
 
-	log.Printf("INFO: Processed Datadog alert: %s (Priority: %s, Transition: %s)",
-		webhook.Title, webhook.AlertPriority, webhook.Transition)
+	log.Printf("INFO: Processed Datadog alert: %s (Priority: %s, Transition: %s, Severity: %s)",
+		webhook.Title, webhook.AlertPriority, webhook.Transition, alert.Severity)
 	return alerts
 }
 
@@ -811,6 +812,7 @@ func (h *WebhookHandler) createIncidentAtomic(integration db.Integration, alert 
 		Title:       alert.AlertName,
 		Description: alert.Description,
 		Severity:    alert.Severity,
+		Priority:    alert.Priority,
 		Status:      db.IncidentStatusTriggered,
 		Source:      "webhook",
 		Urgency:     db.IncidentUrgencyHigh, // Default to high for webhook incidents

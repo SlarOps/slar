@@ -70,7 +70,7 @@ export default function AIAgentPage() {
   useEffect(() => {
     const connectWebSocket = () => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      var wsUrl = `${scheme}://${window.location.host}/ws/chat`;
+      var wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session?.access_token}`;
       wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL? process.env.NEXT_PUBLIC_AI_WS_URL : wsUrl;
       
       setConnectionStatus("connecting");

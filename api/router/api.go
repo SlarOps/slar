@@ -367,6 +367,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 		// DASHBOARD
 		protected.GET("/dashboard", dashboardHandler.GetDashboard)
+
+		// AI AGENT
+		protected.GET("/verify-token", func(c *gin.Context) {
+			c.JSON(200, gin.H{"message": "Token is valid"})
+		})
 	}
 
 	return r

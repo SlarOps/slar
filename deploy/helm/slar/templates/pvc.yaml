@@ -1,0 +1,25 @@
+{{- $root := . -}}
+{{- range $name, $comp := ( .Values.components | default dict ) }}
+{{- if and $comp.persistence $comp.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}-data
+  labels:
+    {{- include "slar.componentLabels" (dict "root" $root "name" $name) | nindent 4 }}
+spec:
+  accessModes:
+    - {{ $comp.persistence.accessMode | default "ReadWriteOnce" }}
+  {{- if $comp.persistence.storageClass }}
+  {{- if (eq "-" $comp.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: "{{ $comp.persistence.storageClass }}"
+  {{- end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $comp.persistence.size | default "10Gi" }}
+---
+{{- end }}
+{{- end }}

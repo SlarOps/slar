@@ -4,6 +4,7 @@ import os
 from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime
 import hashlib
+from contextlib import asynccontextmanager
 
 import re
 import aiofiles
@@ -13,6 +14,7 @@ from pathlib import Path
 import aiohttp
 from io import BytesIO
 import zipfile
+import requests
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.base import TaskResult
@@ -32,14 +34,59 @@ from autogen_agentchat.base import Handoff
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
 
+import os
+
 from tools_slar import get_incidents
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+data_store = os.getenv("DATA_STORE", os.path.dirname(__file__))
 
 # Constants for JSON-based source tracking
-SOURCES_FILE = os.path.join(os.path.dirname(__file__), "indexed_sources.json")
+SOURCES_FILE = os.path.join(data_store, "indexed_sources.json")
+
+# Initialize vector memory
+rag_memory = ChromaDBVectorMemory(
+    config=PersistentChromaDBVectorMemoryConfig(
+        collection_name="autogen_docs",
+        persistence_path=os.path.join(data_store, ".chromadb_autogen"),
+        k=3,  # Return top 3 results
+        score_threshold=0.4,  # Minimum similarity score
+    )
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize ChromaDB memory and download models
+    print("🚀 Starting vector store initialization...")
+    logger.info("Starting vector store initialization...")
+    try:
+        # Initialize the memory system by performing a simple query
+        # This will trigger the model download if it hasn't happened yet
+        print("📥 Triggering model download by performing initial query...")
+        logger.info("Triggering model download by performing initial query...")
+        await rag_memory.query(
+            MemoryContent(content="initialization", mime_type=MemoryMimeType.TEXT)
+        )
+        print("✅ Vector store initialized successfully - models are ready")
+        logger.info("Vector store initialized successfully - models are ready")
+    except Exception as e:
+        print(f"❌ Failed to initialize vector store: {str(e)}")
+        logger.error(f"Failed to initialize vector store: {str(e)}")
+        # Don't fail startup, but log the error
+
+    yield
+
+    # Shutdown: Clean up resources if needed
+    print("🔄 Shutting down vector store...")
+    logger.info("Shutting down vector store...")
+    try:
+        await rag_memory.close()
+    except Exception as e:
+        print(f"❌ Error during vector store shutdown: {str(e)}")
+        logger.error(f"Error during vector store shutdown: {str(e)}")
+
+app = FastAPI(lifespan=lifespan)
 
 # Pydantic models for API requests/responses
 class IncidentRunbookRequest(BaseModel):
@@ -92,16 +139,7 @@ class DocumentDetailResponse(BaseModel):
     chunks: List[dict]
     total_chunks: int
 
-# Initialize vector memory
 
-rag_memory = ChromaDBVectorMemory(
-    config=PersistentChromaDBVectorMemoryConfig(
-        collection_name="autogen_docs",
-        persistence_path=os.path.join(str(Path.home()), ".chromadb_autogen"),
-        k=3,  # Return top 3 results
-        score_threshold=0.4,  # Minimum similarity score
-    )
-)
 
 # Add CORS middleware
 app.add_middleware(
@@ -165,6 +203,27 @@ async def get_history() -> list[dict[str, Any]]:
         return []
     async with aiofiles.open(history_path, "r") as file:
         return json.loads(await file.read())
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint that verifies vector store initialization."""
+    try:
+        # Check if vector store is initialized
+        vector_store_ready = hasattr(rag_memory, '_client') and rag_memory._client is not None
+
+        return {
+            "status": "healthy",
+            "vector_store_ready": vector_store_ready,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "vector_store_ready": False,
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.get("/history")
@@ -766,7 +825,15 @@ async def remove_indexed_source(source_id: str):
 
 @app.websocket("/ws/chat")
 async def chat(websocket: WebSocket):
-    await websocket.accept()
+    # make a request to api to verify token
+    # if failed, raise 401
+    API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
+    token = websocket.query_params.get("token")
+    response = requests.get(f"{API_BASE_URL}/verify-token", headers={"Authorization": f"Bearer {token}"})
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    else:
+        await websocket.accept()
 
     # User input function used by the team.
     async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
@@ -1223,7 +1290,6 @@ class GitHubDocumentIndexer:
 # Example usage
 if __name__ == "__main__":
     import uvicorn
-    import asyncio
-    # asyncio.run(index_runbooks_docs())
+    # Vector store initialization is now handled by FastAPI lifespan events
     uvicorn.run(app, host="0.0.0.0", port=8002)
     

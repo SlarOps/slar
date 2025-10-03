@@ -99,9 +99,16 @@ spec:
               readOnly: true
           {{- end }}
           {{- else }}
-          {{- with $root.Values.volumeMounts }}
+          {{- $volumeMounts := list }}
+          {{- if $comp.volumeMounts }}
+            {{- $volumeMounts = concat $volumeMounts $comp.volumeMounts }}
+          {{- end }}
+          {{- if $root.Values.volumeMounts }}
+            {{- $volumeMounts = concat $volumeMounts $root.Values.volumeMounts }}
+          {{- end }}
+          {{- if $volumeMounts }}
           volumeMounts:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml $volumeMounts | nindent 12 }}
           {{- end }}
           {{- end }}
       {{- if eq $name "kong" }}
@@ -112,9 +119,21 @@ spec:
             name: {{ include "slar.componentFullname" (dict "root" $root "name" $name) }}-config
       {{- end }}
       {{- else }}
-      {{- with $root.Values.volumes }}
+      {{- $volumes := list }}
+      {{- if $comp.volumes }}
+        {{- range $comp.volumes }}
+          {{- if and (eq .name "ai-data") .persistentVolumeClaim }}
+            {{- $_ := set .persistentVolumeClaim "claimName" (printf "%s-data" (include "slar.componentFullname" (dict "root" $root "name" $name))) }}
+          {{- end }}
+          {{- $volumes = append $volumes . }}
+        {{- end }}
+      {{- end }}
+      {{- if $root.Values.volumes }}
+        {{- $volumes = concat $volumes $root.Values.volumes }}
+      {{- end }}
+      {{- if $volumes }}
       volumes:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml $volumes | nindent 8 }}
       {{- end }}
       {{- end }}
       {{- with $root.Values.nodeSelector }}

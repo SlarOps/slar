@@ -1,18 +1,18 @@
 
-POST http://localhost:8000/api/webhook/datadog/7c5f0c56-d18d-4fe9-8787-03af6b46fba6
+POST http://localhost:8080/webhook/datadog/7c5f0c56-d18d-4fe9-8787-03af6b46fba6
 Content-Type: application/json
 
 {
     "id": "8306082202796025624",
     "last_updated": "1759343824000",
     "event_type": "query_alert_monitor",
-    "title": "[Triggered] High tracking",
+    "title": "[Triggered] High CPU Utilization for OpenSearch order domain",
     "date": "1759343824000",
     "org": {
         "id": "352347",
         "name": "vng"
     },
-    "body": "%%%\nWe get high datadog.event.tracking.intakev2.audit.bytes\nNotify: @webhook-slar\n\n[![Metric Graph](https://p.datadoghq.com/snapshot/view/dd-snapshots-prod/org_352347/2025-10-01/3be6d9318e32a0b89b518edce4c91e4012229fb5.png)](https://app.datadoghq.com/monitors/221164084?from_ts=1759342924000&to_ts=1759344124000&event_id=8306082202796025694&link_source=monitor_notif)\n\n**datadog.event.tracking.intakev2.audit.bytes** over ***** was **> 100.0** on average during the **last 5m**.\n\nThe monitor was last triggered at Wed Oct 01 2025 18:37:04 UTC.\n\n- - -\n\n[[Monitor Status](https://app.datadoghq.com/monitors/221164084?from_ts=1759342924000&to_ts=1759344124000&event_id=8306082202796025694&link_source=monitor_notif)] \u00b7 [[Edit Monitor](https://app.datadoghq.com/monitors/221164084/edit?link_source=monitor_notif)]\n%%%",
+    "body": "%%%\nHigh CPU Utilization for order cluster.\n- Check the CPU utilization of the OpenSearch domain and re-scale it manually\n- Check the opensearch autoscaling and make sure it is working\nNotify: @webhook-slar\n\n[![Metric Graph](https://p.datadoghq.com/snapshot/view/dd-snapshots-prod/org_352347/2025-10-01/3be6d9318e32a0b89b518edce4c91e4012229fb5.png)](https://app.datadoghq.com/monitors/221164084?from_ts=1759342924000&to_ts=1759344124000&event_id=8306082202796025694&link_source=monitor_notif)\n\n**datadog.event.tracking.intakev2.audit.bytes** over ***** was **> 100.0** on average during the **last 5m**.\n\nThe monitor was last triggered at Wed Oct 01 2025 18:37:04 UTC.\n\n- - -\n\n[[Monitor Status](https://app.datadoghq.com/monitors/221164084?from_ts=1759342924000&to_ts=1759344124000&event_id=8306082202796025694&link_source=monitor_notif)] \u00b7 [[Edit Monitor](https://app.datadoghq.com/monitors/221164084/edit?link_source=monitor_notif)]\n%%%",
     "transition":"Triggered",
     "aggregate":"06ade3da028604sd242ea8e46f521c93",
     "alert_priority":"P1"

@@ -127,6 +127,48 @@ components:
             key: openai-api-key
 ```
 
+## Persistent Storage
+
+The AI component requires persistent storage to preserve ChromaDB data, embedding models, and indexed documents across pod restarts. This is crucial for production deployments.
+
+### Enabling Persistent Storage
+
+```bash
+# Install with persistent storage enabled
+helm install slar . -f values-with-persistence.yaml
+
+# Or enable via command line
+helm install slar . \
+  --set components.ai.persistence.enabled=true \
+  --set components.ai.persistence.size=20Gi \
+  --set components.ai.persistence.storageClass=gp2
+```
+
+### Storage Configuration Options
+
+```yaml
+components:
+  ai:
+    persistence:
+      enabled: true
+      storageClass: ""  # Use default storage class
+      accessMode: ReadWriteOnce
+      size: 10Gi  # Adjust based on your data needs
+      mountPath: "/data"
+```
+
+### Storage Requirements
+
+- **Minimum**: 5Gi for basic operation
+- **Recommended**: 10-20Gi for production workloads
+- **Large deployments**: 50Gi+ for extensive document indexing
+
+The persistent volume stores:
+- ChromaDB vector database files
+- Downloaded embedding models (all-MiniLM-L6-v2, ~80MB)
+- Indexed document chunks and metadata
+- Application logs and state files
+
 ## Accessing the Application
 
 ### Via Kong Gateway (Recommended)

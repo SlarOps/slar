@@ -428,7 +428,7 @@ class SlackWorker:
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔥 {incident_short_id}: [Prometheus] {status_display.get(status, '[Unknown]')} {title}"
+                    "text": f"🔥 {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} {title}"
                 }
             },
             {
