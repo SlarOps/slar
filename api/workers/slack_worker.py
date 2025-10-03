@@ -304,6 +304,8 @@ class SlackWorker:
             # Get user and incident details
             user_data = self.get_user_data(notification_msg['user_id'])
             incident_data = self.get_incident_data(notification_msg['incident_id'])
+
+            logger.info(f"🔍 User data: {user_data}")
             
             if not user_data or not incident_data:
                 logger.error(f"❌ Missing user or incident data")
@@ -397,12 +399,39 @@ class SlackWorker:
     def get_incident_color(self, status: str) -> str:
         """Get color code based on incident status"""
         status_colors = {
-            'triggered': '#FF0000',    # Red - Critical/Active incident
+            'triggered': "#B72828",    # Red - Critical/Active incident
             'acknowledged': '#FFA500', # Orange/Yellow - Acknowledged but not resolved
             'resolved': '#00FF00',     # Green - Resolved
             'closed': '#808080'        # Gray - Closed
         }
         return status_colors.get(status.lower(), '#FF0000')  # Default to red
+
+    def clean_description_text(self, description: str) -> tuple[str, list[str]]:
+        """Clean description text for Slack notifications and extract image URLs"""
+        # Remove Datadog %%% markers and everything after "[![Metric Graph]"
+        clean_text = description.strip().replace("%%%", "").split("[![Metric Graph]")[0].strip()
+        image_urls = []
+        return clean_text, image_urls
+
+    def title_contains_status(self, title: str) -> bool:
+        """Check if incident title already contains status information"""
+        import re
+        # Check for common status patterns in titles (case-insensitive)
+        status_patterns = [
+            r'\[triggered\]',
+            r'\[acknowledged\]',
+            r'\[resolved\]',
+            r'\[closed\]',
+            r'\[warning\]',
+            r'\[alert\]',
+            r'\[critical\]',
+            r'\[ok\]',
+            r'\[no data\]'
+        ]
+
+        title_lower = title.lower()
+        return any(re.search(pattern, title_lower) for pattern in status_patterns)
+        
     
     def format_incident_blocks(self, incident_data: Dict, notification_msg: Dict, status_override: str = None) -> List[Dict]:
         """Format incident as Slack top-level blocks (Block Kit)"""
@@ -411,31 +440,56 @@ class SlackWorker:
         incident_short_id = f"#{incident_id[-8:]}" if incident_id else "#Unknown"
         title = incident_data.get('title', 'No title')
         description = incident_data.get('description', 'No description')
+        description, image_urls = self.clean_description_text(description)
         priority = notification_msg.get('priority', incident_data.get('priority', 'normal')).upper()
         status = (status_override or incident_data.get('status', 'triggered')).lower()
-        
+
         # Status display mapping
         status_display = {
             'triggered': '[Triggered]',
-            'acknowledged': '[Acknowledged]', 
+            'acknowledged': '[Acknowledged]',
             'resolved': '[Resolved]',
             'closed': '[Closed]'
         }
-        
+
+        # Check if title already contains status information
+        title_has_status = any(status_text in title for status_text in status_display.values())
+
+        # Build header text with length limit (Slack header text must be < 151 characters)
+        # Only add status display if title doesn't already contain it
+        if title_has_status:
+            header_prefix = f"🔥 {incident_short_id}: [{priority}] "
+        else:
+            header_prefix = f"🔥 {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} "
+        max_title_length = 150 - len(header_prefix)
+
+        if len(title) > max_title_length:
+            # Reserve space for "..." (3 characters)
+            available_length = max_title_length - 3
+            # Truncate at word boundary for better readability
+            truncated_title = title[:available_length].rsplit(' ', 1)[0] + "..."
+            # If word boundary truncation results in very short text, use character truncation
+            if len(truncated_title) < available_length * 0.7:
+                truncated_title = title[:available_length] + "..."
+        else:
+            truncated_title = title
+
+        header_text = f"{header_prefix}{truncated_title}"
+
         # Build blocks (no attachment wrapper)
         blocks: List[Dict] = [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔥 {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} {title}"
+                    "text": header_text
                 }
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"{description[:300]}{'...' if len(description) > 300 else ''}"
+                    "text": f"{description[:2900]}{'...' if len(description) > 2900 else ''}"  # Slack section text limit is 3000 chars
                 }
             },
             {
@@ -443,7 +497,7 @@ class SlackWorker:
                 "fields": [
                     {
                         "type": "mrkdwn",
-                        "text": f"*Priority*\n{priority}"
+                        "text": f"*Priority*\n{priority[:100]}"  # Limit field text to 100 chars
                     },
                     {
                         "type": "mrkdwn",
@@ -452,7 +506,15 @@ class SlackWorker:
                 ]
             }
         ]
-        
+
+        # Add image blocks if any images were found
+        for image_url in image_urls:
+            blocks.append({
+                "type": "image",
+                "image_url": image_url,
+                "alt_text": "Metric Graph"
+            })
+
         return blocks
             
     def send_incident_assigned_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
@@ -750,9 +812,7 @@ class SlackWorker:
     def send_incident_resolved_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
         """Update original Slack message for incident resolution from web"""
         try:
-            # Handle system users (no Slack config)
-            if user_data.get('email', '').endswith('@system.local'):
-                return self.send_system_incident_resolved_notification(user_data, incident_data, notification_msg)
+            description, image_urls = self.clean_description_text(incident_data.get('description', ''))
 
             slack_user_id = user_data['slack_user_id'].lstrip('@')
             incident_id = incident_data.get('id')
@@ -788,31 +848,6 @@ class SlackWorker:
                         "type": "mrkdwn",
                         "text": f"*{incident_data.get('title', 'Unknown Incident')}*"
                     }
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Incident ID:*\n#{incident_data.get('id', 'Unknown')[-8:]}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Status:*\nResolved"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Severity:*\n{incident_data.get('severity', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Source:*\n{incident_data.get('source', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Resolved by:*\n{user_data.get('name', 'Unknown User')}"
-                        }
-                    ]
                 }
             ]
 
@@ -822,7 +857,7 @@ class SlackWorker:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Description:*\n{incident_data.get('description')}"
+                        "text": f"{description}"
                     }
                 })
 
@@ -866,123 +901,6 @@ class SlackWorker:
 
         except Exception as e:
             logger.error(f"❌ Failed to update Slack message for resolved incident: {e}")
-            return False
-
-    def send_system_incident_resolved_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
-        """Update original Slack message for incident resolution by system users (Prometheus, Datadog, etc.)"""
-        try:
-            incident_id = incident_data.get('id')
-            system_name = user_data.get('name', 'System')
-
-            # Find the original Slack message for this incident (any user)
-            original_message_info = self.find_any_slack_message_for_incident(incident_id)
-
-            if not original_message_info:
-                logger.warning(f"⚠️  No original Slack message found for incident {incident_id} - system resolution by {system_name}")
-                return False
-
-            channel_id, message_ts = original_message_info
-            logger.info(f"📨 Found Slack message for incident {incident_id}, updating for system resolution by {system_name}")
-
-            # Create updated message blocks for system resolution
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "🤖 Incident Auto-Resolved"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*{incident_data.get('title', 'Unknown Incident')}*"
-                    }
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Incident ID:*\n#{incident_data.get('id', 'Unknown')[-8:]}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Status:*\nAuto-Resolved"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Severity:*\n{incident_data.get('severity', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Source:*\n{incident_data.get('source', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Resolved by:*\n🤖 {system_name}"
-                        }
-                    ]
-                }
-            ]
-
-            # Add description if available
-            if incident_data.get('description'):
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Description:*\n{incident_data.get('description')}"
-                    }
-                })
-
-            # Add view incident button (no action buttons since it's resolved)
-            if incident_data.get('id'):
-                blocks.append({
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "View Incident"
-                            },
-                            "url": f"https://slar.io/incidents/{incident_data.get('id')}",
-                            "style": "primary"
-                        }
-                    ]
-                })
-
-            # Update the original message
-            incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-
-            # Check if we're using fallback to assigned user
-            fallback_info = ""
-            if user_data.get('fallback_to_assigned'):
-                fallback_info = f" (notified via assigned user: {user_data.get('assigned_user_name', 'Unknown')})"
-
-            self.slack_client.chat_update(
-                channel=channel_id,
-                ts=message_ts,
-                text=f"Incident {incident_short_id} auto-resolved by {system_name}{fallback_info}",
-                blocks=blocks
-            )
-
-            logger.info(f"✅ Updated Slack message for system resolution of incident {incident_id} by {system_name}{fallback_info}")
-
-            # Log the notification
-            notification_msg_with_system = notification_msg.copy()
-            notification_msg_with_system['recipient'] = f"System: {system_name}{fallback_info}"
-            self.log_notification(notification_msg_with_system, 'slack', True, None)
-
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error sending system incident resolved notification: {e}")
-            notification_msg_with_system = notification_msg.copy()
-            notification_msg_with_system['recipient'] = f"System: {user_data.get('name', 'Unknown')}"
-            self.log_notification(notification_msg_with_system, 'slack', False, str(e))
             return False
 
     def send_new_resolution_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
@@ -1428,8 +1346,11 @@ class SlackWorker:
                 for block in updated_blocks:
                     if block.get("type") == "header":
                         original_text = block["text"]["text"]
+                        # remove ":fire:" emoji
+                        original_text = original_text.replace(":fire: ", "")
                         updated_text = original_text.replace("[Triggered]", "[Acknowledging]")
-                        block["text"]["text"] = f"⏳ {updated_text}"
+                        # update emoji to hourglass
+                        block["text"]["text"] = f":large_yellow_circle: {updated_text}"
                         break
                 
                 # Replace action buttons with processing message

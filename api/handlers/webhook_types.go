@@ -48,7 +48,8 @@ type DatadogWebhook struct {
 	Snapshot      string     `json:"snapshot"`
 	Link          string     `json:"link"`
 	// Additional fields that might be present
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Aggregate string                 `json:"aggregate"`
 }
 
 type DatadogOrg struct {
@@ -207,11 +208,13 @@ func (d *DatadogWebhook) ToProcessedAlert() ProcessedAlert {
 		Summary:     d.Title, // Summary is the body content
 		Description: d.Body,  // Description is the title
 		Priority:    d.AlertPriority,
+		Fingerprint: d.Aggregate,
 		Labels: map[string]interface{}{
 			"source":         "datadog",
 			"event_id":       d.ID,
 			"event_type":     d.EventType,
 			"alert_priority": d.AlertPriority,
+			"aggregate":      d.Aggregate,
 		},
 		Annotations: map[string]interface{}{
 			"org_id":       d.Org.ID,
