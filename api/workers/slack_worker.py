@@ -41,6 +41,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger('slack_worker')
 
+class SlackMessage:
+    def __init__(self, incident_data: Dict):
+        self.incident_data = incident_data
+    
+    def get_title(self) -> str:
+        return self.incident_data.get('labels', {}).get('alert_title', 'No title')
+    
+    def get_description(self) -> str:
+        return self.incident_data.get('description', 'No description')
+    
+    def get_priority(self) -> str:
+        return self.incident_data.get('priority', 'P0').upper()
+    
+    def get_status(self) -> str:
+        return self.incident_data.get('status', 'triggered').lower()
+    
+    def get_source(self) -> str:
+        return self.incident_data.get('source', 'unknown')
+    
+    def get_id(self) -> str:
+        return self.incident_data.get('id', 'unknown')
+
+    def get_incident_short_id(self) -> str:
+        return f"#{self.get_id()[-8:]}"
+    
+
 class SlackWorker:
     """Handles Slack notifications for incidents"""
     
@@ -147,34 +173,33 @@ class SlackWorker:
         logger.info("✅ Slack event handlers setup complete")
     
     def get_routed_teams(self, incident_data: Dict) -> str:
-        """Get routed teams based on incident's escalation policy and service"""
+        """Get routed service name from the integration attached to the incident"""
         try:
-            # Try to get service name from the incident data
+            # Try to get service name from the incident data (already joined in get_incident_data)
             service_name = incident_data.get('service_name')
             if service_name:
                 return service_name
-            
-            # Fallback: try to get service name from escalation policy
-            escalation_policy_id = incident_data.get('escalation_policy_id')
-            if escalation_policy_id:
+
+            # Fallback: try to get service name from service_id
+            service_id = incident_data.get('service_id')
+            if service_id:
                 with self.db.cursor() as cursor:
                     cursor.execute("""
-                        SELECT s.name 
-                        FROM services s 
-                        WHERE s.escalation_policy_id = %s 
-                        LIMIT 1
-                    """, (escalation_policy_id,))
-                    
+                        SELECT name
+                        FROM services
+                        WHERE id = %s::uuid
+                    """, (service_id,))
+
                     result = cursor.fetchone()
                     if result:
                         return result['name']
-            
+
             # Default fallback
-            return "Unknown Service"
-            
+            return "unknown"
+
         except Exception as e:
             logger.error(f"❌ Error getting routed teams: {e}")
-            return "Unknown Service"
+            return "unknown"
             
     def run(self):
         """Main worker loop with Slack event handling"""
@@ -462,17 +487,18 @@ class SlackWorker:
 
         title_lower = title.lower()
         return any(re.search(pattern, title_lower) for pattern in status_patterns)
-        
+
     
     def format_incident_blocks(self, incident_data: Dict, notification_msg: Dict, status_override: str = None) -> List[Dict]:
         """Format incident as Slack top-level blocks (Block Kit)"""
+
         # Get incident details
-        incident_id = incident_data.get('id', '')
-        incident_short_id = f"#{incident_id[-8:]}" if incident_id else "#Unknown"
-        title = incident_data.get('title', 'No title')
-        description = incident_data.get('description', 'No description')
+        incident_message = SlackMessage(incident_data)
+        incident_short_id = incident_message.get_incident_short_id()
+        title = incident_message.get_title()
+        description = incident_message.get_description()
         description, image_urls = self.clean_description_text(description)
-        priority = notification_msg.get('priority', incident_data.get('priority', 'normal')).upper()
+        priority = incident_message.get_priority()
         status = (status_override or incident_data.get('status', 'triggered')).lower()
 
         # Status display mapping
@@ -489,7 +515,7 @@ class SlackWorker:
         # Build header text with length limit (Slack header text must be < 151 characters)
         # Only add status display if title doesn't already contain it
         if title_has_status:
-            header_prefix = f"🔥 {incident_short_id}: [{priority}] "
+            header_prefix = f"🔥 {incident_short_id}: "
         else:
             header_prefix = f"🔥 {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} "
         max_title_length = 150 - len(header_prefix)
@@ -506,6 +532,7 @@ class SlackWorker:
             truncated_title = title
 
         header_text = f"{header_prefix}{truncated_title}"
+        routed_teams = self.get_routed_teams(incident_data)
 
         # Build blocks (no attachment wrapper)
         blocks: List[Dict] = [
@@ -532,7 +559,7 @@ class SlackWorker:
                     },
                     {
                         "type": "mrkdwn",
-                        "text": f"*Routed Teams*\nbackend"
+                        "text": f"*Routed Teams*\n{routed_teams[:10]}"
                     }
                 ]
             }
@@ -1166,11 +1193,14 @@ class SlackWorker:
             return None
             
     def get_incident_data(self, incident_id: str) -> Optional[Dict]:
-        """Get incident data"""
+        """Get incident data with service information"""
         try:
             with self.db.cursor() as cursor:
                 cursor.execute("""
-                    SELECT * FROM incidents WHERE id = %s
+                    SELECT i.*, s.name as service_name
+                    FROM incidents i
+                    LEFT JOIN services s ON i.service_id = s.id
+                    WHERE i.id = %s
                 """, (incident_id,))
 
                 return cursor.fetchone()
