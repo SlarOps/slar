@@ -531,15 +531,16 @@ class SlackWorker:
         else:
             truncated_title = title
 
-        header_text = f"{header_prefix}{truncated_title}"
+        url = f"{self.config['api_base_url']}/incidents/{incident_data['id']}"
+        header_text = f"*<{url}|{header_prefix}{truncated_title}>*"
         routed_teams = self.get_routed_teams(incident_data)
 
         # Build blocks (no attachment wrapper)
         blocks: List[Dict] = [
             {
-                "type": "header",
+                "type": "section",
                 "text": {
-                    "type": "plain_text",
+                    "type": "mrkdwn",
                     "text": header_text
                 }
             },
