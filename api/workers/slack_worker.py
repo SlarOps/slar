@@ -65,6 +65,9 @@ class SlackMessage:
 
     def get_incident_short_id(self) -> str:
         return f"#{self.get_id()[-8:]}"
+
+    def get_incident_alert_status(self) -> str:
+        return self.incident_data.get('labels', {}).get('alert_status', 'unknown')
     
 
 class SlackWorker:
@@ -393,9 +396,9 @@ class SlackWorker:
             elif notification_type == 'escalated':
                 return self.send_incident_escalated_notification(user_data, incident_data, notification_msg)
             elif notification_type == 'acknowledged':
-                return self.send_incident_acknowledged_notification(user_data, incident_data, notification_msg)
+                return self.send_incident_x_notification(user_data, incident_data, notification_msg, 'acknowledged')
             elif notification_type == 'resolved':
-                return self.send_incident_resolved_notification(user_data, incident_data, notification_msg)
+                return self.send_incident_x_notification(user_data, incident_data, notification_msg, 'resolved')
             else:
                 logger.warning(f"⚠️  Unknown notification type: {notification_type}")
                 return True
@@ -509,15 +512,24 @@ class SlackWorker:
             'closed': '[Closed]'
         }
 
+        emoji_mapping = {
+            'triggered': ":fire:",
+            'acknowledged': ":large_yellow_circle:",
+            'resolved': ":white_check_mark:",
+            'closed': ":lock:"
+        }
+
+        status_emoji = emoji_mapping.get(status, ":question:")    
+
         # Check if title already contains status information
         title_has_status = any(status_text in title for status_text in status_display.values())
 
         # Build header text with length limit (Slack header text must be < 151 characters)
         # Only add status display if title doesn't already contain it
         if title_has_status:
-            header_prefix = f"🔥 {incident_short_id}: "
+            header_prefix = f"{status_emoji} {incident_short_id}: "
         else:
-            header_prefix = f"🔥 {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} "
+            header_prefix = f"{status_emoji} {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} "
         max_title_length = 150 - len(header_prefix)
 
         if len(title) > max_title_length:
@@ -542,6 +554,13 @@ class SlackWorker:
                 "text": {
                     "type": "mrkdwn",
                     "text": header_text
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"> {incident_message.get_incident_alert_status()}"  # Slack section text limit is 3000 chars
                 }
             },
             {
@@ -609,6 +628,10 @@ class SlackWorker:
                         }
                     ]
                 })
+
+                blocks.append({
+                    "type": "divider"
+                })
             
             # Send message with blocks
             incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
@@ -655,6 +678,9 @@ class SlackWorker:
     def send_incident_acknowledged_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
         """Update original Slack message for incident acknowledgment from web"""
         try:
+            incident_message = SlackMessage(incident_data)
+            blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
+
             slack_user_id = user_data['slack_user_id'].lstrip('@')
             incident_id = incident_data.get('id')
             user_id = user_data.get('id')
@@ -673,59 +699,6 @@ class SlackWorker:
                 return self.send_new_acknowledgment_notification(user_data, incident_data, notification_msg)
 
             channel_id, message_ts = original_message_info
-
-            # Create updated message blocks for acknowledged state
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "✅ Incident Acknowledged"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*{incident_data.get('title', 'Unknown Incident')}*"
-                    }
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Incident ID:*\n#{incident_data.get('id', 'Unknown')[-8:]}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Status:*\nAcknowledged"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Severity:*\n{incident_data.get('severity', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Source:*\n{incident_data.get('source', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Acknowledged by:*\n{user_data.get('name', 'Unknown User')}"
-                        }
-                    ]
-                }
-            ]
-
-            # Add description if available (same as original message)
-            if incident_data.get('description'):
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Description:*\n{incident_data.get('description')}"
-                    }
-                })
 
             # Add view incident button (no acknowledge button since it's already acknowledged)
             if incident_data.get('id'):
@@ -749,7 +722,7 @@ class SlackWorker:
             response = self.slack_client.chat_update(
                 channel=channel_id,
                 ts=message_ts,
-                text=f"Incident {incident_short_id} acknowledged",
+                text=f"[Acknowledged] {incident_message.get_title()}",
                 blocks=blocks
             )
 
@@ -769,113 +742,62 @@ class SlackWorker:
             logger.error(f"❌ Failed to update Slack message for acknowledged incident: {e}")
             return False
 
-    def send_new_acknowledgment_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
-        """Send new Slack notification for incident acknowledgment (fallback when original message not found)"""
-        try:
-            slack_user_id = user_data['slack_user_id'].lstrip('@')
+    # def send_new_acknowledgment_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
+    #     """Send new Slack notification for incident acknowledgment (fallback when original message not found)"""
+    #     try:
+    #         slack_user_id = user_data['slack_user_id'].lstrip('@')
 
-            # Create formatted message for acknowledgment - same format as original
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "✅ Incident Acknowledged"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*{incident_data.get('title', 'Unknown Incident')}*"
-                    }
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Incident ID:*\n#{incident_data.get('id', 'Unknown')[-8:]}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Status:*\nAcknowledged"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Severity:*\n{incident_data.get('severity', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Source:*\n{incident_data.get('source', 'Unknown').title()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Acknowledged by:*\n{user_data.get('name', 'Unknown User')}"
-                        }
-                    ]
-                }
-            ]
+    #         blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
+    #         incident_message = SlackMessage(incident_data)
 
-            # Add description if available (same as original message)
-            if incident_data.get('description'):
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Description:*\n{incident_data.get('description')}"
-                    }
-                })
+    #         # Add view incident button
+    #         if incident_data.get('id'):
+    #             blocks.append({
+    #                 "type": "actions",
+    #                 "elements": [
+    #                     {
+    #                         "type": "button",
+    #                         "text": {
+    #                             "type": "plain_text",
+    #                             "text": "View Incident"
+    #                         },
+    #                         "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+    #                         "style": "primary"
+    #                     }
+    #                 ]
+    #             })
 
-            # Add view incident button
-            if incident_data.get('id'):
-                blocks.append({
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "View Incident"
-                            },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
-                            "style": "primary"
-                        }
-                    ]
-                })
+    #         # Send new message
+    #         incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
+            
+    #         response = self.slack_client.chat_postMessage(
+    #             channel=f"@{slack_user_id}",
+    #             text=f"Incident {incident_short_id} \"{incident_message.get_title()}\" acknowledged",
+    #             blocks=blocks
+    #         )
 
-            # Send new message
-            incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-            incident_title = incident_data.get('title', 'Unknown Incident')
-            response = self.slack_client.chat_postMessage(
-                channel=f"@{slack_user_id}",
-                text=f"Incident {incident_short_id} \"{incident_title}\" acknowledged",
-                blocks=blocks
-            )
+    #         # Log notification
+    #         notification_msg_with_recipient = notification_msg.copy()
+    #         notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
+    #         self.log_notification(notification_msg_with_recipient, 'slack', True, None)
 
-            # Log notification
-            notification_msg_with_recipient = notification_msg.copy()
-            notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
-            self.log_notification(notification_msg_with_recipient, 'slack', True, None)
+    #         logger.info(f"✅ Sent new incident acknowledged notification to @{slack_user_id}")
+    #         return True
 
-            logger.info(f"✅ Sent new incident acknowledged notification to @{slack_user_id}")
-            return True
+    #     except Exception as e:
+    #         logger.error(f"❌ Failed to send new Slack acknowledged notification: {e}")
+    #         notification_msg_with_recipient = notification_msg.copy()
+    #         notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
+    #         self.log_notification(notification_msg_with_recipient, 'slack', False, str(e))
+    #         return False
 
-        except Exception as e:
-            logger.error(f"❌ Failed to send new Slack acknowledged notification: {e}")
-            notification_msg_with_recipient = notification_msg.copy()
-            notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
-            self.log_notification(notification_msg_with_recipient, 'slack', False, str(e))
-            return False
-
-    def send_incident_resolved_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
+    def send_incident_x_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict, status: str) -> bool:
         """Update original Slack message for incident resolution from web"""
         try:
-            description, image_urls = self.clean_description_text(incident_data.get('description', ''))
+            blocks = self.format_incident_blocks(incident_data, notification_msg, status)
 
-            slack_user_id = user_data['slack_user_id'].lstrip('@')
-            incident_id = incident_data.get('id')
-            user_id = user_data.get('id')
+            incident_message = SlackMessage(incident_data)
+            incident_id = incident_message.get_id()
 
             # Find the original Slack message for this incident
             # Since any user can resolve an incident, we should look for any message for this incident
@@ -891,34 +813,6 @@ class SlackWorker:
                 return self.send_new_resolution_notification(user_data, incident_data, notification_msg)
 
             channel_id, message_ts = original_message_info
-
-            # Create updated message blocks - keep same format as original but change header
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "🎉 Incident Resolved"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*{incident_data.get('title', 'Unknown Incident')}*"
-                    }
-                }
-            ]
-
-            # Add description if available (same as original message)
-            if incident_data.get('description'):
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"{description}"
-                    }
-                })
 
             # Add view incident button (no action buttons since it's resolved)
             if incident_data.get('id'):
@@ -1429,10 +1323,12 @@ class SlackWorker:
                         
             elif state == "acknowledged":
                 # Update header to show acknowledged state
+
                 for block in updated_blocks:
-                    if block.get("type") == "header":
+                    if block.get("type") == "section":
                         original_text = block["text"]["text"]
                         updated_text = original_text.replace("[Acknowledging]", "[Acknowledged]").replace("[Triggered]", "[Acknowledged]")
+                        updated_text = updated_text.replace(":fire: ", ":large_yellow_circle: ")
                         block["text"]["text"] = f"{updated_text}"
                         break
                 
