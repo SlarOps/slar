@@ -44,12 +44,16 @@ type DatadogWebhook struct {
 	Date          string     `json:"date"`           // Unix timestamp in milliseconds (as string)
 	LastUpdated   string     `json:"last_updated"`   // Unix timestamp in milliseconds (as string)
 	Org           DatadogOrg `json:"org"`
-	Tags          []string   `json:"tags"`
+	Tags          string     `json:"tags"`
 	Snapshot      string     `json:"snapshot"`
 	Link          string     `json:"link"`
 	// Additional fields that might be present
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	Aggregate string                 `json:"aggregate"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	Aggregate     string                 `json:"aggregate"`
+	AlertTitle    string                 `json:"alert_title"`
+	AlertStatus   string                 `json:"alert_status"`
+	AlertQuery    string                 `json:"alert_query"`
+	AlertCycleKey string                 `json:"alert_cycle_key"`
 }
 
 type DatadogOrg struct {

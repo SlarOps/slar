@@ -145,6 +145,36 @@ class SlackWorker:
             # This is just a URL button, no additional action needed
         
         logger.info("✅ Slack event handlers setup complete")
+    
+    def get_routed_teams(self, incident_data: Dict) -> str:
+        """Get routed teams based on incident's escalation policy and service"""
+        try:
+            # Try to get service name from the incident data
+            service_name = incident_data.get('service_name')
+            if service_name:
+                return service_name
+            
+            # Fallback: try to get service name from escalation policy
+            escalation_policy_id = incident_data.get('escalation_policy_id')
+            if escalation_policy_id:
+                with self.db.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT s.name 
+                        FROM services s 
+                        WHERE s.escalation_policy_id = %s 
+                        LIMIT 1
+                    """, (escalation_policy_id,))
+                    
+                    result = cursor.fetchone()
+                    if result:
+                        return result['name']
+            
+            # Default fallback
+            return "Unknown Service"
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting routed teams: {e}")
+            return "Unknown Service"
             
     def run(self):
         """Main worker loop with Slack event handling"""
@@ -295,6 +325,7 @@ class SlackWorker:
     def process_notification(self, notification_msg: Dict[str, Any]) -> bool:
         """Process a single notification message"""
         try:
+            logger.info(f"🔍 Processing notification: {notification_msg}")
             # Check if Slack is in the channels list
             channels = notification_msg.get('channels', [])
             if 'slack' not in channels:

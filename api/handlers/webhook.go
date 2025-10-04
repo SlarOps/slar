@@ -137,6 +137,8 @@ func (h *WebhookHandler) ReceiveWebhook(c *gin.Context) {
 	log.Printf("Webhook payload processed: type=%s, integration=%s, alerts=%d",
 		webhookPayload.IntegrationType, webhookPayload.IntegrationID, len(webhookPayload.ProcessedAlerts))
 
+	log.Printf("processedAlerts: %v", processedAlerts)
+
 	// Process each alert: handle based on status (firing vs resolved)
 	for _, alert := range processedAlerts {
 		if err := h.routeAlert(integration, alert); err != nil {
