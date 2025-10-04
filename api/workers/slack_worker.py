@@ -830,6 +830,10 @@ class SlackWorker:
                         }
                     ]
                 })
+            
+            blocks.append({
+                "type": "divider"
+            })
 
             # Update the original message
             incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
