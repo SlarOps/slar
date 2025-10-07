@@ -246,11 +246,14 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			groupRoutes.DELETE("/:id/members/:user_id", groupHandler.RemoveGroupMember)
 
 			// Group scheduler management (NEW: Scheduler + Shifts architecture)
-			groupRoutes.GET("/:id/schedulers", schedulerHandler.GetGroupSchedulers)                     // List schedulers (basic info)
-			groupRoutes.POST("/:id/schedulers/with-shifts", schedulerHandler.CreateSchedulerWithShifts) // Create scheduler + shifts (recommended)
-			groupRoutes.GET("/:id/schedulers/:scheduler_id", schedulerHandler.GetSchedulerWithShifts)   // Get scheduler with shifts
-			groupRoutes.DELETE("/:id/schedulers/:scheduler_id", schedulerHandler.DeleteScheduler)       // Delete scheduler and its shifts
-			groupRoutes.GET("/:id/shifts", schedulerHandler.GetGroupShifts)                             // Get all shifts in group (with scheduler context)
+			groupRoutes.GET("/:id/schedulers", schedulerHandler.GetGroupSchedulers)                                        // List schedulers (basic info)
+			groupRoutes.POST("/:id/schedulers/with-shifts", schedulerHandler.CreateSchedulerWithShifts)                    // Create scheduler + shifts (recommended)
+			groupRoutes.POST("/:id/schedulers/with-shifts-optimized", schedulerHandler.CreateSchedulerWithShiftsOptimized) // OPTIMIZED: Create scheduler + shifts (faster)
+			groupRoutes.GET("/:id/schedulers/stats", schedulerHandler.GetSchedulerPerformanceStats)                        // Performance statistics
+			groupRoutes.POST("/:id/schedulers/benchmark", schedulerHandler.BenchmarkSchedulerCreation)                     // Performance benchmark
+			groupRoutes.GET("/:id/schedulers/:scheduler_id", schedulerHandler.GetSchedulerWithShifts)                      // Get scheduler with shifts
+			groupRoutes.DELETE("/:id/schedulers/:scheduler_id", schedulerHandler.DeleteScheduler)                          // Delete scheduler and its shifts
+			groupRoutes.GET("/:id/shifts", schedulerHandler.GetGroupShifts)                                                // Get all shifts in group (with scheduler context)
 
 			// Debug: Log that delete route is registered
 			log.Println("🔧 DELETE route registered: /groups/:id/schedulers/:scheduler_id")

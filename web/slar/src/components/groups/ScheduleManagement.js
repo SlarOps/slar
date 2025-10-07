@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/api';
 import { createScheduleWorkflow, createSchedulerWorkflow } from '../../services/scheduleService';
+import { createOptimizedSchedulerWorkflow } from '../../services/optimizedScheduleService';
 import EnhancedCreateScheduleModal from './EnhancedCreateScheduleModal';
+import OptimizedCreateScheduleModal from './OptimizedCreateScheduleModal';
 import MultiSchedulerTimeline from './MultiSchedulerTimeline';
 
 import CreateOverrideModal from './CreateOverrideModal';
@@ -350,9 +352,9 @@ export default function ScheduleManagement({ groupId, members }) {
           />
         )}
 
-      {/* Enhanced Create Schedule Modal */}
+      {/* Optimized Create Schedule Modal */}
       {showCreateSchedule && (
-        <EnhancedCreateScheduleModal
+        <OptimizedCreateScheduleModal
           isOpen={showCreateSchedule}
           onClose={() => setShowCreateSchedule(false)}
           members={members}
@@ -362,41 +364,52 @@ export default function ScheduleManagement({ groupId, members }) {
           onSubmit={async (scheduleData) => {
             try {
               // Use new scheduler workflow (with automatic fallback to legacy)
-              const result = await createSchedulerWorkflow({
+              const result = await createOptimizedSchedulerWorkflow({
                 apiClient,
                 session,
                 groupId,
                 scheduleData,
-                onSuccess: (scheduler, shifts) => {
+                onProgress: (message) => {
+                  // Progress is handled by the modal itself
+                  console.log('Progress:', message);
+                },
+                onSuccess: (scheduler, shifts, performance) => {
                   // Add all new shifts to the schedule list (for backward compatibility)
                   setSchedules(prev => [...shifts, ...prev]);
                   setShowCreateSchedule(false);
-                  toast.success(`Scheduler "${scheduler.display_name}" created with ${shifts.length} shift(s)!`);
+
+                  // Show success with performance info
+                  const duration = performance?.total_frontend_duration_ms || 0;
+                  toast.success(
+                    `Scheduler "${scheduler.display_name}" created with ${shifts.length} shift(s) in ${duration.toFixed(0)}ms!`,
+                    { duration: 4000 }
+                  );
                 },
-                onError: (error) => {
-                  toast.error(error.message || 'Failed to create scheduler');
+                onError: (error, performance) => {
+                  const duration = performance?.duration_ms || 0;
+                  toast.error(`Failed to create scheduler after ${duration.toFixed(0)}ms: ${error.message}`);
                 }
               });
             } catch (error) {
-              // If scheduler workflow fails completely, try legacy workflow
-              console.warn('Scheduler workflow failed, trying legacy schedule workflow:', error);
+              // Fallback to regular scheduler workflow if optimized fails
+              console.warn('Optimized scheduler workflow failed, trying regular workflow:', error);
               try {
-                const newSchedules = await createScheduleWorkflow({
+                const result = await createSchedulerWorkflow({
                   apiClient,
                   session,
                   groupId,
                   scheduleData,
-                  onSuccess: (schedules) => {
-                    setSchedules(prev => [...schedules, ...prev]);
+                  onSuccess: (scheduler, shifts) => {
+                    setSchedules(prev => [...shifts, ...prev]);
                     setShowCreateSchedule(false);
-                    toast.success(`${schedules.length} schedule(s) created successfully!`);
+                    toast.success(`Scheduler "${scheduler.display_name}" created with ${shifts.length} shift(s)! (fallback)`);
                   },
                   onError: (error) => {
-                    toast.error(error.message || 'Failed to create schedule');
+                    toast.error(error.message || 'Failed to create scheduler');
                   }
                 });
               } catch (fallbackError) {
-                console.error('All schedule creation methods failed:', fallbackError);
+                console.error('Both optimized and regular workflows failed:', fallbackError);
                 toast.error('Failed to create schedule. Please try again.');
               }
             }
