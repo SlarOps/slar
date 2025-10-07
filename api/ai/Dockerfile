@@ -9,8 +9,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATA_STORE=/data
 
 # System deps for SSL and building psycopg2 (pg_config comes from libpq-dev)
+# Also install Node.js for MCP tools that require npx
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates build-essential libpq-dev && rm -rf /var/lib/apt/lists/* \
+    && apt-get install -y --no-install-recommends ca-certificates build-essential libpq-dev curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data
 
 COPY requirements.txt .

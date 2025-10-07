@@ -37,6 +37,7 @@ from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
 import os
 
 from tools_slar import get_incidents
+from agent import SLARAgentManager
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +46,11 @@ data_store = os.getenv("DATA_STORE", os.path.dirname(__file__))
 # Constants for JSON-based source tracking
 SOURCES_FILE = os.path.join(data_store, "indexed_sources.json")
 
-# Initialize vector memory
-rag_memory = ChromaDBVectorMemory(
-    config=PersistentChromaDBVectorMemoryConfig(
-        collection_name="autogen_docs",
-        persistence_path=os.path.join(data_store, ".chromadb_autogen"),
-        k=3,  # Return top 3 results
-        score_threshold=0.4,  # Minimum similarity score
-    )
-)
+# Initialize SLAR Agent Manager
+slar_agent_manager = SLARAgentManager(data_store)
+
+# Legacy compatibility - keep rag_memory for existing code
+rag_memory = slar_agent_manager.get_rag_memory()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -150,59 +147,24 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-state_path = "team_state.json"
-history_path = "team_history.json"
+# State and history paths are now managed by SLARAgentManager
 
 async def get_team(
     user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]],
 ) -> RoundRobinGroupChat:
-    # Get model client from config.
-    
-    model_client = OpenAIChatCompletionClient(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
-    # Create the team.
-    planning_agent = AssistantAgent(
-        "SREAgent",
-        description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
-        model_client=model_client,
-        memory=[rag_memory],
-        tools=[get_incidents],
-        reflect_on_tool_use=True,
-        system_message="""
-        You are a planning agent for SRE team.
-        Your job is to break down complex tasks into smaller, manageable subtasks.
-        """,
-    )
-    user_proxy = UserProxyAgent(
-        name="user",
-        input_func=user_input_func,  # Use the user input function.
-    )
-    
-    termination = TextMentionTermination("TERMINATE")
-    handoff_termination = HandoffTermination(target="user")
-
-    team = RoundRobinGroupChat(
-        [planning_agent, user_proxy],
-        termination_condition=termination | handoff_termination,
-    )
-    # Load state from file.
-    if not os.path.exists(state_path):
-        return team
-    async with aiofiles.open(state_path, "r") as file:
-        state = json.loads(await file.read())
-    await team.load_state(state)
-    return team
+    """
+    Get a configured SLAR agent team.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    return await slar_agent_manager.get_team(user_input_func)
 
 
 async def get_history() -> list[dict[str, Any]]:
-    """Get chat history from file."""
-    if not os.path.exists(history_path):
-        return []
-    async with aiofiles.open(history_path, "r") as file:
-        return json.loads(await file.read())
+    """
+    Get chat history from file.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    return await slar_agent_manager.get_history()
 
 
 @app.get("/health")

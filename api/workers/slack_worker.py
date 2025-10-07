@@ -544,7 +544,7 @@ class SlackWorker:
             truncated_title = title
 
         url = f"{self.config['api_base_url']}/incidents/{incident_data['id']}"
-        header_text = f"*<{url}|{header_prefix}{truncated_title}>*"
+        header_text = f"> *<{url}|{header_prefix}{truncated_title}>*"
         routed_teams = self.get_routed_teams(incident_data)
 
         # Build blocks (no attachment wrapper)
@@ -557,10 +557,13 @@ class SlackWorker:
                 }
             },
             {
+                "type": "divider"
+            },
+            {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"> {incident_message.get_incident_alert_status()}"  # Slack section text limit is 3000 chars
+                    "text": f"```{incident_message.get_incident_alert_status()}```"  # Slack section text limit is 3000 chars
                 }
             },
             {
@@ -963,52 +966,9 @@ class SlackWorker:
         """Send Slack notification for incident escalation"""
         try:
             slack_user_id = user_data['slack_user_id'].lstrip('@')
-            
-            # Create formatted message for escalation
-            blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "🔄 Incident Escalated to You"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"An incident has been escalated and assigned to you due to no response."
-                    }
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Incident ID:*\n#{incident_data['id'][-8:]}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Priority:*\n{notification_msg.get('priority', 'normal').upper()} → HIGH"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Status:*\n{incident_data.get('status', 'open').upper()}"
-                        },
-                        {
-                            "type": "mrkdwn",
-                            "text": f"*Escalation Time:*\n{datetime.now().strftime('%H:%M %d/%m/%Y')}"
-                        }
-                    ]
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Title:* {incident_data.get('title', 'No title')}\n*Description:* {incident_data.get('description', 'No description')[:200]}..."
-                    }
-                }
-            ]
+
+            blocks = self.format_incident_blocks(incident_data, notification_msg, 'escalated')
+            incident_message = SlackMessage(incident_data)
             
             # Add urgent action buttons
             if incident_data.get('id'):
@@ -1039,7 +999,7 @@ class SlackWorker:
             # Send message
             response = self.slack_client.chat_postMessage(
                 channel=f"@{slack_user_id}",
-                text=f"🔄 Incident #{incident_data['id'][-8:]} escalated to you",
+                text=f"🔄 Escalated #{incident_message.get_title()} assigned to you",
                 blocks=blocks
             )
 
