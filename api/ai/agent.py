@@ -2,14 +2,17 @@ import json
 import os
 from typing import Any, Awaitable, Callable, Optional
 import aiofiles
+import venv
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
 from autogen_core import CancellationToken
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_core import AgentId, MessageContext, RoutedAgent, message_handler
+from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 
 from tools_slar import get_incidents
 from tools import ToolManager
@@ -80,6 +83,10 @@ class SLARAgentManager:
         # Cache for model client
         self._model_client = None
 
+        self._user_input_func: Optional[Callable[[str, Optional[CancellationToken]], Awaitable[str]]] = None
+        self._approval_func: Optional[Callable[[ApprovalRequest], ApprovalResponse]] = None
+        self._code_excutor = None
+
     def get_model_client(self) -> OpenAIChatCompletionClient:
         """Get or create the OpenAI model client."""
         if self._model_client is None:
@@ -142,12 +149,109 @@ class SLARAgentManager:
             """,
         )
 
+    async def create_agent_planer(self, model_client: Optional[OpenAIChatCompletionClient] = None) -> AssistantAgent:
+        """Create the agent planner."""
+        if model_client is None:
+            model_client = self.get_model_client()
+        
+        tools = await self.load_mcp_tools()
+
+        agent = AssistantAgent(
+            name="sre_agent",
+            model_client=model_client,
+            description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
+            tools=tools,  # type: ignore
+            system_message="""
+            You are a planning agent.
+            Your job is to break down complex tasks into smaller, manageable subtasks.
+            Your team members are:
+                code_executor: excutes code defined by context7_agent
+                user_proxy: handoff to user if need
+            
+            executes_code is a agent that can execute code, need write code before send to executes_code
+            executes format:
+                ```python
+                # This is a simple calculator script to add two numbers
+                print("hello world")
+                ``` 
+
+            <tools>
+            - context7 for external knowledge and best practices
+
+            You only plan and delegate tasks - you do not execute them yourself.
+
+            When assigning tasks, use this format:
+            1. <agent> : <task>
+
+            After all tasks are complete, summarize the findings and end with "TERMINATE".
+            """,
+                reflect_on_tool_use=True,
+        )
+        return agent
+    
+    async def create_excutor(self):
+        code_executor = DockerCommandLineCodeExecutor(
+            work_dir="coding",
+            image="python:3.11-slim"
+        )
+        self._code_excutor = code_executor
+    
+    async def create_code_executor_agent(self, approval_func: Callable[[ApprovalRequest], ApprovalResponse]) -> CodeExecutorAgent:
+        """Create the code executor agent."""
+        
+
+        await self._code_excutor.start()
+
+        code_executor_agent = CodeExecutorAgent(
+            "code_executor",
+            code_executor=self._code_excutor,
+            approval_func=approval_func
+        )
+        return code_executor_agent
+    
+    def set_approval_func(self, approval_func: Callable[[ApprovalRequest], ApprovalResponse]):
+        """Set the approval function for code execution."""
+        self._approval_func = approval_func
+    
+    def set_user_input_func(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]):
+        """Set the user input function."""
+        self._user_input_func = user_input_func
+
     def create_user_proxy(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> UserProxyAgent:
         """Create the user proxy agent."""
         return UserProxyAgent(
             name="user",
             input_func=user_input_func,
         )
+
+    async def get_selector_group_chat(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> SelectorGroupChat:
+        """Create the swarm team."""
+        planning_agent = await self.create_agent_planer()
+        code_executor_agent = await self.create_code_executor_agent(approval_func=self._approval_func)
+        if user_input_func is None:
+            user_input_func = self._user_input_func
+        user_proxy = self.create_user_proxy(user_input_func)
+
+        selector_prompt = """Select an agent to perform task.
+
+        {roles}
+
+        Current conversation context:
+        {history}
+
+        Read the above conversation, then select an agent from {participants} to perform the next task.
+        Make sure the planner agent has assigned tasks before other agents start working.
+        Only select one agent.
+        """
+
+        team = SelectorGroupChat(
+            [ planning_agent, code_executor_agent, user_proxy],
+            selector_prompt=selector_prompt,
+            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user"),
+            model_client=self.get_model_client(),
+        )
+
+        return team
 
     async def get_team(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> RoundRobinGroupChat:
         """

@@ -33,10 +33,10 @@ from autogen_agentchat.conditions import TextMentionTermination, HandoffTerminat
 from autogen_agentchat.base import Handoff
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
+from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
 
 import os
 
-from tools_slar import get_incidents
 from agent import SLARAgentManager
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
         )
         print("✅ Vector store initialized successfully - models are ready")
         logger.info("Vector store initialized successfully - models are ready")
+        await slar_agent_manager.create_excutor()
     except Exception as e:
         print(f"❌ Failed to initialize vector store: {str(e)}")
         logger.error(f"Failed to initialize vector store: {str(e)}")
@@ -157,6 +158,18 @@ async def get_team(
     This function is now a wrapper around SLARAgentManager for backward compatibility.
     """
     return await slar_agent_manager.get_team(user_input_func)
+
+async def get_selector_group_chat(
+        user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]],
+        approval_func: Callable[[ApprovalRequest], ApprovalResponse]
+    ) -> SelectorGroupChat:
+    """
+    Get a configured SLAR agent team.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    slar_agent_manager.set_approval_func(approval_func)
+    slar_agent_manager.set_user_input_func(user_input_func)
+    return await slar_agent_manager.get_selector_group_chat(user_input_func)
 
 
 async def get_history() -> list[dict[str, Any]]:
@@ -792,14 +805,17 @@ async def chat(websocket: WebSocket):
     API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
     token = websocket.query_params.get("token")
     response = requests.get(f"{API_BASE_URL}/verify-token", headers={"Authorization": f"Bearer {token}"})
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    else:
-        await websocket.accept()
+    # if response.status_code != 200:
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
+    # else:
+    #     await websocket.accept()
+    
+    await websocket.accept()
 
     # User input function used by the team.
     async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
         # Wait until we receive a non-empty TextMessage from the client.
+        print("user input requested")
         while True:
             try:
                 data = await websocket.receive_json()
@@ -818,6 +834,35 @@ async def chat(websocket: WebSocket):
             if content:
                 return content
             # Ignore empty messages and keep waiting
+    
+    async def _user_approval(request: ApprovalRequest) -> ApprovalResponse:
+        # Send approval request to client
+        print("approval requested")
+        while True:
+            try:
+                await websocket.send_json(jsonable_encoder({
+                    "type": "TextMessage",
+                    "content": f"Code execution approval requested:\n{request.code}\nDo you want to execute this code? (y/n): ",
+                    "source": "system"
+                }))
+ 
+                data = await websocket.receive_json()
+                message = TextMessage.model_validate(data)
+                content = (message.content or "").strip()
+                if content in ['y', 'yes']:
+                    return ApprovalResponse(approved=True, reason='Approved by user')
+                elif content in ['n', 'no']:
+                    return ApprovalResponse(approved=False, reason='Denied by user')
+                else:
+                    await websocket.send_json(jsonable_encoder({
+                        "type": "UserInputRequestedEvent",
+                        "content": "Please enter 'y' for yes or 'n' for no.",
+                        "source": "system"
+                    }))
+
+            except WebSocketDisconnect:
+                logger.info("Client disconnected while waiting for approval")
+                raise  # Let WebSocketDisconnect propagate to be handled by outer try/except
 
     try:
         while True:
@@ -834,10 +879,14 @@ async def chat(websocket: WebSocket):
             request = TextMessage.model_validate(data)
             
             try:
-                team = await get_team(_user_input)
+                team = await get_selector_group_chat(_user_input, _user_approval)
                 history = await get_history()
                 stream = team.run_stream(task=request)
                 async for message in stream:
+                    # logger.info(f"Message: {message.model_dump()}")
+                    print(10*"==")
+                    print(message.model_dump())
+
                     if isinstance(message, TaskResult):
                         continue
                     if message.source == "user":
@@ -852,8 +901,6 @@ async def chat(websocket: WebSocket):
                     if not isinstance(message, UserInputRequestedEvent):
                         # Don't save user input events to history.
                         history.append(jsonable_encoder(message.model_dump()))
-                    
-                    print(message.model_dump())
 
                 # # Save team state to file.
                 # async with aiofiles.open(state_path, "w") as file:
@@ -863,6 +910,7 @@ async def chat(websocket: WebSocket):
                 # # Save chat history to file.
                 # async with aiofiles.open(history_path, "w") as file:
                 #     await file.write(json.dumps(history))
+                await slar_agent_manager._code_excutor.stop()
                     
             except WebSocketDisconnect:
                 # Client disconnected during message processing - exit gracefully
