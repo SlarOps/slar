@@ -91,7 +91,7 @@ class SLARAgentManager:
         """Get or create the OpenAI model client."""
         if self._model_client is None:
             self._model_client = OpenAIChatCompletionClient(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                model=os.getenv("OPENAI_MODEL", "gpt-5"),
                 api_key=os.getenv("OPENAI_API_KEY"),
             )
         return self._model_client
@@ -160,12 +160,13 @@ class SLARAgentManager:
             name="sre_agent",
             model_client=model_client,
             description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
-            tools=tools,  # type: ignore
+            memory=[self.rag_memory],
             system_message="""
             You are a planning agent.
             Your job is to break down complex tasks into smaller, manageable subtasks.
             Your team members are:
-                code_executor: excutes code defined by context7_agent
+                code_executor: excutes code defined by you
+                k8s_agent: manage kubernetes cluster
                 user_proxy: handoff to user if need
             
             executes_code is a agent that can execute code, need write code before send to executes_code
@@ -174,9 +175,6 @@ class SLARAgentManager:
                 # This is a simple calculator script to add two numbers
                 print("hello world")
                 ``` 
-
-            <tools>
-            - context7 for external knowledge and best practices
 
             You only plan and delegate tasks - you do not execute them yourself.
 
@@ -188,6 +186,26 @@ class SLARAgentManager:
                 reflect_on_tool_use=True,
         )
         return agent
+
+    async def create_k8s_agent(self, model_client: Optional[OpenAIChatCompletionClient] = None) -> AssistantAgent:
+        """Create the Kubernetes agent."""
+        if model_client is None:
+            model_client = self.get_model_client()
+
+        tools = await self.load_mcp_tools()
+        return AssistantAgent(
+            name="k8s_agent",
+            model_client=model_client,
+            tools=tools,  # type: ignore
+            system_message="""
+            You are a Kubernetes agent.
+            Your job is to manage Kubernetes clusters.
+            Split task to multiple steps if necessary avoid get a lot of information. example:
+            - get logs from pod
+            - describe logs
+            """,
+            reflect_on_tool_use=True,
+        )
     
     async def create_excutor(self):
         code_executor = DockerCommandLineCodeExecutor(
@@ -227,6 +245,8 @@ class SLARAgentManager:
     async def get_selector_group_chat(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> SelectorGroupChat:
         """Create the swarm team."""
         planning_agent = await self.create_agent_planer()
+        k8s_agent = await self.create_k8s_agent()
+
         code_executor_agent = await self.create_code_executor_agent(approval_func=self._approval_func)
         if user_input_func is None:
             user_input_func = self._user_input_func
@@ -245,7 +265,7 @@ class SLARAgentManager:
         """
 
         team = SelectorGroupChat(
-            [ planning_agent, code_executor_agent, user_proxy],
+            [ planning_agent, code_executor_agent, k8s_agent, user_proxy],
             selector_prompt=selector_prompt,
             termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user"),
             model_client=self.get_model_client(),

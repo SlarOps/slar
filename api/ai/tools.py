@@ -8,12 +8,13 @@ from autogen_ext.tools.mcp import StdioServerParams, mcp_server_tools
 
 class MCPServerConfig:
     """Configuration for a single MCP server"""
-    def __init__(self, name: str, command: str, args: List[str], enabled: bool = True):
+    def __init__(self, name: str, command: str, args: List[str], env: Dict[str, str], enabled: bool = True):
         self.name = name
         self.command = command
         self.args = args
         self.enabled = enabled
-        self.params = StdioServerParams(command=command, args=args)
+        self.env = env
+        self.params = StdioServerParams(command=command, args=args, env=env)
 
     def __repr__(self):
         status = "✓ Enabled" if self.enabled else "✗ Disabled"
@@ -71,6 +72,7 @@ class ToolManager:
                 name=server_config["name"],
                 command=server_config["command"],
                 args=args,
+                env=server_config.get("env", {}),
                 enabled=enabled
             )
             servers.append(server)

@@ -2,3 +2,5 @@ __pycache__
 .env
 env
 coding/
+.chromadb_autogen
+.ruff_cache

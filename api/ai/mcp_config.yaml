@@ -4,6 +4,14 @@
       "name": "context7",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"]
+    },
+    {
+      "name": "kubernetes",
+      "command": "npx",
+      "args": ["mcp-server-kubernetes"],
+      "env": {
+        "ALLOW_ONLY_NON_DESTRUCTIVE_TOOLS": "true"
+      }
     }
   ]
 }

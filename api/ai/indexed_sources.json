@@ -10,8 +10,20 @@
       "files_processed": 1,
       "chunks_indexed": 3,
       "status": "active"
+    },
+    {
+      "id": "b19be72b9844",
+      "url": "https://github.com/SlarOps/slar/blob/main/examples/RUNBOOK_1.md",
+      "branch": "main",
+      "source_type": "github_file",
+      "indexed_at": "2025-10-07T23:42:18.597789",
+      "user_id": "d290650e-b763-4ee6-98b0-55c919249eb9",
+      "files_processed": 1,
+      "chunks_indexed": 7,
+      "status": "active"
     }
   ],
   "last_reindex": "2025-09-24T21:06:43.622676",
-  "total_sources": 1
+  "total_sources": 2,
+  "last_update": "2025-10-07T23:42:18.598208"
 }

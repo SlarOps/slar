@@ -898,18 +898,18 @@ async def chat(websocket: WebSocket):
                     else:
                         # Send other message types normally
                         await websocket.send_json(jsonable_encoder(message.model_dump()))
-                    if not isinstance(message, UserInputRequestedEvent):
+                    if isinstance(message, UserInputRequestedEvent):
                         # Don't save user input events to history.
                         history.append(jsonable_encoder(message.model_dump()))
 
-                # # Save team state to file.
-                # async with aiofiles.open(state_path, "w") as file:
-                #     state = await team.save_state()
-                #     await file.write(json.dumps(state))
+                # Save team state to file.
+                async with aiofiles.open(slar_agent_manager.state_path, "w") as file:
+                    state = await team.save_state()
+                    await file.write(json.dumps(state))
 
-                # # Save chat history to file.
-                # async with aiofiles.open(history_path, "w") as file:
-                #     await file.write(json.dumps(history))
+                # Save chat history to file.
+                async with aiofiles.open(slar_agent_manager.history_path, "w") as file:
+                    await file.write(json.dumps(history))
                 await slar_agent_manager._code_excutor.stop()
                     
             except WebSocketDisconnect:
