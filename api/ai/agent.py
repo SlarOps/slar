@@ -245,9 +245,16 @@ class SLARAgentManager:
     async def get_selector_group_chat(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> SelectorGroupChat:
         """Create the swarm team."""
         planning_agent = await self.create_agent_planer()
-        k8s_agent = await self.create_k8s_agent()
+        agents = [planning_agent]
 
-        code_executor_agent = await self.create_code_executor_agent(approval_func=self._approval_func)
+        if os.getenv("ENABLE_KUBERNETES", "false").lower() == "true":
+            k8s_agent = await self.create_k8s_agent()
+            agents.append(k8s_agent)
+        
+        if os.getenv("ENABLE_CODE_EXECUTOR", "false").lower() == "true":
+            code_executor_agent = await self.create_code_executor_agent(approval_func=self._approval_func)
+            agents.append(code_executor_agent)
+
         if user_input_func is None:
             user_input_func = self._user_input_func
         user_proxy = self.create_user_proxy(user_input_func)
@@ -265,7 +272,7 @@ class SLARAgentManager:
         """
 
         team = SelectorGroupChat(
-            [ planning_agent, code_executor_agent, k8s_agent, user_proxy],
+            agents + [user_proxy],
             selector_prompt=selector_prompt,
             termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user"),
             model_client=self.get_model_client(),
