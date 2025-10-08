@@ -111,6 +111,8 @@ affinity: {}
 # Components configuration with persistent storage
 components:
   ai:
+    dockerEnabled: false
+    replicas: 1
     image:
       repository: ghcr.io/slarops/slar-ai
       tag: latest
@@ -129,6 +131,16 @@ components:
             key: openai-api-key
       - name: DATA_STORE
         value: "/data"
+      - name: API_BASE_URL
+        value: "http://slar-api.slar:8080"
+      - name: TOKENIZERS_PARALLELISM
+        value: "false"
+      - name: ENABLE_KUBERNETES
+        value: "false"
+      - name: ENABLE_CODE_EXECUTOR
+        value: "false"
+      - name: OPENAI_MODEL
+        value: "gpt-4o"
     # Persistent storage configuration
     persistence:
       enabled: true
@@ -140,11 +152,31 @@ components:
     volumeMounts:
       - name: ai-data
         mountPath: /data
+      - name: mcp-config
+        mountPath: /app/mcp_config.yaml
+        subPath: mcp_config.yaml
+        readOnly: true
     # Volumes definition
     volumes:
       - name: ai-data
         persistentVolumeClaim:
           claimName: "{{ include \"slar.componentFullname\" (dict \"root\" . \"name\" \"ai\") }}-data"
+      - name: mcp-config
+        configMap:
+          name: "{{ include \"slar.componentFullname\" (dict \"root\" . \"name\" \"ai\") }}-mcp-config"
+    # MCP Configuration
+    mcpConfig:
+      enabled: true
+      data: |
+        "slar.advanced": {
+          "mcpServers": [
+            {
+              "name": "context7",
+              "command": "npx",
+              "args": ["-y", "@upstash/context7-mcp"]
+            },
+          ]
+        }
 
   api:
     image:

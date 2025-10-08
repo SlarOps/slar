@@ -91,7 +91,7 @@ class SLARAgentManager:
         """Get or create the OpenAI model client."""
         if self._model_client is None:
             self._model_client = OpenAIChatCompletionClient(
-                model=os.getenv("OPENAI_MODEL", "gpt-5"),
+                model=os.getenv("OPENAI_MODEL", "gpt-4o"),
                 api_key=os.getenv("OPENAI_API_KEY"),
             )
         return self._model_client
@@ -164,18 +164,7 @@ class SLARAgentManager:
             system_message="""
             You are a planning agent.
             Your job is to break down complex tasks into smaller, manageable subtasks.
-            Your team members are:
-                code_executor: excutes code defined by you
-                k8s_agent: manage kubernetes cluster
-                user_proxy: handoff to user if need
             
-            executes_code is a agent that can execute code, need write code before send to executes_code
-            executes format:
-                ```python
-                # This is a simple calculator script to add two numbers
-                print("hello world")
-                ``` 
-
             You only plan and delegate tasks - you do not execute them yourself.
 
             When assigning tasks, use this format:
