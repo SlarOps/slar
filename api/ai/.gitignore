@@ -4,3 +4,4 @@ env
 coding/
 .chromadb_autogen
 .ruff_cache
+*config.*
