@@ -1,11 +1,9 @@
 name: Release
-"on":
+on:
   push:
     branches:
       - main
-      - next
-      - beta
-      - "*.x"
+      - 'beta/**'
 permissions:
   contents: read # for checkout
 jobs:
