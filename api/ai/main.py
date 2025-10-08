@@ -4,6 +4,7 @@ import os
 from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime
 import hashlib
+from contextlib import asynccontextmanager
 
 import re
 import aiofiles
@@ -13,6 +14,7 @@ from pathlib import Path
 import aiohttp
 from io import BytesIO
 import zipfile
+import requests
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.base import TaskResult
@@ -31,15 +33,58 @@ from autogen_agentchat.conditions import TextMentionTermination, HandoffTerminat
 from autogen_agentchat.base import Handoff
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
+from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
 
-from tools_slar import get_incidents
+import os
+
+from agent import SLARAgentManager
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+data_store = os.getenv("DATA_STORE", os.path.dirname(__file__))
 
 # Constants for JSON-based source tracking
-SOURCES_FILE = os.path.join(os.path.dirname(__file__), "indexed_sources.json")
+SOURCES_FILE = os.path.join(data_store, "indexed_sources.json")
+
+# Initialize SLAR Agent Manager
+slar_agent_manager = SLARAgentManager(data_store)
+
+# Legacy compatibility - keep rag_memory for existing code
+rag_memory = slar_agent_manager.get_rag_memory()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize ChromaDB memory and download models
+    print("🚀 Starting vector store initialization...")
+    logger.info("Starting vector store initialization...")
+    try:
+        # Initialize the memory system by performing a simple query
+        # This will trigger the model download if it hasn't happened yet
+        print("📥 Triggering model download by performing initial query...")
+        logger.info("Triggering model download by performing initial query...")
+        await rag_memory.query(
+            MemoryContent(content="initialization", mime_type=MemoryMimeType.TEXT)
+        )
+        print("✅ Vector store initialized successfully - models are ready")
+        logger.info("Vector store initialized successfully - models are ready")
+        await slar_agent_manager.create_excutor()
+    except Exception as e:
+        print(f"❌ Failed to initialize vector store: {str(e)}")
+        logger.error(f"Failed to initialize vector store: {str(e)}")
+        # Don't fail startup, but log the error
+
+    yield
+
+    # Shutdown: Clean up resources if needed
+    print("🔄 Shutting down vector store...")
+    logger.info("Shutting down vector store...")
+    try:
+        await rag_memory.close()
+    except Exception as e:
+        print(f"❌ Error during vector store shutdown: {str(e)}")
+        logger.error(f"Error during vector store shutdown: {str(e)}")
+
+app = FastAPI(lifespan=lifespan)
 
 # Pydantic models for API requests/responses
 class IncidentRunbookRequest(BaseModel):
@@ -92,16 +137,7 @@ class DocumentDetailResponse(BaseModel):
     chunks: List[dict]
     total_chunks: int
 
-# Initialize vector memory
 
-rag_memory = ChromaDBVectorMemory(
-    config=PersistentChromaDBVectorMemoryConfig(
-        collection_name="autogen_docs",
-        persistence_path=os.path.join(str(Path.home()), ".chromadb_autogen"),
-        k=3,  # Return top 3 results
-        score_threshold=0.4,  # Minimum similarity score
-    )
-)
 
 # Add CORS middleware
 app.add_middleware(
@@ -112,59 +148,57 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-state_path = "team_state.json"
-history_path = "team_history.json"
+# State and history paths are now managed by SLARAgentManager
 
 async def get_team(
     user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]],
 ) -> RoundRobinGroupChat:
-    # Get model client from config.
-    
-    model_client = OpenAIChatCompletionClient(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    """
+    Get a configured SLAR agent team.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    return await slar_agent_manager.get_team(user_input_func)
 
-    # Create the team.
-    planning_agent = AssistantAgent(
-        "SREAgent",
-        description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
-        model_client=model_client,
-        memory=[rag_memory],
-        tools=[get_incidents],
-        reflect_on_tool_use=True,
-        system_message="""
-        You are a planning agent for SRE team.
-        Your job is to break down complex tasks into smaller, manageable subtasks.
-        """,
-    )
-    user_proxy = UserProxyAgent(
-        name="user",
-        input_func=user_input_func,  # Use the user input function.
-    )
-    
-    termination = TextMentionTermination("TERMINATE")
-    handoff_termination = HandoffTermination(target="user")
-
-    team = RoundRobinGroupChat(
-        [planning_agent, user_proxy],
-        termination_condition=termination | handoff_termination,
-    )
-    # Load state from file.
-    if not os.path.exists(state_path):
-        return team
-    async with aiofiles.open(state_path, "r") as file:
-        state = json.loads(await file.read())
-    await team.load_state(state)
-    return team
+async def get_selector_group_chat(
+        user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]],
+        approval_func: Callable[[ApprovalRequest], ApprovalResponse]
+    ) -> SelectorGroupChat:
+    """
+    Get a configured SLAR agent team.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    slar_agent_manager.set_approval_func(approval_func)
+    slar_agent_manager.set_user_input_func(user_input_func)
+    return await slar_agent_manager.get_selector_group_chat(user_input_func)
 
 
 async def get_history() -> list[dict[str, Any]]:
-    """Get chat history from file."""
-    if not os.path.exists(history_path):
-        return []
-    async with aiofiles.open(history_path, "r") as file:
-        return json.loads(await file.read())
+    """
+    Get chat history from file.
+    This function is now a wrapper around SLARAgentManager for backward compatibility.
+    """
+    return await slar_agent_manager.get_history()
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint that verifies vector store initialization."""
+    try:
+        # Check if vector store is initialized
+        vector_store_ready = hasattr(rag_memory, '_client') and rag_memory._client is not None
+
+        return {
+            "status": "healthy",
+            "vector_store_ready": vector_store_ready,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "vector_store_ready": False,
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.get("/history")
@@ -766,11 +800,22 @@ async def remove_indexed_source(source_id: str):
 
 @app.websocket("/ws/chat")
 async def chat(websocket: WebSocket):
+    # make a request to api to verify token
+    # if failed, raise 401
+    API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
+    token = websocket.query_params.get("token")
+    response = requests.get(f"{API_BASE_URL}/verify-token", headers={"Authorization": f"Bearer {token}"})
+    # if response.status_code != 200:
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
+    # else:
+    #     await websocket.accept()
+    
     await websocket.accept()
 
     # User input function used by the team.
     async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
         # Wait until we receive a non-empty TextMessage from the client.
+        print("user input requested")
         while True:
             try:
                 data = await websocket.receive_json()
@@ -789,6 +834,35 @@ async def chat(websocket: WebSocket):
             if content:
                 return content
             # Ignore empty messages and keep waiting
+    
+    async def _user_approval(request: ApprovalRequest) -> ApprovalResponse:
+        # Send approval request to client
+        print("approval requested")
+        while True:
+            try:
+                await websocket.send_json(jsonable_encoder({
+                    "type": "TextMessage",
+                    "content": f"Code execution approval requested:\n{request.code}\nDo you want to execute this code? (y/n): ",
+                    "source": "system"
+                }))
+ 
+                data = await websocket.receive_json()
+                message = TextMessage.model_validate(data)
+                content = (message.content or "").strip()
+                if content in ['y', 'yes']:
+                    return ApprovalResponse(approved=True, reason='Approved by user')
+                elif content in ['n', 'no']:
+                    return ApprovalResponse(approved=False, reason='Denied by user')
+                else:
+                    await websocket.send_json(jsonable_encoder({
+                        "type": "UserInputRequestedEvent",
+                        "content": "Please enter 'y' for yes or 'n' for no.",
+                        "source": "system"
+                    }))
+
+            except WebSocketDisconnect:
+                logger.info("Client disconnected while waiting for approval")
+                raise  # Let WebSocketDisconnect propagate to be handled by outer try/except
 
     try:
         while True:
@@ -805,10 +879,14 @@ async def chat(websocket: WebSocket):
             request = TextMessage.model_validate(data)
             
             try:
-                team = await get_team(_user_input)
+                team = await get_selector_group_chat(_user_input, _user_approval)
                 history = await get_history()
                 stream = team.run_stream(task=request)
                 async for message in stream:
+                    # logger.info(f"Message: {message.model_dump()}")
+                    print(10*"==")
+                    print(message.model_dump())
+
                     if isinstance(message, TaskResult):
                         continue
                     if message.source == "user":
@@ -820,20 +898,19 @@ async def chat(websocket: WebSocket):
                     else:
                         # Send other message types normally
                         await websocket.send_json(jsonable_encoder(message.model_dump()))
-                    if not isinstance(message, UserInputRequestedEvent):
+                    if isinstance(message, UserInputRequestedEvent):
                         # Don't save user input events to history.
                         history.append(jsonable_encoder(message.model_dump()))
-                    
-                    print(message.model_dump())
 
-                # # Save team state to file.
-                # async with aiofiles.open(state_path, "w") as file:
-                #     state = await team.save_state()
-                #     await file.write(json.dumps(state))
+                # Save team state to file.
+                async with aiofiles.open(slar_agent_manager.state_path, "w") as file:
+                    state = await team.save_state()
+                    await file.write(json.dumps(state))
 
-                # # Save chat history to file.
-                # async with aiofiles.open(history_path, "w") as file:
-                #     await file.write(json.dumps(history))
+                # Save chat history to file.
+                async with aiofiles.open(slar_agent_manager.history_path, "w") as file:
+                    await file.write(json.dumps(history))
+                await slar_agent_manager._code_excutor.stop()
                     
             except WebSocketDisconnect:
                 # Client disconnected during message processing - exit gracefully
@@ -1223,7 +1300,6 @@ class GitHubDocumentIndexer:
 # Example usage
 if __name__ == "__main__":
     import uvicorn
-    import asyncio
-    # asyncio.run(index_runbooks_docs())
+    # Vector store initialization is now handled by FastAPI lifespan events
     uvicorn.run(app, host="0.0.0.0", port=8002)
     

@@ -5,7 +5,7 @@ import { Button } from '@headlessui/react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/api';
-import { Modal } from '../ui';
+import { Modal, MarkdownRenderer } from '../ui';
 
 export default function IncidentDetailModal({ 
   isOpen, 
@@ -348,9 +348,11 @@ export default function IncidentDetailModal({
                       {incident.title}
                     </h4>
                     {incident.description && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                        {incident.description}
-                      </p>
+                      <MarkdownRenderer
+                        content={incident.description}
+                        size="base"
+                        className="text-sm text-gray-600 dark:text-gray-400"
+                      />
                     )}
                   </div>
                   

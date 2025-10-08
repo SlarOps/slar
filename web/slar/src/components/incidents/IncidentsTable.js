@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { MarkdownRenderer } from '../ui';
 
 export default function IncidentsTable({ 
   incidents = [], 
@@ -24,7 +25,7 @@ export default function IncidentsTable({
 
   const getStatusBadge = (status) => {
     const statusStyles = {
-      triggered: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300',
+      triggered: 'text-red-800 dark:bg-red-900/20 dark:text-red-300',
       acknowledged: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300',
       resolved: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300'
     };
@@ -40,15 +41,14 @@ export default function IncidentsTable({
     if (!priority) return <span className="text-gray-400 text-sm">--</span>;
     
     const priorityStyles = {
-      P0: 'bg-red-600 text-white',
-      P1: 'bg-orange-500 text-white', 
-      P2: 'bg-yellow-500 text-white',
-      P3: 'bg-blue-500 text-white',
-      P4: 'bg-gray-500 text-white'
+      P1: 'text-red-800 bg-red-100 dark:bg-red-900/20',
+      P2: 'text-orange-800 bg-orange-100 dark:bg-orange-900/20', 
+      P3: 'text-yellow-800 bg-yellow-100 dark:bg-yellow-900/20',
+      P4: 'text-blue-800 bg-blue-100 dark:bg-blue-900/20'
     };
 
     return (
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${priorityStyles[priority] || 'bg-gray-500 text-white'}`}>
+      <span className={`inline-flex items-center px-2 py-1 rounded text-sm font-medium ${priorityStyles[priority] || 'bg-gray-500 text-white'}`}>
         {priority}
       </span>
     );
@@ -273,11 +273,11 @@ export default function IncidentsTable({
                 </button>
               </th>
 
-              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">
+              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-20">
                 Priority
               </th>
 
-              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">
+              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-24">
                 <button
                   onClick={() => handleSort('urgency')}
                   className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
@@ -378,8 +378,12 @@ export default function IncidentsTable({
                   <div className="text-sm text-gray-900 dark:text-white">
                     <div className="font-medium">{incident.title}</div>
                     {incident.description && (
-                      <div className="text-gray-500 dark:text-gray-400 truncate max-w-md">
-                        {incident.description}
+                      <div className="max-w-md line-clamp-1">
+                        <MarkdownRenderer
+                          content={incident.description}
+                          size="sm"
+                          className="text-gray-500 dark:text-gray-400"
+                        />
                       </div>
                     )}
                     {incident.incident_number && (

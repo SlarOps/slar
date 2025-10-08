@@ -312,6 +312,27 @@ class APIClient {
     });
   }
 
+  // OPTIMIZED: Create scheduler with shifts using optimized endpoint
+  async createSchedulerWithShiftsOptimized(groupId, data) {
+    return this.request(`/groups/${groupId}/schedulers/with-shifts-optimized`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  // Get scheduler performance statistics
+  async getSchedulerPerformanceStats(groupId) {
+    return this.request(`/groups/${groupId}/schedulers/stats`);
+  }
+
+  // Benchmark scheduler creation performance
+  async benchmarkSchedulerCreation(groupId, data) {
+    return this.request(`/groups/${groupId}/schedulers/benchmark`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
   async getSchedulerWithShifts(groupId, schedulerId) {
     return this.request(`/groups/${groupId}/schedulers/${schedulerId}`);
   }

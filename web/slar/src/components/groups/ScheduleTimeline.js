@@ -25,12 +25,16 @@ const ScheduleTimeline = forwardRef(({
   const [containerReady, setContainerReady] = useState(false);
   const resizeObserverRef = useRef(null);
   const timelineInstanceRef = useRef(null); // Track timeline instance
-  const componentIdRef = useRef(`timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const componentIdRef = useRef(null);
   const [visLibs, setVisLibs] = useState({ Timeline: null, DataSet: null });
 
-  // Set client flag after hydration
+  // Set client flag after hydration and initialize component ID
   useEffect(() => {
     setIsClient(true);
+    // Initialize component ID only on client to avoid hydration mismatch
+    if (!componentIdRef.current) {
+      componentIdRef.current = `timeline-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    }
   }, []);
 
 
@@ -56,11 +60,13 @@ const ScheduleTimeline = forwardRef(({
 
   // Force timeline redraw method (without changing view window)
   const forceTimelineRedraw = () => {
-    if (timeline && timelineRef.current) {
+    if (timeline && timelineRef.current && timelineInstanceRef.current) {
       try {
-        // Force a redraw without changing the view window
-        timeline.redraw();
-        console.log('Timeline redrawn without zoom change');
+        // Double check redraw method exists
+        if (timeline.redraw && typeof timeline.redraw === 'function') {
+          timeline.redraw();
+          console.log('Timeline redrawn without zoom change');
+        }
       } catch (error) {
         console.warn('Failed to redraw timeline:', error);
       }
@@ -69,10 +75,15 @@ const ScheduleTimeline = forwardRef(({
 
   // Method to fit timeline to view window (only when needed)
   const fitTimelineToWindow = () => {
-    if (timeline && timelineRef.current) {
+    if (timeline && timelineRef.current && timelineInstanceRef.current) {
       try {
-        timeline.fit();
-        timeline.redraw();
+        // Double check methods exist
+        if (timeline.fit && typeof timeline.fit === 'function') {
+          timeline.fit();
+        }
+        if (timeline.redraw && typeof timeline.redraw === 'function') {
+          timeline.redraw();
+        }
         console.log('Timeline fitted to view window');
       } catch (error) {
         console.warn('Failed to fit timeline:', error);
@@ -93,12 +104,21 @@ const ScheduleTimeline = forwardRef(({
 
     // Refresh timeline data without changing view window
     refresh: () => {
-      if (timeline) {
-        const { items, groups } = generateTimelineData();
-        timeline.setItems(items);
-        timeline.setGroups(groups);
-        // Only redraw, don't change view window when refreshing data
-        forceTimelineRedraw();
+      if (timeline && timelineInstanceRef.current) {
+        try {
+          const { items, groups } = generateTimelineData();
+          // Double check methods exist
+          if (timeline.setItems && typeof timeline.setItems === 'function') {
+            timeline.setItems(items);
+          }
+          if (timeline.setGroups && typeof timeline.setGroups === 'function') {
+            timeline.setGroups(groups);
+          }
+          // Only redraw, don't change view window when refreshing data
+          forceTimelineRedraw();
+        } catch (error) {
+          console.warn('Failed to refresh timeline data:', error);
+        }
       }
     }
   }), [timeline]);
@@ -491,8 +511,15 @@ const ScheduleTimeline = forwardRef(({
 
   // Update timeline items/groups when data changes (without re-initializing)
   useEffect(() => {
-    if (!timeline || !visLibs.DataSet) return;
+    if (!timeline || !timelineInstanceRef.current || !visLibs.DataSet) return;
+
     try {
+      // Double check timeline methods exist before calling
+      if (!timeline.getWindow || !timeline.setItems || !timeline.setGroups || !timeline.setWindow || !timeline.redraw) {
+        console.warn(`[${componentIdRef.current}] Timeline methods not available, skipping update`);
+        return;
+      }
+
       const currentWindow = timeline.getWindow();
       const { items, groups } = generateTimelineData();
       timeline.setItems(items);
@@ -502,21 +529,33 @@ const ScheduleTimeline = forwardRef(({
       timeline.redraw();
       console.log(`[${componentIdRef.current}] Data changed -> items/groups updated`);
     } catch (e) {
-      console.warn('Failed to update timeline with new data:', e);
+      console.warn(`[${componentIdRef.current}] Failed to update timeline with new data:`, e);
     }
   }, [rotations, selectedMembers, timeline, visLibs]);
 
 
   // Update timeline when view mode changes (intentional user action)
   useEffect(() => {
-    if (!timeline) return;
+    if (!timeline || !timelineInstanceRef.current) return;
 
-    // Apply new window without fitting all items to prevent zoom jumps
-    const options = getTimelineOptions();
-    const { start, end } = options;
-    timeline.setOptions(options);
-    timeline.setWindow(start, end, { animation: false });
-    console.log(`[${componentIdRef.current}] View mode changed to: ${viewMode}, setWindow applied`);
+    try {
+      // Apply new window without fitting all items to prevent zoom jumps
+      const options = getTimelineOptions();
+      const { start, end } = options;
+
+      // Double check timeline is still valid before calling methods
+      if (timeline.setOptions && typeof timeline.setOptions === 'function') {
+        timeline.setOptions(options);
+      }
+
+      if (timeline.setWindow && typeof timeline.setWindow === 'function') {
+        timeline.setWindow(start, end, { animation: false });
+      }
+
+      console.log(`[${componentIdRef.current}] View mode changed to: ${viewMode}, setWindow applied`);
+    } catch (error) {
+      console.warn(`[${componentIdRef.current}] Failed to update timeline view mode:`, error);
+    }
   }, [viewMode, timeline]);
 
   // Show loading state during hydration

@@ -108,7 +108,7 @@ tolerations: []
 # Affinity rules
 affinity: {}
 
-# Components mapped from docker-compose.yaml
+# Components configuration with persistent storage
 components:
   ai:
     image:
@@ -127,6 +127,24 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: openai-api-key
+      - name: DATA_STORE
+        value: "/data"
+    # Persistent storage configuration
+    persistence:
+      enabled: true
+      storageClass: ""  # Use default storage class, or specify like "gp2", "standard", etc.
+      accessMode: ReadWriteOnce
+      size: 10Gi  # Adjust size based on your needs
+      mountPath: "/data"
+    # Volume mounts for the container
+    volumeMounts:
+      - name: ai-data
+        mountPath: /data
+    # Volumes definition
+    volumes:
+      - name: ai-data
+        persistentVolumeClaim:
+          claimName: "{{ include \"slar.componentFullname\" (dict \"root\" . \"name\" \"ai\") }}-data"
 
   api:
     image:
@@ -244,16 +262,6 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-anon-key
-    ingress:
-      enabled: false
-      className: ""
-      annotations: {}
-      hosts:
-        - host: slarhq.com
-          paths:
-            - path: /
-              pathType: Prefix
-      tls: []
 
   kong:
     image:
@@ -297,15 +305,3 @@ components:
     configMap:
       enabled: true
       name: kong-config
-    
-    ingress:
-      enabled: true
-      className: ""
-      annotations: {}
-      hosts:
-        - host: slarhq.com
-          paths:
-            - path: /
-              pathType: Prefix
-      tls: []
-

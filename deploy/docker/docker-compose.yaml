@@ -12,6 +12,13 @@ services:
     environment:
       - PORT=8002
       - OPENAI_API_KEY=${OPENAI_API_KEY:-your-openai-api-key}
+      - API_BASE_URL=http://api:8080
+      - DATA_STORE=/data
+      - TOKENIZERS_PARALLELISM=false
+      - CONTEXT7_API_KEY=${CONTEXT7_API_KEY:-}
+    volumes:
+      - slar-ai-data:/data
+      - slar-ai-cache:/root/.cache
     restart: unless-stopped
     networks:
       - slar-network
@@ -117,5 +124,11 @@ services:
 networks:
   slar-network:
     driver: bridge
+
+volumes:
+  slar-ai-data:
+    driver: local
+  slar-ai-cache:
+    driver: local
 
 

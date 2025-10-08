@@ -2,7 +2,7 @@
 ### These endpoints receive alerts from external monitoring systems
 
 # Test Prometheus AlertManager webhook
-POST http://localhost:8080/webhook/prometheus/bd04128d-7956-4939-931f-ee09e727864e
+POST http://localhost:8000/api/webhook/prometheus/bd04128d-7956-4939-931f-ee09e727864e
 Content-Type: application/json
 
 {
