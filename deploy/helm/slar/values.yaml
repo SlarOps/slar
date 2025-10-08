@@ -113,7 +113,7 @@ components:
   ai:
     image:
       repository: ghcr.io/slarops/slar-ai
-      tag: sha-de04aec
+      tag: latest
       pullPolicy: IfNotPresent
     service:
       enabled: true
@@ -149,7 +149,7 @@ components:
   api:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: sha-cdba6c5
+      tag: latest
       pullPolicy: Always
     service:
       enabled: true
@@ -184,7 +184,7 @@ components:
   worker:
     image:
       repository: ghcr.io/slarops/slar-api
-      tag: sha-de04aec
+      tag: latest
       pullPolicy: IfNotPresent
     service:
       enabled: false
@@ -209,7 +209,7 @@ components:
   slack-worker:
     image:
       repository: ghcr.io/slarops/slar-slack-worker
-      tag: sha-de04aec
+      tag: latest
       pullPolicy: IfNotPresent
     service:
       enabled: false
@@ -245,7 +245,7 @@ components:
   web:
     image:
       repository: ghcr.io/slarops/slar-web
-      tag: sha-cdba6c5
+      tag: latest
       pullPolicy: Always
     service:
       enabled: true
