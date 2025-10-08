@@ -35,6 +35,22 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
+        {{- if $comp.dockerEnabled }}
+        - name: dind
+          image: docker:dind
+          args:
+            - dockerd
+            - --host=unix:///var/run/docker.sock
+            - --group=$(DOCKER_GROUP_GID)
+          env:
+            - name: DOCKER_GROUP_GID
+              value: "123"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: dind-sock
+              mountPath: /var/run
+        {{- end }}
         - name: {{ $name }}
           {{- with $root.Values.securityContext }}
           securityContext:
@@ -74,6 +90,11 @@ spec:
           {{- with $comp.env }}
           env:
             {{- toYaml . | nindent 12 }}
+
+            {{- if $comp.dockerEnabled }}
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+            {{- end }}
           {{- end }}
           {{- with $comp.livenessProbe }}
           livenessProbe:
@@ -109,6 +130,10 @@ spec:
           {{- if $volumeMounts }}
           volumeMounts:
             {{- toYaml $volumeMounts | nindent 12 }}
+            {{- if $comp.dockerEnabled }}
+            - name: dind-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
           {{- end }}
           {{- end }}
       {{- if eq $name "kong" }}
@@ -124,6 +149,8 @@ spec:
         {{- range $comp.volumes }}
           {{- if and (eq .name "ai-data") .persistentVolumeClaim }}
             {{- $_ := set .persistentVolumeClaim "claimName" (printf "%s-data" (include "slar.componentFullname" (dict "root" $root "name" $name))) }}
+          {{- else if and (eq .name "mcp-config") .configMap }}
+            {{- $_ := set .configMap "name" (printf "%s-mcp-config" (include "slar.componentFullname" (dict "root" $root "name" $name))) }}
           {{- end }}
           {{- $volumes = append $volumes . }}
         {{- end }}
@@ -134,6 +161,10 @@ spec:
       {{- if $volumes }}
       volumes:
         {{- toYaml $volumes | nindent 8 }}
+        {{- if $comp.dockerEnabled }}
+        - name: dind-sock
+          emptyDir: {}
+        {{- end }}
       {{- end }}
       {{- end }}
       {{- with $root.Values.nodeSelector }}

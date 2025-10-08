@@ -76,3 +76,17 @@ data:
 {{- end }}
 {{- end }}
 
+{{/* MCP Config ConfigMap for AI component */}}
+{{- if and .Values.components.ai .Values.components.ai.mcpConfig .Values.components.ai.mcpConfig.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "slar.componentFullname" (dict "root" . "name" "ai") }}-mcp-config
+  labels:
+    {{- include "slar.componentLabels" (dict "root" . "name" "ai") | nindent 4 }}
+data:
+  mcp_config.yaml: |
+{{ .Values.components.ai.mcpConfig.data | indent 4 }}
+---
+{{- end }}
+
