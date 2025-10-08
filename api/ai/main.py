@@ -902,15 +902,15 @@ async def chat(websocket: WebSocket):
                         # Don't save user input events to history.
                         history.append(jsonable_encoder(message.model_dump()))
 
-                # Save team state to file.
-                async with aiofiles.open(slar_agent_manager.state_path, "w") as file:
-                    state = await team.save_state()
-                    await file.write(json.dumps(state))
+                # # Save team state to file.
+                # async with aiofiles.open(slar_agent_manager.state_path, "w") as file:
+                #     state = await team.save_state()
+                #     await file.write(json.dumps(state))
 
-                # Save chat history to file.
-                async with aiofiles.open(slar_agent_manager.history_path, "w") as file:
-                    await file.write(json.dumps(history))
-                await slar_agent_manager._code_excutor.stop()
+                # # Save chat history to file.
+                # async with aiofiles.open(slar_agent_manager.history_path, "w") as file:
+                #     await file.write(json.dumps(history))
+                # await slar_agent_manager._code_excutor.stop()
                     
             except WebSocketDisconnect:
                 # Client disconnected during message processing - exit gracefully
