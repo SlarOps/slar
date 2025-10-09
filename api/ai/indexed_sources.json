@@ -5,8 +5,8 @@
       "url": "https://github.com/vanchonlee/dns-proxy/blob/main/README.md",
       "branch": "main",
       "source_type": "github_file",
-      "indexed_at": "2025-09-24T21:06:43.622657",
-      "user_id": "5a22f755-bf7f-4a17-8e19-a84d0e42e824",
+      "indexed_at": "2025-10-10T00:18:45.383641",
+      "user_id": "d290650e-b763-4ee6-98b0-55c919249eb9",
       "files_processed": 1,
       "chunks_indexed": 3,
       "status": "active"
@@ -25,5 +25,5 @@
   ],
   "last_reindex": "2025-09-24T21:06:43.622676",
   "total_sources": 2,
-  "last_update": "2025-10-07T23:42:18.598208"
+  "last_update": "2025-10-10T00:18:45.384037"
 }

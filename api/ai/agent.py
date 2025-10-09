@@ -86,6 +86,10 @@ class SLARAgentManager:
         self._user_input_func: Optional[Callable[[str, Optional[CancellationToken]], Awaitable[str]]] = None
         self._approval_func: Optional[Callable[[ApprovalRequest], ApprovalResponse]] = None
         self._code_excutor = None
+        
+        # MCP tools caching for performance
+        self._mcp_tools_cache: Optional[list[Any]] = None
+        self._mcp_initialized = False
 
     def get_model_client(self) -> OpenAIChatCompletionClient:
         """Get or create the OpenAI model client."""
@@ -96,18 +100,40 @@ class SLARAgentManager:
             )
         return self._model_client
 
-    async def load_mcp_tools(self, config_path: str = "mcp_config.yaml"):
-        """Load MCP tools using the tool manager with error handling."""
+    async def initialize_mcp_tools(self, config_path: str = "mcp_config.yaml"):
+        """Pre-initialize MCP tools to avoid delay on first connection."""
+        if self._mcp_initialized:
+            return self._mcp_tools_cache
+            
         try:
+            print("🚀 Pre-initializing MCP tools...")
             self.tool_manager.load_mcp_config(config_path)
             tools = await self.tool_manager.load_mcp_tools()
+            
+            self._mcp_tools_cache = tools
+            self._mcp_initialized = True
+            
             if not tools:
                 print("⚠️  Warning: No MCP tools loaded. Agent will run with limited capabilities.")
+            else:
+                print(f"✅ MCP tools pre-initialized successfully: {len(tools)} tools loaded")
+            
             return tools
         except Exception as e:
-            print(f"❌ Error loading MCP tools: {e}")
+            print(f"❌ Error pre-initializing MCP tools: {e}")
             print("🔄 Falling back to basic tools only")
-            return []  # Return empty list to allow agent to continue with basic functionality
+            self._mcp_tools_cache = []
+            self._mcp_initialized = True
+            return []
+
+    async def load_mcp_tools(self, config_path: str = "mcp_config.yaml"):
+        """Load MCP tools using the tool manager with error handling and caching."""
+        # Use cached tools if available
+        if self._mcp_initialized and self._mcp_tools_cache is not None:
+            return self._mcp_tools_cache
+            
+        # Otherwise initialize them
+        return await self.initialize_mcp_tools(config_path)
 
     async def create_sre_agent(self, model_client: Optional[OpenAIChatCompletionClient] = None) -> AssistantAgent:
         """Create the SRE planning agent."""
@@ -173,6 +199,7 @@ class SLARAgentManager:
             After all tasks are complete, summarize the findings and end with "TERMINATE".
             """,
                 reflect_on_tool_use=True,
+                model_client_stream=True,
         )
         return agent
 
@@ -194,6 +221,7 @@ class SLARAgentManager:
             - describe logs
             """,
             reflect_on_tool_use=True,
+            model_client_stream=True,
         )
     
     async def create_excutor(self):

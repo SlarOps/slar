@@ -7,9 +7,34 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
 
   useEffect(() => {
     const connectWebSocket = () => {
+      // Check if session and token are available
+      if (!session?.access_token) {
+        console.log("No access token available, skipping WebSocket connection");
+        setConnectionStatus("error");
+        return;
+      }
+
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      var wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session?.access_token}`;
-      wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL? process.env.NEXT_PUBLIC_AI_WS_URL : wsUrl;
+      
+      // Generate or get session ID for reconnection support
+      let sessionId = localStorage.getItem('ai_chat_session_id');
+      if (!sessionId) {
+        sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        localStorage.setItem('ai_chat_session_id', sessionId);
+      }
+      
+      let wsUrl;
+      
+      if (process.env.NEXT_PUBLIC_AI_WS_URL) {
+        // Use custom WS URL but ensure token and session_id are appended
+        const baseUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        wsUrl = `${baseUrl}${separator}token=${session.access_token}&session_id=${sessionId}`;
+      } else {
+        // Use default URL with token and session_id
+        wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session.access_token}&session_id=${sessionId}`;
+      }
+
       
       setConnectionStatus("connecting");
 
@@ -32,6 +57,7 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
             if (data.type === 'UserInputRequestedEvent') {
               // Re-enable input when user input is requested
               setIsSending(false);
+              // Don't add UserInputRequestedEvent to messages, just handle the state
             } else if (data.type === 'error') {
               // Display error message
               setMessages((prev) => [...prev, {
@@ -39,7 +65,7 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
                 content: `Error: ${data.content}`
               }]);
               setIsSending(false);
-            } else if (data.content && data.source) {
+            } else if (data.content !== undefined && data.source) {
               // Handle regular messages with content and source
               // Handle content based on message type
               let processedContent;
@@ -58,20 +84,99 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
                   : JSON.stringify(data.content);
               }
 
-              setMessages((prev) => [...prev, {
-                role: "assistant",
-                content: processedContent,
-                originalContent: originalContent, // Store original for MemoryQueryEvent
-                source: data.source,
-                type: data.type,
-                metadata: data.metadata,
-                results: data.results,
-                incidents: data.incidents || null
-              }]);
+              // Check if this is a streaming message (has full_message_id and type is streaming chunk)
+              if (data.full_message_id && data.type === 'ModelClientStreamingChunkEvent') {
+                setMessages((prev) => {
+                  const lastMessage = prev[prev.length - 1];
+                  
+                  // If last message has same full_message_id, append content
+                  if (lastMessage && lastMessage.full_message_id === data.full_message_id) {
+                    console.log("Updating message", lastMessage.content, processedContent);
+                    console.log("Updating message", lastMessage.full_message_id, data.full_message_id);
+                    const updatedMessage = {
+                      ...lastMessage,
+                      content: lastMessage.content + processedContent,
+                      isStreaming: true, // Keep streaming until we get final TextMessage
+                      incidents: data.incidents || lastMessage.incidents,
+                      metadata: data.metadata || lastMessage.metadata,
+                      results: data.results || lastMessage.results
+                    };
+                    
+                    return [...prev.slice(0, -1), updatedMessage];
+                  } else {
+                    // New streaming message
+                    return [...prev, {
+                      role: "assistant",
+                      content: processedContent,
+                      originalContent: originalContent,
+                      source: data.source,
+                      type: data.type,
+                      metadata: data.metadata,
+                      results: data.results,
+                      incidents: data.incidents || null,
+                      full_message_id: data.full_message_id,
+                      isStreaming: true
+                    }];
+                  }
+                });
+                // Don't disable sending for streaming chunks
+              } else if (data.type === 'TextMessage' && data.id) {
+                // This is the final message - update the existing streaming message
+                setMessages((prev) => {
+                  const lastMessage = prev[prev.length - 1];
+                  
+                  // If the TextMessage's id matches the last message's full_message_id, update it
+                  if (lastMessage && lastMessage.full_message_id === data.id) {
+                    // Update the last message with final content and mark as complete
+                    const updatedMessage = {
+                      ...lastMessage,
+                      content: processedContent, // Use final complete content from TextMessage
+                      isStreaming: false, // Mark as complete
+                      incidents: data.incidents || lastMessage.incidents,
+                      metadata: data.metadata || lastMessage.metadata,
+                      results: data.results || lastMessage.results
+                    };
+                    
+                    return [...prev.slice(0, -1), updatedMessage];
+                  } else {
+                    // If no matching streaming message found, create new message
+                    return [...prev, {
+                      role: "assistant",
+                      content: processedContent,
+                      originalContent: originalContent,
+                      source: data.source,
+                      type: data.type,
+                      metadata: data.metadata,
+                      results: data.results,
+                      incidents: data.incidents || null,
+                      full_message_id: data.id, // Use TextMessage's id as full_message_id
+                      isStreaming: false
+                    }];
+                  }
+                });
 
-              // Only disable sending if this is an assistant message
-              if (data.source !== 'user') {
-                setIsSending(false);
+                // Disable sending when final message is received
+                if (data.source !== 'user') {
+                  setIsSending(false);
+                }
+              } else {
+                // Non-streaming message (original behavior)
+                setMessages((prev) => [...prev, {
+                  role: "assistant",
+                  content: processedContent,
+                  originalContent: originalContent, // Store original for MemoryQueryEvent
+                  source: data.source,
+                  type: data.type,
+                  metadata: data.metadata,
+                  results: data.results,
+                  incidents: data.incidents || null,
+                  isStreaming: false
+                }]);
+
+                // Only disable sending if this is an assistant message
+                if (data.source !== 'user') {
+                  setIsSending(false);
+                }
               }
             } else {
               // Fallback for other message types
