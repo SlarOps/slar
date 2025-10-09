@@ -58,13 +58,13 @@ const MessageComponent = memo(({ message }) => {
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`inline-block max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-relaxed ${
+        className={`inline-block rounded-3xl px-4 text-md leading-relaxed ${
           message.role === "user"
-            ? "bg-gray-200 text-gray-800"
+            ? "bg-gray-100 text-gray-800"
             : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
         }`}
       >
-        <div className="mb-2">
+        <div>
           {message.role !== "user" ? (
             <Badge color="bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
               {message.source}
@@ -91,9 +91,9 @@ const MessageComponent = memo(({ message }) => {
             </div>
 
             {message.originalContent && Array.isArray(message.originalContent) && (
-              <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
                 {message.originalContent.filter(item => item.metadata).map((item, index) => (
-                    <div key={index} className="flex items-center gap-2 text-sm p-2 bg-white dark:bg-gray-800 rounded border">
+                    <div key={index} className="flex items-center gap-2 text-sm p-2 bg-white dark:bg-gray-800 rounded border min-w-0 max-w-xs flex-shrink-0">
                       {item.metadata.github_url ? (
                         <>
                           <svg className="w-4 h-4 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">

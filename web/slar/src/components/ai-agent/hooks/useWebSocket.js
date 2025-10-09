@@ -7,9 +7,34 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
 
   useEffect(() => {
     const connectWebSocket = () => {
+      // Check if session and token are available
+      if (!session?.access_token) {
+        console.log("No access token available, skipping WebSocket connection");
+        setConnectionStatus("error");
+        return;
+      }
+
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      var wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session?.access_token}`;
-      wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL? process.env.NEXT_PUBLIC_AI_WS_URL : wsUrl;
+      
+      // Generate or get session ID for reconnection support
+      let sessionId = localStorage.getItem('ai_chat_session_id');
+      if (!sessionId) {
+        sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        localStorage.setItem('ai_chat_session_id', sessionId);
+      }
+      
+      let wsUrl;
+      
+      if (process.env.NEXT_PUBLIC_AI_WS_URL) {
+        // Use custom WS URL but ensure token and session_id are appended
+        const baseUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        wsUrl = `${baseUrl}${separator}token=${session.access_token}&session_id=${sessionId}`;
+      } else {
+        // Use default URL with token and session_id
+        wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session.access_token}&session_id=${sessionId}`;
+      }
+
       
       setConnectionStatus("connecting");
 

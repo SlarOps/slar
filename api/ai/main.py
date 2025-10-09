@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from typing import Any, Awaitable, Callable, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 from contextlib import asynccontextmanager
 
@@ -85,13 +85,36 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to pre-initialize MCP tools: {str(e)}")
         # Don't fail startup, but log the error
 
+    # Initial session cleanup
+    try:
+        print("🧹 Running initial session cleanup...")
+        await cleanup_old_sessions()
+        print("✅ Initial session cleanup completed")
+    except Exception as e:
+        print(f"❌ Failed initial session cleanup: {str(e)}")
+        logger.error(f"Failed initial session cleanup: {str(e)}")
+
     yield
 
     # Shutdown: Clean up resources if needed
-    print("🔄 Shutting down vector store...")
-    logger.info("Shutting down vector store...")
+    print("🔄 Shutting down services...")
+    logger.info("Shutting down services...")
+    
+    # Clean up all active sessions
+    try:
+        print("🧹 Cleaning up active sessions...")
+        for session_id, session in list(active_sessions.items()):
+            await session.cleanup()
+        active_sessions.clear()
+        print("✅ Session cleanup completed")
+    except Exception as e:
+        print(f"❌ Error during session cleanup: {str(e)}")
+        logger.error(f"Error during session cleanup: {str(e)}")
+    
+    # Shutdown vector store
     try:
         await rag_memory.close()
+        print("✅ Vector store shutdown completed")
     except Exception as e:
         print(f"❌ Error during vector store shutdown: {str(e)}")
         logger.error(f"Error during vector store shutdown: {str(e)}")
@@ -203,11 +226,17 @@ async def health_check():
         mcp_tools_ready = slar_agent_manager._mcp_initialized
         mcp_tools_count = len(slar_agent_manager._mcp_tools_cache) if slar_agent_manager._mcp_tools_cache else 0
 
+        # Session information
+        active_sessions_count = len(active_sessions)
+        streaming_sessions = sum(1 for session in active_sessions.values() if session.is_streaming)
+
         return {
             "status": "healthy",
             "vector_store_ready": vector_store_ready,
             "mcp_tools_ready": mcp_tools_ready,
             "mcp_tools_count": mcp_tools_count,
+            "active_sessions": active_sessions_count,
+            "streaming_sessions": streaming_sessions,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -217,6 +246,8 @@ async def health_check():
             "vector_store_ready": False,
             "mcp_tools_ready": False,
             "mcp_tools_count": 0,
+            "active_sessions": 0,
+            "streaming_sessions": 0,
             "timestamp": datetime.now().isoformat()
         }
 
@@ -225,6 +256,140 @@ async def health_check():
 async def history() -> list[dict[str, Any]]:
     try:
         return await get_history()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """List all active sessions with their status."""
+    try:
+        sessions_info = []
+        for session_id, session in active_sessions.items():
+            sessions_info.append({
+                "session_id": session_id,
+                "created_at": session.created_at.isoformat(),
+                "last_activity": session.last_activity.isoformat(),
+                "is_streaming": session.is_streaming,
+                "has_team": session.team is not None,
+                "has_state": session.team_state is not None,
+                "current_task": session.current_task,
+                "conversation_length": len(session.conversation_history)
+            })
+        
+        return {
+            "active_sessions": len(active_sessions),
+            "sessions": sessions_info,
+            "cleanup_config": {
+                "max_age_hours": MAX_SESSION_AGE_HOURS,
+                "cleanup_interval": SESSION_CLEANUP_INTERVAL
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/sessions/cleanup")
+async def manual_session_cleanup():
+    """Manually trigger session cleanup."""
+    try:
+        sessions_before = len(active_sessions)
+        await cleanup_old_sessions()
+        sessions_after = len(active_sessions)
+        
+        return {
+            "status": "success",
+            "sessions_before": sessions_before,
+            "sessions_after": sessions_after,
+            "sessions_cleaned": sessions_before - sessions_after
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/sessions/{session_id}")
+async def get_session_info(session_id: str):
+    """Get detailed information about a specific session."""
+    try:
+        if session_id not in active_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = active_sessions[session_id]
+        
+        return {
+            "session_id": session_id,
+            "created_at": session.created_at.isoformat(),
+            "last_activity": session.last_activity.isoformat(),
+            "is_streaming": session.is_streaming,
+            "has_team": session.team is not None,
+            "has_state": session.team_state is not None,
+            "current_task": session.current_task,
+            "conversation_history": session.conversation_history,
+            "team_state_size": len(str(session.team_state)) if session.team_state else 0
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a specific session."""
+    try:
+        if session_id not in active_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = active_sessions[session_id]
+        await session.cleanup()
+        session.delete_from_disk()
+        del active_sessions[session_id]
+        
+        return {
+            "status": "success",
+            "message": f"Session {session_id} deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/sessions/{session_id}/reset")
+async def reset_session_team(session_id: str):
+    """Reset the team for a specific session to fix running state issues."""
+    try:
+        if session_id not in active_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = active_sessions[session_id]
+        
+        # Check current state
+        has_team_before = session.team is not None
+        is_streaming_before = session.is_streaming
+        
+        # Reset the team
+        reset_success = await session.reset_team_if_needed()
+        
+        # Update streaming state
+        session.is_streaming = False
+        
+        # Save state after reset
+        await session.save_state()
+        
+        return {
+            "status": "success",
+            "message": f"Team reset for session {session_id}",
+            "details": {
+                "had_team_before": has_team_before,
+                "was_streaming_before": is_streaming_before,
+                "reset_success": reset_success,
+                "has_team_after": session.team is not None,
+                "is_streaming_after": session.is_streaming
+            }
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -818,6 +983,295 @@ async def remove_indexed_source(source_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to remove source: {str(e)}")
 
 
+class ChatSession:
+    """Manages a persistent chat session with reconnection support."""
+    
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.team = None
+        self.conversation_history = []
+        self.current_task = None
+        self.is_streaming = False
+        self.last_activity = datetime.now()
+        self.team_state = None
+        self.created_at = datetime.now()
+        
+        # Ensure sessions directory exists
+        self.sessions_dir = os.path.join(data_store, "sessions")
+        os.makedirs(self.sessions_dir, exist_ok=True)
+        self.session_file = os.path.join(self.sessions_dir, f"{session_id}.json")
+        
+    async def load_from_disk(self):
+        """Load session data from disk if it exists."""
+        try:
+            if os.path.exists(self.session_file):
+                async with aiofiles.open(self.session_file, "r") as f:
+                    session_data = json.loads(await f.read())
+                
+                # Validate session data
+                if self._validate_session_data(session_data):
+                    self.team_state = session_data.get("team_state")
+                    self.conversation_history = session_data.get("conversation_history", [])
+                    self.current_task = session_data.get("current_task")
+                    
+                    # Parse timestamps
+                    if session_data.get("last_activity"):
+                        self.last_activity = datetime.fromisoformat(session_data["last_activity"])
+                    if session_data.get("created_at"):
+                        self.created_at = datetime.fromisoformat(session_data["created_at"])
+                    
+                    logger.info(f"Loaded session data from disk: {self.session_id}")
+                    return True
+                else:
+                    logger.warning(f"Invalid session data for {self.session_id}, starting fresh")
+        except Exception as e:
+            logger.error(f"Failed to load session from disk: {e}")
+        return False
+    
+    def _validate_session_data(self, data: dict) -> bool:
+        """Validate session data structure."""
+        try:
+            required_fields = ["session_id"]
+            return (
+                isinstance(data, dict) and
+                all(field in data for field in required_fields) and
+                data["session_id"] == self.session_id
+            )
+        except Exception:
+            return False
+    
+    async def _validate_team_state(self, state: dict) -> bool:
+        """Validate team state before loading."""
+        if not isinstance(state, dict):
+            return False
+        
+        # Check for required AutoGen state fields
+        required_fields = ["participants"]  # Basic validation
+        try:
+            return all(field in state for field in required_fields if state)
+        except Exception:
+            return False
+        
+    async def get_or_create_team(self, user_input_func, user_approval_func):
+        """Get existing team or create new one."""
+        if self.team is None:
+            self.team = await get_selector_group_chat(user_input_func, user_approval_func)
+            # Restore conversation history if exists
+            if self.team_state:
+                try:
+                    # Validate state before loading
+                    if await self._validate_team_state(self.team_state):
+                        await self.team.load_state(self.team_state)
+                        logger.info(f"Restored team state for session {self.session_id}")
+                    else:
+                        logger.warning(f"Invalid team state for session {self.session_id}, starting fresh")
+                        self.team_state = None
+                except Exception as e:
+                    logger.warning(f"Could not restore team state: {e}")
+                    self.team_state = None
+        return self.team
+    
+    def _is_team_running(self):
+        """Check if team is in a running state."""
+        if self.team is None:
+            return False
+        
+        # Check if team has a running attribute or similar
+        # AutoGen teams might have internal state we can check
+        try:
+            # This is a heuristic - if the team has certain internal state
+            # it might indicate it's running
+            return hasattr(self.team, '_running') and getattr(self.team, '_running', False)
+        except Exception:
+            return False
+    
+    async def reset_team_if_needed(self):
+        """Reset team if it's in a running state to allow new operations."""
+        if self.team is not None:
+            try:
+                # Always reset the team before new operations to ensure clean state
+                await self.team.reset()
+                logger.debug(f"Team reset completed for session {self.session_id}")
+                return True
+            except Exception as e:
+                logger.warning(f"Team reset failed for session {self.session_id}: {e}")
+                # If reset fails, create a new team
+                self.team = None
+                return False
+        return True
+    
+    async def safe_run_stream(self, task=None):
+        """Safely run team stream with proper error handling."""
+        if self.team is None:
+            raise RuntimeError("No team available")
+        
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                if task:
+                    return self.team.run_stream(task=task)
+                else:
+                    return self.team.run_stream()
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "already running" in error_msg and attempt < max_retries - 1:
+                    logger.warning(f"Team running error, attempting reset (attempt {attempt + 1})")
+                    # Reset and try again
+                    await self.reset_team_if_needed()
+                    if self.team is None:
+                        # If team was cleared, we need to recreate it
+                        raise RuntimeError("Team was cleared during reset, need to recreate")
+                else:
+                    raise e
+        
+        raise RuntimeError("Failed to start team stream after retries")
+    
+    async def save_state(self):
+        """Save current team state to memory and disk."""
+        try:
+            # Save team state to memory
+            if self.team:
+                self.team_state = await self.team.save_state()
+                logger.debug(f"Saved team state to memory for session {self.session_id}")
+            
+            # Save entire session to disk
+            await self.save_to_disk()
+            return self.team_state
+        except Exception as e:
+            logger.error(f"Failed to save session state: {e}")
+            return None
+    
+    async def save_to_disk(self):
+        """Save session data to disk."""
+        try:
+            session_data = {
+                "session_id": self.session_id,
+                "team_state": self.team_state,
+                "conversation_history": self.conversation_history,
+                "current_task": self.current_task,
+                "last_activity": self.last_activity.isoformat(),
+                "created_at": self.created_at.isoformat(),
+                "is_streaming": self.is_streaming
+            }
+            
+            # Write to temporary file first, then rename for atomic operation
+            temp_file = f"{self.session_file}.tmp"
+            async with aiofiles.open(temp_file, "w") as f:
+                await f.write(json.dumps(session_data, indent=2))
+            
+            # Atomic rename
+            os.rename(temp_file, self.session_file)
+            logger.debug(f"Session data saved to disk: {self.session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save session to disk: {e}")
+            # Clean up temp file if it exists
+            try:
+                if os.path.exists(f"{self.session_file}.tmp"):
+                    os.remove(f"{self.session_file}.tmp")
+            except:
+                pass
+            return False
+    
+    def update_activity(self):
+        """Update last activity timestamp."""
+        self.last_activity = datetime.now()
+    
+    def can_resume_stream(self):
+        """Check if we can resume streaming."""
+        # For now, always start fresh to avoid "team is already running" errors
+        # In the future, we could implement proper stream resumption
+        return False
+    
+    async def cleanup(self):
+        """Clean up session resources."""
+        try:
+            # Save final state
+            await self.save_state()
+            
+            # Clean up team resources if needed
+            if self.team:
+                # AutoGen teams don't have explicit cleanup, but we can reset
+                try:
+                    await self.team.reset()
+                except Exception as e:
+                    logger.debug(f"Team reset failed (expected): {e}")
+            
+            logger.info(f"Session cleanup completed: {self.session_id}")
+        except Exception as e:
+            logger.error(f"Error during session cleanup: {e}")
+    
+    def delete_from_disk(self):
+        """Delete session file from disk."""
+        try:
+            if os.path.exists(self.session_file):
+                os.remove(self.session_file)
+                logger.info(f"Deleted session file: {self.session_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete session file: {e}")
+
+# Global session storage (in production, use Redis or database)
+active_sessions = {}
+
+# Session cleanup configuration
+SESSION_CLEANUP_INTERVAL = 3600  # 1 hour in seconds
+MAX_SESSION_AGE_HOURS = 24  # Maximum session age before cleanup
+
+async def cleanup_old_sessions():
+    """Clean up old inactive sessions."""
+    try:
+        cutoff_time = datetime.now() - timedelta(hours=MAX_SESSION_AGE_HOURS)
+        sessions_to_remove = []
+        
+        for session_id, session in active_sessions.items():
+            if session.last_activity < cutoff_time:
+                sessions_to_remove.append(session_id)
+        
+        # Clean up old sessions
+        for session_id in sessions_to_remove:
+            session = active_sessions.get(session_id)
+            if session:
+                await session.cleanup()
+                del active_sessions[session_id]
+                logger.info(f"Cleaned up old session: {session_id}")
+        
+        # Also clean up orphaned session files
+        sessions_dir = os.path.join(data_store, "sessions")
+        if os.path.exists(sessions_dir):
+            for filename in os.listdir(sessions_dir):
+                if filename.endswith(".json"):
+                    filepath = os.path.join(sessions_dir, filename)
+                    try:
+                        # Check file modification time
+                        file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                        if file_mtime < cutoff_time:
+                            os.remove(filepath)
+                            logger.info(f"Cleaned up orphaned session file: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up session file {filename}: {e}")
+        
+        if sessions_to_remove:
+            logger.info(f"Session cleanup completed: removed {len(sessions_to_remove)} sessions")
+        
+    except Exception as e:
+        logger.error(f"Error during session cleanup: {e}")
+
+async def get_or_create_session(session_id: str) -> ChatSession:
+    """Get existing session or create new one with disk loading."""
+    if session_id not in active_sessions:
+        # Create new session
+        session = ChatSession(session_id)
+        
+        # Try to load from disk
+        await session.load_from_disk()
+        
+        active_sessions[session_id] = session
+        logger.info(f"Created/loaded session: {session_id}")
+    
+    session = active_sessions[session_id]
+    session.update_activity()
+    return session
+
 @app.websocket("/ws/chat")
 async def chat(websocket: WebSocket):
     # make a request to api to verify token
@@ -825,12 +1279,21 @@ async def chat(websocket: WebSocket):
     API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
     token = websocket.query_params.get("token")
     response = requests.get(f"{API_BASE_URL}/verify-token", headers={"Authorization": f"Bearer {token}"})
-    # if response.status_code != 200:
-    #     raise HTTPException(status_code=401, detail="Unauthorized")
-    # else:
-    #     await websocket.accept()
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    else:
+        await websocket.accept()
     
-    await websocket.accept()
+    # await websocket.accept()
+    
+    # Generate or get session ID
+    session_id = websocket.query_params.get("session_id") or f"session_{datetime.now().timestamp()}"
+    
+    # Get or create chat session with disk loading
+    chat_session = await get_or_create_session(session_id)
+    
+    # Create cancellation token for this WebSocket connection (not the entire session)
+    connection_cancellation_token = CancellationToken()
 
     # User input function used by the team.
     async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
@@ -838,10 +1301,15 @@ async def chat(websocket: WebSocket):
         print("user input requested")
         while True:
             try:
+                # Check if connection is cancelled
+                if connection_cancellation_token.is_cancelled:
+                    raise RuntimeError("Connection cancelled due to WebSocket disconnect")
+                    
                 data = await websocket.receive_json()
             except WebSocketDisconnect:
                 logger.info("Client disconnected while waiting for user input")
-                raise  # Let WebSocketDisconnect propagate to be handled by outer try/except
+                connection_cancellation_token.cancel()
+                raise RuntimeError("Client disconnected") from None
 
             # Try to validate as TextMessage; ignore other event types
             try:
@@ -860,12 +1328,16 @@ async def chat(websocket: WebSocket):
         print("approval requested")
         while True:
             try:
+                # Check if connection is cancelled
+                if connection_cancellation_token.is_cancelled:
+                    raise RuntimeError("Connection cancelled due to WebSocket disconnect")
+                    
                 await websocket.send_json(jsonable_encoder({
                     "type": "TextMessage",
                     "content": f"Code execution approval requested:\n{request.code}\nDo you want to execute this code? (y/n): ",
                     "source": "system"
                 }))
- 
+
                 data = await websocket.receive_json()
                 message = TextMessage.model_validate(data)
                 content = (message.content or "").strip()
@@ -882,7 +1354,8 @@ async def chat(websocket: WebSocket):
 
             except WebSocketDisconnect:
                 logger.info("Client disconnected while waiting for approval")
-                raise  # Let WebSocketDisconnect propagate to be handled by outer try/except
+                connection_cancellation_token.cancel()
+                raise RuntimeError("Client disconnected") from None
 
     try:
         while True:
@@ -899,9 +1372,34 @@ async def chat(websocket: WebSocket):
             request = TextMessage.model_validate(data)
             
             try:
-                team = await get_selector_group_chat(_user_input, _user_approval)
-                history = await get_history()
-                stream = team.run_stream(task=request)
+                # Get or create team for this session
+                team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                
+                # Reset team if needed to clear any running state
+                reset_success = await chat_session.reset_team_if_needed()
+                if not reset_success:
+                    # If reset failed, recreate the team
+                    team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                
+                chat_session.is_streaming = True
+                
+                # Always start with new task to avoid running state issues
+                logger.info(f"Starting new stream for session {session_id}")
+                chat_session.current_task = request.content
+                
+                try:
+                    stream = await chat_session.safe_run_stream(task=request)
+                except RuntimeError as e:
+                    if "need to recreate" in str(e):
+                        # Recreate team and try again
+                        logger.info(f"Recreating team for session {session_id}")
+                        team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                        stream = await chat_session.safe_run_stream(task=request)
+                    else:
+                        raise e
+                
+                # Use connection-specific cancellation token (not session-wide)
+                # This allows reconnection without killing the entire session
                 async for message in stream:
                     # logger.info(f"Message: {message.model_dump()}")
                     if isinstance(message, TaskResult):
@@ -922,19 +1420,15 @@ async def chat(websocket: WebSocket):
                     print(10*"==")
                     print(message.model_dump())
 
-                # # Save team state to file.
-                # async with aiofiles.open(slar_agent_manager.state_path, "w") as file:
-                #     state = await team.save_state()
-                #     await file.write(json.dumps(state))
-
-                # # Save chat history to file.
-                # async with aiofiles.open(slar_agent_manager.history_path, "w") as file:
-                #     await file.write(json.dumps(history))
-                # await slar_agent_manager._code_excutor.stop()
+                # Save session state after each completed interaction
+                chat_session.is_streaming = False
+                await chat_session.save_state()
+                logger.debug(f"Saved session state after interaction: {session_id}")
                     
             except WebSocketDisconnect:
                 # Client disconnected during message processing - exit gracefully
                 logger.info("Client disconnected during message processing")
+                connection_cancellation_token.cancel()
                 break
             except Exception as e:
                 # Send error message to client
@@ -961,6 +1455,7 @@ async def chat(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
+        connection_cancellation_token.cancel()
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         try:
@@ -976,6 +1471,15 @@ async def chat(websocket: WebSocket):
             # Failed to send error message - connection likely broken
             logger.error("Failed to send error message to client")
             pass
+    finally:
+        # Always save session state before disconnection
+        try:
+            if chat_session:
+                chat_session.is_streaming = False
+                await chat_session.save_state()
+                logger.info(f"Final state save completed for session: {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to save final session state: {e}")
 
 # JSON-based source tracking functions
 def load_indexed_sources() -> List[dict]:
