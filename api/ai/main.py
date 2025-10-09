@@ -73,6 +73,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize vector store: {str(e)}")
         # Don't fail startup, but log the error
 
+    # Pre-initialize MCP tools to avoid delay on first connection
+    try:
+        print("🔧 Pre-initializing MCP tools...")
+        logger.info("Pre-initializing MCP tools...")
+        await slar_agent_manager.initialize_mcp_tools()
+        print("✅ MCP tools pre-initialization completed")
+        logger.info("MCP tools pre-initialization completed")
+    except Exception as e:
+        print(f"❌ Failed to pre-initialize MCP tools: {str(e)}")
+        logger.error(f"Failed to pre-initialize MCP tools: {str(e)}")
+        # Don't fail startup, but log the error
+
     yield
 
     # Shutdown: Clean up resources if needed
@@ -182,14 +194,20 @@ async def get_history() -> list[dict[str, Any]]:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint that verifies vector store initialization."""
+    """Health check endpoint that verifies vector store and MCP initialization."""
     try:
         # Check if vector store is initialized
         vector_store_ready = hasattr(rag_memory, '_client') and rag_memory._client is not None
+        
+        # Check if MCP tools are initialized
+        mcp_tools_ready = slar_agent_manager._mcp_initialized
+        mcp_tools_count = len(slar_agent_manager._mcp_tools_cache) if slar_agent_manager._mcp_tools_cache else 0
 
         return {
             "status": "healthy",
             "vector_store_ready": vector_store_ready,
+            "mcp_tools_ready": mcp_tools_ready,
+            "mcp_tools_count": mcp_tools_count,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -197,6 +215,8 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e),
             "vector_store_ready": False,
+            "mcp_tools_ready": False,
+            "mcp_tools_count": 0,
             "timestamp": datetime.now().isoformat()
         }
 
@@ -884,9 +904,6 @@ async def chat(websocket: WebSocket):
                 stream = team.run_stream(task=request)
                 async for message in stream:
                     # logger.info(f"Message: {message.model_dump()}")
-                    print(10*"==")
-                    print(message.model_dump())
-
                     if isinstance(message, TaskResult):
                         continue
                     if message.source == "user":
@@ -901,6 +918,9 @@ async def chat(websocket: WebSocket):
                     if isinstance(message, UserInputRequestedEvent):
                         # Don't save user input events to history.
                         history.append(jsonable_encoder(message.model_dump()))
+                    
+                    print(10*"==")
+                    print(message.model_dump())
 
                 # # Save team state to file.
                 # async with aiofiles.open(slar_agent_manager.state_path, "w") as file:

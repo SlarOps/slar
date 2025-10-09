@@ -7,6 +7,15 @@ import { statusColor, severityColor } from './utils';
 
 // Memoized Message Component để tránh re-render không cần thiết
 const MessageComponent = memo(({ message }) => {
+  // Add streaming indicator with staggered animation
+  const StreamingIndicator = () => (
+    <span className="inline-flex items-center ml-2">
+      <span className="animate-pulse text-gray-400" style={{ animationDelay: '0ms' }}>●</span>
+      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '200ms' }}>●</span>
+      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '400ms' }}>●</span>
+    </span>
+  );
+
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
       <p className="my-3 leading-relaxed" {...props} />
@@ -52,7 +61,7 @@ const MessageComponent = memo(({ message }) => {
         className={`inline-block max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-relaxed ${
           message.role === "user"
             ? "bg-gray-200 text-gray-800"
-            : "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
         }`}
       >
         <div className="mb-2">
@@ -138,13 +147,17 @@ const MessageComponent = memo(({ message }) => {
         )}
         
         {message.type !== 'MemoryQueryEvent' && (
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={markdownComponents}
-        >
-          {message.content}
-        </Markdown>)}
+        <div className="relative">
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={markdownComponents}
+          >
+            {message.content}
+          </Markdown>
+          {message.isStreaming && <StreamingIndicator />}
+        </div>
+        )}
       </div>
 
       {Array.isArray(message.incidents) && message.incidents.length > 0 && (
