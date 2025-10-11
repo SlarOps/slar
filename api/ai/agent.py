@@ -2,18 +2,14 @@ import json
 import os
 from typing import Any, Awaitable, Callable, Optional, Dict
 import aiofiles
-import venv
 
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse
 from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
-from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
-from autogen_core import CancellationToken
+from autogen_core import CancellationToken, AgentId, MessageContext, RoutedAgent, message_handler
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination, TokenUsageTermination, ExternalTermination
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
-from autogen_core import AgentId, MessageContext, RoutedAgent, message_handler
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
-from autogen_core.models import ModelInfo
 
 from tools_slar import get_incidents
 from tools import ToolManager
@@ -244,7 +240,10 @@ class SLARAgentManager:
     async def create_code_executor_agent(self, approval_func: Callable[[ApprovalRequest], ApprovalResponse]) -> CodeExecutorAgent:
         """Create the code executor agent."""
         
-
+        # Ensure code executor is created first
+        if self._code_excutor is None:
+            await self.create_excutor()
+        
         await self._code_excutor.start()
 
         code_executor_agent = CodeExecutorAgent(

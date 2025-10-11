@@ -3,10 +3,12 @@ Main FastAPI application entry point.
 Refactored to use modular components.
 """
 
+import json
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,11 +23,13 @@ try:
     from .agent import SLARAgentManager
     from .session import SessionManager
     from .routes import health_router, sessions_router, runbook_router, websocket_router
+    from .utils import load_indexed_sources
 except ImportError:
     # Fallback to absolute import (works with python main.py)
     from agent import SLARAgentManager
     from session import SessionManager
     from routes import health_router, sessions_router, runbook_router, websocket_router
+    from utils import load_indexed_sources
 
 from autogen_core.memory import MemoryContent, MemoryMimeType
 
