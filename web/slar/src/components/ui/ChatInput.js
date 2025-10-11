@@ -14,12 +14,21 @@ const ChatInput = ({
   severityColor = () => "bg-gray-100 text-gray-800",
   currentMode = "agent",
   onModeChange = () => {},
-  showModeSelector = true
+  showModeSelector = true,
+  onStop = null,
+  sessionId = null,
+  isStreaming = false
 }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!value.trim() || isLoading) return;
     onSubmit(e);
+  };
+
+  const handleStop = () => {
+    if (onStop && sessionId) {
+      onStop(sessionId);
+    }
   };
 
   return (
@@ -164,14 +173,19 @@ const ChatInput = ({
                 className="flex-1 bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none disabled:opacity-60"
               />
 
-              {/* Voice Input Button */}
-              <button type="button" className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" title="Voice Input">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1a3 3 0 00-3 3v7a3 3 0 006 0V4a3 3 0 00-3-3z"/>
-                  <path d="M19 10a7 7 0 01-14 0"/>
-                  <path d="M12 19v4"/>
-                </svg>
-              </button>
+              {/* Stop Button - Only show when streaming */}
+              {isStreaming && onStop && (
+                <button 
+                  type="button" 
+                  onClick={handleStop}
+                  className="p-2 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200" 
+                  title="Stop"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                  </svg>
+                </button>
+              )}
 
               {/* Send Button */}
               <button

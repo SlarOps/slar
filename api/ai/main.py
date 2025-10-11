@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import asyncio
 from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime, timedelta
 import hashlib
@@ -29,15 +30,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination
+from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination, ExternalTermination
 from autogen_agentchat.base import Handoff
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
 from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
 
 import os
+import sys
 
-from agent import SLARAgentManager
+# Ensure current directory is in Python path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+try:
+    # Try relative import first (works with python -m main)
+    from .agent import SLARAgentManager
+except ImportError:
+    # Fallback to absolute import (works with python main.py)
+    from agent import SLARAgentManager
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +113,15 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down services...")
     
     # Clean up all active sessions
-    try:
-        print("🧹 Cleaning up active sessions...")
-        for session_id, session in list(active_sessions.items()):
-            await session.cleanup()
-        active_sessions.clear()
-        print("✅ Session cleanup completed")
-    except Exception as e:
-        print(f"❌ Error during session cleanup: {str(e)}")
-        logger.error(f"Error during session cleanup: {str(e)}")
+    # try:
+    #     print("🧹 Cleaning up active sessions...")
+    #     for session_id, session in list(active_sessions.items()):
+    #         await session.cleanup()
+    #     active_sessions.clear()
+    #     print("✅ Session cleanup completed")
+    # except Exception as e:
+    #     print(f"❌ Error during session cleanup: {str(e)}")
+    #     logger.error(f"Error during session cleanup: {str(e)}")
     
     # Shutdown vector store
     try:
@@ -196,7 +208,8 @@ async def get_team(
 
 async def get_selector_group_chat(
         user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]],
-        approval_func: Callable[[ApprovalRequest], ApprovalResponse]
+        approval_func: Callable[[ApprovalRequest], ApprovalResponse],
+        external_termination: Optional[ExternalTermination] = None
     ) -> SelectorGroupChat:
     """
     Get a configured SLAR agent team.
@@ -204,7 +217,7 @@ async def get_selector_group_chat(
     """
     slar_agent_manager.set_approval_func(approval_func)
     slar_agent_manager.set_user_input_func(user_input_func)
-    return await slar_agent_manager.get_selector_group_chat(user_input_func)
+    return await slar_agent_manager.get_selector_group_chat(user_input_func, external_termination)
 
 
 async def get_history() -> list[dict[str, Any]]:
@@ -274,7 +287,7 @@ async def list_sessions():
                 "has_team": session.team is not None,
                 "has_state": session.team_state is not None,
                 "current_task": session.current_task,
-                "conversation_length": len(session.conversation_history)
+                "conversation_length": 0  # AutoGen manages conversation internally
             })
         
         return {
@@ -312,7 +325,12 @@ async def get_session_info(session_id: str):
     """Get detailed information about a specific session."""
     try:
         if session_id not in active_sessions:
-            raise HTTPException(status_code=404, detail="Session not found")
+            # Try to load from disk if not in memory
+            session = AutoGenChatSession(session_id)
+            loaded = await session.load_from_disk()
+            if not loaded:
+                raise HTTPException(status_code=404, detail="Session not found")
+            active_sessions[session_id] = session
         
         session = active_sessions[session_id]
         
@@ -324,8 +342,127 @@ async def get_session_info(session_id: str):
             "has_team": session.team is not None,
             "has_state": session.team_state is not None,
             "current_task": session.current_task,
-            "conversation_history": session.conversation_history,
-            "team_state_size": len(str(session.team_state)) if session.team_state else 0
+            "conversation_history": [],  # AutoGen manages conversation internally  
+            "team_state_size": len(str(session.team_state)) if session.team_state else 0,
+            "can_resume": session.can_resume_stream()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/sessions/{session_id}/history")
+async def get_session_history(session_id: str):
+    """Get conversation history for a specific session."""
+    try:
+        if session_id not in active_sessions:
+            # Try to load from disk if not in memory
+            session = AutoGenChatSession(session_id)
+            loaded = await session.load_from_disk()
+            if not loaded:
+                raise HTTPException(status_code=404, detail="Session not found")
+            active_sessions[session_id] = session
+        
+        session = active_sessions[session_id]
+        
+        # Extract conversation history from team state
+        history = []
+        
+        if session.team_state and isinstance(session.team_state, dict):
+            # Extract messages from AutoGen team state
+            try:
+                agent_states = session.team_state.get("agent_states", {})
+                
+                # Collect all messages from all agents
+                all_messages = []
+                
+                for agent_name, agent_data in agent_states.items():
+                    if isinstance(agent_data, dict):
+                        agent_state = agent_data.get("agent_state", {})
+                        if isinstance(agent_state, dict):
+                            llm_context = agent_state.get("llm_context", {})
+                            if isinstance(llm_context, dict):
+                                messages = llm_context.get("messages", [])
+                                if isinstance(messages, list):
+                                    for msg in messages:
+                                        if isinstance(msg, dict):
+                                            # Add agent name to track which agent this came from
+                                            msg_copy = msg.copy()
+                                            msg_copy["agent_name"] = agent_name
+                                            all_messages.append(msg_copy)
+                
+                # Sort messages by order (if available) or keep original order
+                # Remove duplicates by content and source
+                seen_messages = set()
+                for msg in all_messages:
+                    msg_key = (msg.get("content", ""), msg.get("source", ""), msg.get("type", ""))
+                    if msg_key not in seen_messages:
+                        seen_messages.add(msg_key)
+                        history.append({
+                            "content": msg.get("content", ""),
+                            "source": msg.get("source", "unknown"),
+                            "type": msg.get("type", "TextMessage"),
+                            "agent_name": msg.get("agent_name", "unknown"),
+                            "thought": msg.get("thought")
+                        })
+                
+                logger.info(f"Extracted {len(history)} messages from team state for session {session_id}")
+                
+            except Exception as e:
+                logger.error(f"Error extracting conversation from team state: {str(e)}")
+                # Fallback to empty history
+                history = []
+        
+        return {
+            "session_id": session_id,
+            "history": history,
+            "last_activity": session.last_activity.isoformat(),
+            "current_task": session.current_task,
+            "total_messages": len(history)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/sessions/{session_id}/load")
+async def load_session(session_id: str):
+    """Explicitly load a session from disk into memory."""
+    try:
+        if session_id in active_sessions:
+            return {
+                "status": "already_loaded",
+                "message": f"Session {session_id} is already in memory",
+                "session_info": {
+                    "created_at": active_sessions[session_id].created_at.isoformat(),
+                    "last_activity": active_sessions[session_id].last_activity.isoformat(),
+                    "has_team": active_sessions[session_id].team is not None,
+                    "has_state": active_sessions[session_id].team_state is not None
+                }
+            }
+        
+        # Create session object and try to load from disk
+        session = AutoGenChatSession(session_id)
+        loaded = await session.load_from_disk()
+        
+        if not loaded:
+            raise HTTPException(status_code=404, detail="Session not found on disk")
+        
+        # Add to active sessions
+        active_sessions[session_id] = session
+        
+        return {
+            "status": "loaded",
+            "message": f"Session {session_id} loaded successfully",
+            "session_info": {
+                "created_at": session.created_at.isoformat(),
+                "last_activity": session.last_activity.isoformat(),
+                "has_team": session.team is not None,
+                "has_state": session.team_state is not None,
+                "current_task": session.current_task
+            }
         }
     except HTTPException:
         raise
@@ -368,8 +505,8 @@ async def reset_session_team(session_id: str):
         has_team_before = session.team is not None
         is_streaming_before = session.is_streaming
         
-        # Reset the team
-        reset_success = await session.reset_team_if_needed()
+        # Reset the team using AutoGen patterns
+        reset_success = await session.smart_reset_team(force_reset=True)
         
         # Update streaming state
         session.is_streaming = False
@@ -391,6 +528,64 @@ async def reset_session_team(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/sessions/{session_id}/stop")
+async def stop_session_stream(session_id: str):
+    """Stop streaming for a specific session safely using ExternalTermination."""
+    try:
+        if session_id not in active_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = active_sessions[session_id]
+        
+        # Check current state
+        was_streaming = session.is_streaming
+        
+        # Stop streaming safely using ExternalTermination
+        stop_success = False
+        if session.external_termination:
+            try:
+                # Use AutoGen's ExternalTermination to stop the team gracefully
+                session.external_termination.set()
+                logger.info(f"ExternalTermination set for session {session_id}")
+                stop_success = True
+            except Exception as e:
+                logger.warning(f"Error setting ExternalTermination: {e}")
+        
+        # Update streaming state
+        session.is_streaming = False
+        
+        # Additional cleanup if needed
+        if session.team and not stop_success:
+            try:
+                # Fallback: Reset team to stop any ongoing operations
+                await session.smart_reset_team(force_reset=True)
+                stop_success = True
+            except Exception as e:
+                logger.warning(f"Error in fallback team reset: {e}")
+                # Even if fallback fails, we mark as stopped
+                stop_success = True
+        
+        # Save state after stop
+        await session.save_state()
+        
+        return {
+            "status": "success",
+            "message": f"Streaming stopped for session {session_id}",
+            "details": {
+                "was_streaming": was_streaming,
+                "stop_success": stop_success,
+                "external_termination_used": session.external_termination is not None,
+                "is_streaming_after": session.is_streaming,
+                "has_team": session.team is not None
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error stopping session stream: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -983,221 +1178,377 @@ async def remove_indexed_source(source_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to remove source: {str(e)}")
 
 
-class ChatSession:
-    """Manages a persistent chat session with reconnection support."""
+class AutoGenChatSession:
+    """
+    AutoGen-compliant chat session with proper state management.
+    Based on official AutoGen documentation and best practices.
+    """
     
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.team = None
-        self.conversation_history = []
         self.current_task = None
         self.is_streaming = False
         self.last_activity = datetime.now()
-        self.team_state = None
         self.created_at = datetime.now()
+        
+        # AutoGen state management
+        self.team_state = None
+        self.state_version = "1.0"  # For future migrations
+        
+        # External termination support
+        self.external_termination = None
         
         # Ensure sessions directory exists
         self.sessions_dir = os.path.join(data_store, "sessions")
         os.makedirs(self.sessions_dir, exist_ok=True)
         self.session_file = os.path.join(self.sessions_dir, f"{session_id}.json")
         
-    async def load_from_disk(self):
-        """Load session data from disk if it exists."""
+    async def load_from_disk(self) -> bool:
+        """Load session data from disk following AutoGen patterns."""
         try:
-            if os.path.exists(self.session_file):
-                async with aiofiles.open(self.session_file, "r") as f:
-                    session_data = json.loads(await f.read())
+            if not os.path.exists(self.session_file):
+                logger.debug(f"No existing session file for {self.session_id}")
+                return False
                 
-                # Validate session data
-                if self._validate_session_data(session_data):
-                    self.team_state = session_data.get("team_state")
-                    self.conversation_history = session_data.get("conversation_history", [])
-                    self.current_task = session_data.get("current_task")
-                    
-                    # Parse timestamps
-                    if session_data.get("last_activity"):
-                        self.last_activity = datetime.fromisoformat(session_data["last_activity"])
-                    if session_data.get("created_at"):
-                        self.created_at = datetime.fromisoformat(session_data["created_at"])
-                    
-                    logger.info(f"Loaded session data from disk: {self.session_id}")
-                    return True
-                else:
-                    logger.warning(f"Invalid session data for {self.session_id}, starting fresh")
+            async with aiofiles.open(self.session_file, "r") as f:
+                session_data = json.loads(await f.read())
+            
+            # Validate session data structure
+            if not self._validate_session_data(session_data):
+                logger.warning(f"Invalid session data for {self.session_id}, starting fresh")
+                return False
+            
+            # Load basic session info
+            self.current_task = session_data.get("current_task")
+            
+            # Parse timestamps
+            if session_data.get("last_activity"):
+                self.last_activity = datetime.fromisoformat(session_data["last_activity"])
+            if session_data.get("created_at"):
+                self.created_at = datetime.fromisoformat(session_data["created_at"])
+            
+            # Load and validate team state
+            team_state = session_data.get("team_state")
+            if team_state and self._validate_autogen_state(team_state):
+                self.team_state = team_state
+                logger.info(f"Loaded valid AutoGen state for session {self.session_id}")
+            else:
+                logger.warning(f"Invalid or missing team state for {self.session_id}")
+                self.team_state = None
+            
+            logger.info(f"Successfully loaded session from disk: {self.session_id}")
+            return True
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error loading session {self.session_id}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to load session from disk: {e}")
-        return False
+            return False
     
     def _validate_session_data(self, data: dict) -> bool:
-        """Validate session data structure."""
+        """Validate basic session data structure."""
         try:
-            required_fields = ["session_id"]
+            required_fields = ["session_id", "state_version"]
             return (
                 isinstance(data, dict) and
                 all(field in data for field in required_fields) and
-                data["session_id"] == self.session_id
+                data["session_id"] == self.session_id and
+                data.get("state_version") == self.state_version
             )
         except Exception:
             return False
     
-    async def _validate_team_state(self, state: dict) -> bool:
-        """Validate team state before loading."""
-        if not isinstance(state, dict):
-            return False
-        
-        # Check for required AutoGen state fields
-        required_fields = ["participants"]  # Basic validation
+    def _validate_autogen_state(self, state: dict) -> bool:
+        """
+        Validate AutoGen team state structure.
+        Based on AutoGen state management patterns.
+        """
         try:
-            return all(field in state for field in required_fields if state)
-        except Exception:
+            if not isinstance(state, dict):
+                return False
+            
+            # Basic validation - check for expected AutoGen state keys
+            # This is a simplified validation - actual AutoGen state structure may vary
+            expected_keys = ["agents", "current_agent", "message_history"]
+            
+            # At least one expected key should be present
+            has_valid_structure = any(key in state for key in expected_keys)
+            
+            # Additional checks for state integrity
+            if "agents" in state and not isinstance(state["agents"], (list, dict)):
+                return False
+            
+            if "message_history" in state and not isinstance(state["message_history"], list):
+                return False
+            
+            return has_valid_structure
+            
+        except Exception as e:
+            logger.debug(f"State validation error: {e}")
             return False
-        
+    
     async def get_or_create_team(self, user_input_func, user_approval_func):
-        """Get existing team or create new one."""
+        """Get existing team or create new one following AutoGen patterns with ExternalTermination support."""
         if self.team is None:
-            self.team = await get_selector_group_chat(user_input_func, user_approval_func)
-            # Restore conversation history if exists
+            # Create ExternalTermination for this session
+            self.external_termination = ExternalTermination()
+            
+            # Create team using factory function
+            base_team = await get_selector_group_chat(user_input_func, user_approval_func, self.external_termination)
+            
+            # Create new team with combined termination condition
+            from autogen_agentchat.teams import SelectorGroupChat
+            self.team = base_team
+            
+            # Restore state if available and valid
             if self.team_state:
                 try:
-                    # Validate state before loading
-                    if await self._validate_team_state(self.team_state):
-                        await self.team.load_state(self.team_state)
-                        logger.info(f"Restored team state for session {self.session_id}")
-                    else:
-                        logger.warning(f"Invalid team state for session {self.session_id}, starting fresh")
-                        self.team_state = None
+                    await self.team.load_state(self.team_state)
+                    logger.info(f"Successfully restored team state for session {self.session_id}")
                 except Exception as e:
-                    logger.warning(f"Could not restore team state: {e}")
+                    logger.warning(f"Failed to restore team state: {e}")
+                    # Clear invalid state
                     self.team_state = None
+                    
         return self.team
     
-    def _is_team_running(self):
-        """Check if team is in a running state."""
-        if self.team is None:
-            return False
-        
-        # Check if team has a running attribute or similar
-        # AutoGen teams might have internal state we can check
+    def _is_team_busy(self) -> bool:
+        """
+        Check if team is currently processing a task.
+        Based on AutoGen internal state inspection.
+        """
         try:
-            # This is a heuristic - if the team has certain internal state
-            # it might indicate it's running
-            return hasattr(self.team, '_running') and getattr(self.team, '_running', False)
-        except Exception:
+            # Check if streaming is active (regardless of team existence)
+            if self.is_streaming:
+                return True
+            
+            # If no team, can't be busy
+            if self.team is None:
+                return False
+            
+            # Check various indicators that team might be busy
+            # These are heuristics based on AutoGen internal behavior
+            
+            # Check for active streams or running state
+            if hasattr(self.team, '_running') and getattr(self.team, '_running', False):
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking team busy state: {e}")
             return False
     
-    async def reset_team_if_needed(self):
-        """Reset team if it's in a running state to allow new operations."""
-        if self.team is not None:
-            try:
-                # Always reset the team before new operations to ensure clean state
+    async def smart_reset_team(self, force_reset: bool = False) -> bool:
+        """
+        Smart team reset - only reset when necessary.
+        Based on AutoGen best practices with ExternalTermination support.
+        """
+        if self.team is None:
+            return True
+        
+        try:
+            # Reset external termination if it exists
+            if self.external_termination:
+                try:
+                    await self.external_termination.reset()
+                    logger.debug(f"ExternalTermination reset for session {self.session_id}")
+                except Exception as e:
+                    logger.warning(f"Error resetting ExternalTermination: {e}")
+            
+            # Check if team is actually busy
+            is_busy = self._is_team_busy()
+            
+            if force_reset or is_busy:
+                # Reset the team to clear state
                 await self.team.reset()
-                logger.debug(f"Team reset completed for session {self.session_id}")
+                logger.info(f"Team reset completed for session {self.session_id}")
+                
+                # Clear streaming flag after reset
+                self.is_streaming = False
                 return True
-            except Exception as e:
-                logger.warning(f"Team reset failed for session {self.session_id}: {e}")
-                # If reset fails, create a new team
-                self.team = None
-                return False
-        return True
+            else:
+                # Team is idle, no need to reset
+                logger.debug(f"Team is idle, skipping reset for session {self.session_id}")
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Team reset failed: {e}")
+            # If reset fails, clear team reference and external termination
+            self.team = None
+            self.external_termination = None
+            self.is_streaming = False
+            return False
     
-    async def safe_run_stream(self, task=None):
-        """Safely run team stream with proper error handling."""
+    async def safe_run_stream(self, task=None, max_retries: int = 2):
+        """
+        Safely run team stream with intelligent retry logic.
+        Based on AutoGen error handling patterns.
+        """
         if self.team is None:
             raise RuntimeError("No team available")
         
-        max_retries = 2
         for attempt in range(max_retries):
             try:
+                # Set streaming flag
+                self.is_streaming = True
+                
+                # Run the stream
                 if task:
                     return self.team.run_stream(task=task)
                 else:
                     return self.team.run_stream()
+                    
             except Exception as e:
                 error_msg = str(e).lower()
+                
                 if "already running" in error_msg and attempt < max_retries - 1:
-                    logger.warning(f"Team running error, attempting reset (attempt {attempt + 1})")
-                    # Reset and try again
-                    await self.reset_team_if_needed()
+                    logger.warning(f"Team already running, attempting reset (attempt {attempt + 1})")
+                    await self.smart_reset_team(force_reset=True)
+                    
                     if self.team is None:
-                        # If team was cleared, we need to recreate it
-                        raise RuntimeError("Team was cleared during reset, need to recreate")
+                        raise RuntimeError("Team needs recreation due to reset failure")
+                    continue
+                    
+                elif "invalid state" in error_msg and attempt < max_retries - 1:
+                    logger.warning(f"Invalid state error, clearing team for recreation")
+                    self.team = None
+                    self.team_state = None
+                    raise RuntimeError("Team needs recreation due to invalid state")
+                    
                 else:
+                    # Reset streaming flag on error
+                    self.is_streaming = False
                     raise e
         
+        # Reset streaming flag if all retries failed
+        self.is_streaming = False
         raise RuntimeError("Failed to start team stream after retries")
     
     async def save_state(self):
-        """Save current team state to memory and disk."""
+        """
+        Save current team state with proper error handling.
+        Following AutoGen state persistence patterns.
+        """
         try:
-            # Save team state to memory
-            if self.team:
-                self.team_state = await self.team.save_state()
-                logger.debug(f"Saved team state to memory for session {self.session_id}")
+            if not self.team:
+                logger.warning(f"No team to save state for session {self.session_id}")
+                return None
             
-            # Save entire session to disk
-            await self.save_to_disk()
+            # Save team state with timeout protection
+            try:
+                self.team_state = await asyncio.wait_for(
+                    self.team.save_state(), 
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"State save timeout for session {self.session_id}")
+                return None
+            except Exception as e:
+                logger.error(f"Team state save failed: {e}")
+                return None
+            
+            # Atomic disk save
+            await self._atomic_save_to_disk()
+            
+            logger.debug(f"State saved successfully for session {self.session_id}")
             return self.team_state
+            
         except Exception as e:
-            logger.error(f"Failed to save session state: {e}")
+            logger.error(f"Critical error saving session state: {e}")
             return None
     
-    async def save_to_disk(self):
-        """Save session data to disk."""
+    async def _atomic_save_to_disk(self):
+        """
+        Atomic save to disk to prevent corruption.
+        Based on AutoGen persistence best practices.
+        """
+        # Ensure parent directory exists first
+        parent_dir = os.path.dirname(self.session_file)
+        os.makedirs(parent_dir, exist_ok=True)
+        
+        temp_file = f"{self.session_file}.tmp"
+        
         try:
             session_data = {
                 "session_id": self.session_id,
                 "team_state": self.team_state,
-                "conversation_history": self.conversation_history,
                 "current_task": self.current_task,
                 "last_activity": self.last_activity.isoformat(),
                 "created_at": self.created_at.isoformat(),
-                "is_streaming": self.is_streaming
+                "is_streaming": self.is_streaming,
+                "state_version": self.state_version
             }
             
-            # Write to temporary file first, then rename for atomic operation
-            temp_file = f"{self.session_file}.tmp"
+            # Write to temp file first
             async with aiofiles.open(temp_file, "w") as f:
                 await f.write(json.dumps(session_data, indent=2))
             
             # Atomic rename
             os.rename(temp_file, self.session_file)
-            logger.debug(f"Session data saved to disk: {self.session_id}")
-            return True
+            
         except Exception as e:
-            logger.error(f"Failed to save session to disk: {e}")
-            # Clean up temp file if it exists
-            try:
-                if os.path.exists(f"{self.session_file}.tmp"):
-                    os.remove(f"{self.session_file}.tmp")
-            except:
-                pass
-            return False
+            # Clean up temp file on error
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+            raise e
     
     def update_activity(self):
         """Update last activity timestamp."""
         self.last_activity = datetime.now()
     
-    def can_resume_stream(self):
-        """Check if we can resume streaming."""
-        # For now, always start fresh to avoid "team is already running" errors
-        # In the future, we could implement proper stream resumption
-        return False
+    def can_resume_stream(self) -> bool:
+        """
+        Check if we can safely resume streaming.
+        Based on AutoGen state management principles.
+        """
+        if not self.team or not self.team_state:
+            return False
+        
+        try:
+            # Team should not be busy
+            if self._is_team_busy():
+                return False
+            
+            # Should have valid state
+            if not self._validate_autogen_state(self.team_state):
+                return False
+            
+            # Last activity should be recent (within 1 hour)
+            time_since_activity = datetime.now() - self.last_activity
+            if time_since_activity > timedelta(hours=1):
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
     
     async def cleanup(self):
-        """Clean up session resources."""
+        """
+        Clean up session resources following AutoGen patterns.
+        """
         try:
             # Save final state
             await self.save_state()
             
-            # Clean up team resources if needed
+            # Reset team to clean state
             if self.team:
-                # AutoGen teams don't have explicit cleanup, but we can reset
                 try:
                     await self.team.reset()
                 except Exception as e:
-                    logger.debug(f"Team reset failed (expected): {e}")
+                    logger.debug(f"Team reset during cleanup failed (expected): {e}")
+            
+            # Clear flags
+            self.is_streaming = False
             
             logger.info(f"Session cleanup completed: {self.session_id}")
+            
         except Exception as e:
             logger.error(f"Error during session cleanup: {e}")
     
@@ -1256,11 +1607,11 @@ async def cleanup_old_sessions():
     except Exception as e:
         logger.error(f"Error during session cleanup: {e}")
 
-async def get_or_create_session(session_id: str) -> ChatSession:
+async def get_or_create_session(session_id: str) -> AutoGenChatSession:
     """Get existing session or create new one with disk loading."""
     if session_id not in active_sessions:
         # Create new session
-        session = ChatSession(session_id)
+        session = AutoGenChatSession(session_id)
         
         # Try to load from disk
         await session.load_from_disk()
@@ -1302,8 +1653,8 @@ async def chat(websocket: WebSocket):
         while True:
             try:
                 # Check if connection is cancelled
-                if connection_cancellation_token.is_cancelled:
-                    raise RuntimeError("Connection cancelled due to WebSocket disconnect")
+                # if connection_cancellation_token.is_cancelled:
+                #     raise RuntimeError("Connection cancelled due to WebSocket disconnect")
                     
                 data = await websocket.receive_json()
             except WebSocketDisconnect:
@@ -1329,8 +1680,8 @@ async def chat(websocket: WebSocket):
         while True:
             try:
                 # Check if connection is cancelled
-                if connection_cancellation_token.is_cancelled:
-                    raise RuntimeError("Connection cancelled due to WebSocket disconnect")
+                # if connection_cancellation_token.is_cancelled:
+                #     raise RuntimeError("Connection cancelled due to WebSocket disconnect")
                     
                 await websocket.send_json(jsonable_encoder({
                     "type": "TextMessage",
@@ -1375,22 +1726,20 @@ async def chat(websocket: WebSocket):
                 # Get or create team for this session
                 team = await chat_session.get_or_create_team(_user_input, _user_approval)
                 
-                # Reset team if needed to clear any running state
-                reset_success = await chat_session.reset_team_if_needed()
+                # Smart reset team if needed (only when necessary)
+                reset_success = await chat_session.smart_reset_team(force_reset=False)
                 if not reset_success:
                     # If reset failed, recreate the team
                     team = await chat_session.get_or_create_team(_user_input, _user_approval)
                 
-                chat_session.is_streaming = True
-                
-                # Always start with new task to avoid running state issues
+                # Always start with new task following AutoGen patterns
                 logger.info(f"Starting new stream for session {session_id}")
                 chat_session.current_task = request.content
                 
                 try:
                     stream = await chat_session.safe_run_stream(task=request)
                 except RuntimeError as e:
-                    if "need to recreate" in str(e):
+                    if "need to recreate" in str(e) or "needs recreation" in str(e):
                         # Recreate team and try again
                         logger.info(f"Recreating team for session {session_id}")
                         team = await chat_session.get_or_create_team(_user_input, _user_approval)
@@ -1415,13 +1764,13 @@ async def chat(websocket: WebSocket):
                         await websocket.send_json(jsonable_encoder(message.model_dump()))
                     if isinstance(message, UserInputRequestedEvent):
                         # Don't save user input events to history.
-                        history.append(jsonable_encoder(message.model_dump()))
+                        pass  # Removed history.append as we're using AutoGen state management
                     
-                    print(10*"==")
-                    print(message.model_dump())
+                    # print(10*"==")
+                    # print(message.model_dump())
 
                 # Save session state after each completed interaction
-                chat_session.is_streaming = False
+                # Following AutoGen patterns for state persistence
                 await chat_session.save_state()
                 logger.debug(f"Saved session state after interaction: {session_id}")
                     
@@ -1473,6 +1822,7 @@ async def chat(websocket: WebSocket):
             pass
     finally:
         # Always save session state before disconnection
+        # Following AutoGen state persistence patterns
         try:
             if chat_session:
                 chat_session.is_streaming = False

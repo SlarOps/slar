@@ -12,20 +12,36 @@ import {
   useChatHistory,
   useAutoScroll,
   useAttachedIncident,
-  useChatSubmit
+  useChatSubmit,
+  useSessionId,
+  useMessagesState,
+  useStopSession
 } from '../../components/ai-agent';
 import 'highlight.js/styles/github.css';
 
 export default function AIAgentPage() {
   const { session } = useAuth();
-  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const endRef = useRef(null);
 
+  // Messages state management
+  const {
+    messages,
+    historyLoaded,
+    setMessages,
+    setMessagesFromHistory,
+    resetMessages,
+    addMessage
+  } = useMessagesState();
+
+  // Session management
+  const { sessionId, resetSession } = useSessionId();
+
   // Custom hooks để tổ chức logic
   const { wsConnection, connectionStatus } = useWebSocket(session, setMessages, setIsSending);
   const { attachedIncident, setAttachedIncident } = useAttachedIncident();
+  const { stopSession, isStopping } = useStopSession(sessionId, wsConnection, setIsSending, setMessages);
   const { onSubmit } = useChatSubmit(
     input,
     setInput,
@@ -37,13 +53,31 @@ export default function AIAgentPage() {
     setMessages
   );
 
-  // Load chat history và auto-scroll
-  useChatHistory(setMessages);
+  // Handle session reset
+  const handleSessionReset = useCallback(() => {
+    // Reset messages state
+    resetMessages();
+    
+    // Reset session ID
+    const newSessionId = resetSession();
+    
+    // Show welcome message
+    setMessagesFromHistory([]);
+    
+    console.log(`Session reset. New session: ${newSessionId}`);
+  }, [resetSession, resetMessages, setMessagesFromHistory]);
+
+  // Load chat history với session ID và auto-scroll
+  useChatHistory(setMessagesFromHistory, sessionId);
   useAutoScroll(messages, endRef);
 
   return (
     <div className="flex flex-col bg-white dark:bg-gray-900">
-      <ChatHeader connectionStatus={connectionStatus} />
+      <ChatHeader 
+        connectionStatus={connectionStatus}
+        sessionId={sessionId}
+        onSessionReset={handleSessionReset}
+      />
 
       <MessagesList
         messages={messages}
@@ -63,6 +97,9 @@ export default function AIAgentPage() {
         statusColor={statusColor}
         severityColor={severityColor}
         showModeSelector={false}
+        onStop={stopSession}
+        sessionId={sessionId}
+        isStreaming={isSending}
       />
     </div>
   );

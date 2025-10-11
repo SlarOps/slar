@@ -66,9 +66,16 @@ const MessageComponent = memo(({ message }) => {
       >
         <div>
           {message.role !== "user" ? (
-            <Badge color="bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
-              {message.source}
-            </Badge>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge color="bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
+                {message.source}
+              </Badge>
+              {message.thought && (
+                <span className="text-xs text-gray-500 dark:text-gray-400 italic">
+                  💭 {message.thought.substring(0, 40)}...
+                </span>
+              )}
+            </div>
           ) : null}
           {message.type === 'MemoryQueryEvent' && (
             <div className="mt-1">

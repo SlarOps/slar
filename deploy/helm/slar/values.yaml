@@ -7,7 +7,7 @@ replicaCount: 1
 
 # Default image settings
 image:
-  repository: nginx
+  repository: 192.168.100.137:5000/
   pullPolicy: IfNotPresent
   tag: ""
 
@@ -114,9 +114,9 @@ components:
     dockerEnabled: false
     replicas: 1
     image:
-      repository: ghcr.io/slarops/slar-ai
       tag: latest
-      pullPolicy: IfNotPresent
+      name: slar-ai
+      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
@@ -131,12 +131,18 @@ components:
             key: openai-api-key
       - name: DATA_STORE
         value: "/data"
+      - name: HF_HOME
+        value: "/data/huggingface"
+      - name: TRANSFORMERS_CACHE
+        value: "/data/transformers"
+      - name: SENTENCE_TRANSFORMERS_HOME
+        value: "/data/sentence_transformers"
       - name: API_BASE_URL
         value: "http://slar-api.slar:8080"
       - name: TOKENIZERS_PARALLELISM
         value: "false"
       - name: ENABLE_KUBERNETES
-        value: "false"
+        value: "true"
       - name: ENABLE_CODE_EXECUTOR
         value: "false"
       - name: OPENAI_MODEL
@@ -171,16 +177,19 @@ components:
         "slar.advanced": {
           "mcpServers": [
             {
-              "name": "context7",
-              "command": "npx",
-              "args": ["-y", "@upstash/context7-mcp"]
-            },
+              "context7" : {
+                "url": "https://mcp.context7.com/mcp",
+                "headers": {
+                  "CONTEXT7_API_KEY": "ctx7sk-9dfa3d11-51ca-4ea9-a7fc-0150630879ee"
+                }
+              }
+            }
           ]
         }
 
   api:
     image:
-      repository: ghcr.io/slarops/slar-api
+      name: slar-api
       tag: latest
       pullPolicy: Always
     service:
@@ -215,9 +224,9 @@ components:
 
   worker:
     image:
-      repository: ghcr.io/slarops/slar-api
+      name: slar-api
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       enabled: false
     command: ["./worker"]
@@ -240,9 +249,9 @@ components:
 
   slack-worker:
     image:
-      repository: ghcr.io/slarops/slar-slack-worker
+      name: slar-slack-worker
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       enabled: false
     env:
@@ -276,7 +285,7 @@ components:
 
   web:
     image:
-      repository: ghcr.io/slarops/slar-web
+      name: slar-web
       tag: latest
       pullPolicy: Always
     service:
@@ -296,6 +305,13 @@ components:
             key: supabase-anon-key
 
   kong:
+    ingress:
+      enabled: true
+      hosts:
+        - host: slarhq.com
+          paths:
+            - path: /
+              pathType: Prefix
     image:
       repository: kong
       tag: "2.8.1"

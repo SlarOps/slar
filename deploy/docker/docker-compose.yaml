@@ -5,6 +5,7 @@ services:
     container_name: slar-ai
     build:
       context: ../../api/ai
+    image: 192.168.100.137:5000/slar-ai:latest
     expose:
       - "8002"
     ports:
@@ -29,6 +30,7 @@ services:
     container_name: slar-api
     build:
       context: ../../api
+    image: 192.168.100.137:5000/slar-api:latest
     expose:
       - "8080"
     ports:
@@ -48,7 +50,7 @@ services:
     container_name: slar-worker
     build:
       context: ../../api
-    image: slar-api:latest
+    image: 192.168.100.137:5000/slar-api:latest
     command: ["./worker"]
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
@@ -65,6 +67,7 @@ services:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
+    image: 192.168.100.137:5000/slar-slack-worker:latest
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
@@ -83,6 +86,7 @@ services:
     container_name: slar-web
     build:
       context: ../../web/slar
+    image: 192.168.100.137:5000/slar-web:latest
     expose:
       - "3000"
     environment:

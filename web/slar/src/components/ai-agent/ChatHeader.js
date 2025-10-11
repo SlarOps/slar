@@ -1,6 +1,7 @@
 import { memo } from 'react';
+import { SessionInfo } from './SessionInfo';
 
-const ChatHeader = memo(({ connectionStatus }) => {
+const ChatHeader = memo(({ connectionStatus, sessionId, onSessionReset }) => {
   return (
     <header className="bg-white dark:bg-gray-800 dark:border-gray-700 px-4 py-3">
       <div className="max-w-3xl mx-auto">
@@ -26,6 +27,12 @@ const ChatHeader = memo(({ connectionStatus }) => {
               AI Agent Mode
             </span>
           </div>
+          
+          {/* Session Reset Button */}
+          <SessionInfo 
+            sessionId={sessionId} 
+            onSessionReset={onSessionReset}
+          />
         </div>
       </div>
     </header>

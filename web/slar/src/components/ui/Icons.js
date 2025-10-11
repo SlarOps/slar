@@ -346,6 +346,53 @@ export const ExternalLinkIcon = ({ className = "w-5 h-5", color = "currentColor"
   </svg>
 );
 
+export const NewSessionIcon = ({ className = "w-5 h-5", color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" fill="none" className={className}>
+    {/* Chat bubble base */}
+    <path 
+      d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" 
+      stroke={color} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+    {/* Plus icon inside */}
+    <path 
+      d="M12 9v6" 
+      stroke={color} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+    <path 
+      d="M9 12h6" 
+      stroke={color} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const RefreshIcon = ({ className = "w-5 h-5", color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" fill="none" className={className}>
+    <path 
+      d="M23 4v6h-6" 
+      stroke={color} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+    <path 
+      d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" 
+      stroke={color} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 // Status indicator components
 export const StatusDot = ({ status = "success", className = "w-3 h-3" }) => {
   const colors = {
