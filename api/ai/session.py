@@ -12,6 +12,14 @@ from typing import Awaitable, Callable, Optional
 
 from autogen_agentchat.conditions import ExternalTermination
 
+
+class DateTimeJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
 logger = logging.getLogger(__name__)
 
 
@@ -165,7 +173,7 @@ class AutoGenChatSession:
             
         try:
             async with aiofiles.open(self.history_file, "w") as f:
-                await f.write(json.dumps(self.history, indent=2))
+                await f.write(json.dumps(self.history, indent=2, cls=DateTimeJSONEncoder))
             self.history_dirty = False
             logger.debug(f"Saved {len(self.history)} messages to history file: {self.session_id}")
         except Exception as e:
@@ -377,7 +385,7 @@ class AutoGenChatSession:
             
             # Write to temp file first
             async with aiofiles.open(temp_file, "w") as f:
-                await f.write(json.dumps(session_data, indent=2))
+                await f.write(json.dumps(session_data, indent=2, cls=DateTimeJSONEncoder))
             
             # Atomic rename
             os.rename(temp_file, self.session_file)
@@ -472,6 +480,76 @@ class SessionManager:
         self.active_sessions = {}
         self.session_cleanup_interval = 3600  # 1 hour in seconds
         self.max_session_age_hours = 24  # Maximum session age before cleanup
+        self.auto_save_interval = 300  # Auto-save every 5 minutes
+        self._auto_save_task = None
+        self._shutdown = False
+    
+    async def start_auto_save(self):
+        """Start the periodic auto-save task."""
+        if self._auto_save_task is None or self._auto_save_task.done():
+            self._auto_save_task = asyncio.create_task(self._auto_save_loop())
+            logger.info("Started periodic auto-save task")
+    
+    async def stop_auto_save(self):
+        """Stop the periodic auto-save task."""
+        self._shutdown = True
+        if self._auto_save_task and not self._auto_save_task.done():
+            self._auto_save_task.cancel()
+            try:
+                await self._auto_save_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Stopped periodic auto-save task")
+    
+    async def _auto_save_loop(self):
+        """Periodic auto-save loop."""
+        while not self._shutdown:
+            try:
+                await asyncio.sleep(self.auto_save_interval)
+                if not self._shutdown:
+                    await self._auto_save_sessions()
+            except asyncio.CancelledError:
+                logger.info("Auto-save loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in auto-save loop: {e}")
+                # Continue the loop even if one save fails
+    
+    async def _auto_save_sessions(self):
+        """Auto-save all active sessions."""
+        if not self.active_sessions:
+            return
+        
+        logger.debug(f"Auto-saving {len(self.active_sessions)} active sessions")
+        save_tasks = []
+        
+        for session_id, session in self.active_sessions.items():
+            try:
+                # Only save if session has been active recently and is not currently streaming
+                if not session.is_streaming and session.history_dirty:
+                    save_tasks.append(self._safe_save_session(session_id, session))
+            except Exception as e:
+                logger.error(f"Error preparing auto-save for session {session_id}: {e}")
+        
+        if save_tasks:
+            try:
+                # Run saves concurrently with timeout
+                await asyncio.wait_for(
+                    asyncio.gather(*save_tasks, return_exceptions=True),
+                    timeout=60.0
+                )
+                logger.debug(f"Auto-save completed for {len(save_tasks)} sessions")
+            except asyncio.TimeoutError:
+                logger.warning("Auto-save timeout - some sessions may not be saved")
+    
+    async def _safe_save_session(self, session_id: str, session):
+        """Safely save a single session."""
+        try:
+            await session.save_state()
+            await session.save_history()
+            logger.debug(f"Auto-saved session: {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to auto-save session {session_id}: {e}")
     
     async def get_or_create_session(self, session_id: str) -> AutoGenChatSession:
         """Get existing session or create new one with disk loading."""
@@ -527,6 +605,32 @@ class SessionManager:
             
         except Exception as e:
             logger.error(f"Error during session cleanup: {e}")
+    
+    async def shutdown(self):
+        """Shutdown the session manager and save all sessions."""
+        logger.info("Shutting down session manager...")
+        
+        # Stop auto-save task
+        await self.stop_auto_save()
+        
+        # Save all active sessions
+        if self.active_sessions:
+            logger.info(f"Saving {len(self.active_sessions)} active sessions before shutdown...")
+            save_tasks = []
+            for session_id, session in self.active_sessions.items():
+                save_tasks.append(session.cleanup())
+            
+            if save_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*save_tasks, return_exceptions=True),
+                        timeout=30.0
+                    )
+                    logger.info("All sessions saved during shutdown")
+                except asyncio.TimeoutError:
+                    logger.warning("Session save timeout during shutdown")
+        
+        logger.info("Session manager shutdown completed")
     
     def get_active_sessions(self):
         """Get dictionary of active sessions."""

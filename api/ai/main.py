@@ -6,6 +6,9 @@ Refactored to use modular components.
 import logging
 import os
 import sys
+import signal
+import asyncio
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -42,10 +45,73 @@ session_manager = SessionManager(data_store)
 # Legacy compatibility - keep rag_memory for existing code
 rag_memory = slar_agent_manager.get_rag_memory()
 
+# Global shutdown event
+shutdown_event = asyncio.Event()
+_shutdown_requested = False
+_main_loop = None
+
+async def graceful_shutdown():
+    """Handle graceful shutdown by saving all active sessions."""
+    global _shutdown_requested
+    if _shutdown_requested:
+        return  # Already shutting down
+    _shutdown_requested = True
+    
+    print("🔄 Starting graceful shutdown...")
+    logger.info("Starting graceful shutdown...")
+    
+    try:
+        # Use session manager's shutdown method
+        await session_manager.shutdown()
+        print("✅ All sessions saved successfully")
+        logger.info("All sessions saved successfully")
+            
+    except Exception as e:
+        print(f"❌ Error during graceful shutdown: {str(e)}")
+        logger.error(f"Error during graceful shutdown: {str(e)}")
+    
+    # Set shutdown event
+    shutdown_event.set()
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    signal_name = signal.Signals(signum).name
+    print(f"🔔 Received {signal_name} signal, initiating graceful shutdown...")
+    logger.info(f"Received {signal_name} signal, initiating graceful shutdown...")
+    
+    # Use thread-safe call to schedule coroutine
+    def schedule_shutdown():
+        if _main_loop and not _main_loop.is_closed():
+            # Schedule graceful shutdown
+            future = asyncio.run_coroutine_threadsafe(graceful_shutdown(), _main_loop)
+            
+            # Wait for shutdown with timeout
+            try:
+                future.result(timeout=30.0)
+                print("🚪 Graceful shutdown completed, exiting...")
+            except Exception as e:
+                print(f"⚠️  Graceful shutdown failed: {e}, forcing exit...")
+            finally:
+                os._exit(0)
+        else:
+            print("🚪 No event loop available, exiting immediately...")
+            os._exit(0)
+    
+    # Run shutdown in a separate thread to avoid blocking signal handler
+    shutdown_thread = threading.Thread(target=schedule_shutdown, daemon=True)
+    shutdown_thread.start()
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup and shutdown tasks."""
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+    
     # Startup: Initialize ChromaDB memory and download models
     print("🚀 Starting vector store initialization...")
     logger.info("Starting vector store initialization...")
@@ -86,11 +152,36 @@ async def lifespan(app: FastAPI):
         print(f"❌ Failed initial session cleanup: {str(e)}")
         logger.error(f"Failed initial session cleanup: {str(e)}")
 
+    # Start periodic auto-save
+    try:
+        print("⏰ Starting periodic auto-save...")
+        await session_manager.start_auto_save()
+        print("✅ Periodic auto-save started")
+    except Exception as e:
+        print(f"❌ Failed to start periodic auto-save: {str(e)}")
+        logger.error(f"Failed to start periodic auto-save: {str(e)}")
+
+    print("🎯 Application startup completed successfully!")
+    logger.info("Application startup completed successfully!")
+
     yield
 
-    # Shutdown: Clean up resources if needed
+    # Shutdown: Clean up resources gracefully
     print("🔄 Shutting down services...")
     logger.info("Shutting down services...")
+    
+    # Trigger graceful shutdown if not already triggered
+    if not shutdown_event.is_set():
+        await graceful_shutdown()
+    
+    # Wait for graceful shutdown to complete
+    try:
+        await asyncio.wait_for(shutdown_event.wait(), timeout=35.0)
+        print("✅ Graceful shutdown completed")
+        logger.info("Graceful shutdown completed")
+    except asyncio.TimeoutError:
+        print("⚠️  Graceful shutdown timeout")
+        logger.warning("Graceful shutdown timeout")
     
     # Shutdown vector store
     try:

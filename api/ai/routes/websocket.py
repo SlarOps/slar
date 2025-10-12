@@ -60,6 +60,17 @@ async def chat(websocket: WebSocket):
             except WebSocketDisconnect:
                 logger.info("Client disconnected while waiting for user input")
                 connection_cancellation_token.cancel()
+                
+                # Save session state immediately
+                try:
+                    if 'chat_session' in locals():
+                        chat_session.is_streaming = False
+                        await chat_session.save_state()
+                        await chat_session.save_history()
+                        logger.info(f"Session saved on user input disconnect: {session_id}")
+                except Exception as save_error:
+                    logger.error(f"Failed to save session on user input disconnect: {save_error}")
+                    
                 raise RuntimeError("Client disconnected") from None
 
             # Try to validate as TextMessage; ignore other event types
@@ -109,6 +120,17 @@ async def chat(websocket: WebSocket):
             except WebSocketDisconnect:
                 logger.info("Client disconnected while waiting for approval")
                 connection_cancellation_token.cancel()
+                
+                # Save session state immediately
+                try:
+                    if 'chat_session' in locals():
+                        chat_session.is_streaming = False
+                        await chat_session.save_state()
+                        await chat_session.save_history()
+                        logger.info(f"Session saved on approval disconnect: {session_id}")
+                except Exception as save_error:
+                    logger.error(f"Failed to save session on approval disconnect: {save_error}")
+                    
                 raise RuntimeError("Client disconnected") from None
 
     try:
@@ -180,9 +202,20 @@ async def chat(websocket: WebSocket):
                 logger.debug(f"Saved session state and history after interaction: {session_id}")
                     
             except WebSocketDisconnect:
-                # Client disconnected during message processing - exit gracefully
+                # Client disconnected during message processing - save session before exit
                 logger.info("Client disconnected during message processing")
                 connection_cancellation_token.cancel()
+                
+                # Save session state immediately
+                try:
+                    if chat_session:
+                        chat_session.is_streaming = False
+                        await chat_session.save_state()
+                        await chat_session.save_history()
+                        logger.info(f"Session saved on disconnect: {session_id}")
+                except Exception as save_error:
+                    logger.error(f"Failed to save session on disconnect: {save_error}")
+                
                 break
             except Exception as e:
                 # Send error message to client
@@ -200,8 +233,19 @@ async def chat(websocket: WebSocket):
                         "source": "system"
                     }))
                 except WebSocketDisconnect:
-                    # Client disconnected while sending error - exit gracefully
+                    # Client disconnected while sending error - save session before exit
                     logger.info("Client disconnected while sending error message")
+                    
+                    # Save session state immediately
+                    try:
+                        if chat_session:
+                            chat_session.is_streaming = False
+                            await chat_session.save_state()
+                            await chat_session.save_history()
+                            logger.info(f"Session saved on error disconnect: {session_id}")
+                    except Exception as save_error:
+                        logger.error(f"Failed to save session on error disconnect: {save_error}")
+                    
                     break
                 except Exception as send_error:
                     logger.error(f"Failed to send error message: {str(send_error)}")
@@ -210,6 +254,17 @@ async def chat(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("Client disconnected")
         connection_cancellation_token.cancel()
+        
+        # Save session state immediately on disconnect
+        try:
+            if chat_session:
+                chat_session.is_streaming = False
+                await chat_session.save_state()
+                await chat_session.save_history()
+                logger.info(f"Session saved on main disconnect: {session_id}")
+        except Exception as save_error:
+            logger.error(f"Failed to save session on main disconnect: {save_error}")
+            
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         try:
@@ -219,8 +274,19 @@ async def chat(websocket: WebSocket):
                 "source": "system"
             }))
         except WebSocketDisconnect:
-            # Client already disconnected - no need to send
+            # Client already disconnected - save session before exit
             logger.info("Client disconnected before error could be sent")
+            
+            # Save session state immediately
+            try:
+                if chat_session:
+                    chat_session.is_streaming = False
+                    await chat_session.save_state()
+                    await chat_session.save_history()
+                    logger.info(f"Session saved on final disconnect: {session_id}")
+            except Exception as save_error:
+                logger.error(f"Failed to save session on final disconnect: {save_error}")
+                
         except Exception:
             # Failed to send error message - connection likely broken
             logger.error("Failed to send error message to client")
