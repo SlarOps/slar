@@ -1,5 +1,8 @@
 """
 Routes initialization.
+
+Note: Terminal routes are now handled by a standalone terminal server (terminal/terminal_server.py)
+      and should not be imported here.
 """
 
 try:
