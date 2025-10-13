@@ -116,19 +116,19 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting vector store initialization...")
     logger.info("Starting vector store initialization...")
     try:
-        # Initialize the memory system by performing a simple query
-        # This will trigger the model download if it hasn't happened yet
-        print("📥 Triggering model download by performing initial query...")
-        logger.info("Triggering model download by performing initial query...")
-        await rag_memory.query(
-            MemoryContent(content="initialization", mime_type=MemoryMimeType.TEXT)
-        )
-        print("✅ Vector store initialized successfully - models are ready")
-        logger.info("Vector store initialized successfully - models are ready")
+        # Lightweight Chroma connectivity check (no OpenAI model call needed)
+        config = getattr(rag_memory, '_config', None)
+        collection_name = getattr(config, 'collection_name', 'autogen_docs')
+        persistence_path = getattr(config, 'persistence_path', data_store)
+        import chromadb
+        client = chromadb.PersistentClient(path=persistence_path)
+        client.get_or_create_collection(name=collection_name)
+        print("✅ Vector store connectivity verified")
+        logger.info("Vector store connectivity verified")
         await slar_agent_manager.create_excutor()
     except Exception as e:
-        print(f"❌ Failed to initialize vector store: {str(e)}")
-        logger.error(f"Failed to initialize vector store: {str(e)}")
+        print(f"❌ Vector store connectivity check failed: {str(e)}")
+        logger.error(f"Vector store connectivity check failed: {str(e)}")
         # Don't fail startup, but log the error
 
     # Pre-initialize MCP tools to avoid delay on first connection
