@@ -197,19 +197,19 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
           console.log("WebSocket disconnected:", event.code, event.reason);
           setConnectionStatus("disconnected");
           setWsConnection(null);
-          setMessages((prev) => [...prev, {
-            role: "assistant",
-            content: "Connection closed. Please refresh the page."
-          }]);
+          // setMessages((prev) => [...prev, {
+          //   role: "assistant",
+          //   content: "Connection closed. Please refresh the page."
+          // }]);
 
           // Attempt to reconnect after 3 seconds if not a normal closure
-          // if (event.code !== 1000) {
-          //   setTimeout(() => {
-          //     if (wsRef.current?.readyState === WebSocket.CLOSED) {
-          //       connectWebSocket();
-          //     }
-          //   }, 3000);
-          // }
+          if (event.code !== 1000) {
+            setTimeout(() => {
+              if (wsRef.current?.readyState === WebSocket.CLOSED) {
+                connectWebSocket();
+              }
+            }, 3000);
+          }
         };
 
       } catch (error) {

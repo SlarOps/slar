@@ -58,7 +58,7 @@ const MessageComponent = memo(({ message }) => {
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`inline-block rounded-3xl px-4 text-md leading-relaxed ${
+        className={`${message.role === "user" ? "inline-block" : "block"} rounded-3xl px-4 text-md leading-relaxed ${
           message.role === "user"
             ? "bg-gray-100 text-gray-800"
             : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
@@ -77,13 +77,27 @@ const MessageComponent = memo(({ message }) => {
               )}
             </div>
           ) : null}
-          {message.type === 'MemoryQueryEvent' && (
-            <div className="mt-1">
-              <Badge color="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
-                🔍 Memory Query
-              </Badge>
-            </div>
-          )}
+        {message.type === 'MemoryQueryEvent' && (
+          <div className="mt-1">
+            <Badge color="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
+              🔍 Memory Query
+            </Badge>
+          </div>
+        )}
+        {message.type === 'ToolCallRequestEvent' && (
+          <div className="mt-1">
+            <Badge color="bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+              ⚡ Tool Call Request
+            </Badge>
+          </div>
+        )}
+        {message.type === 'ToolCallExecutionEvent' && (
+          <div className="mt-1">
+            <Badge color="bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300">
+              🔧 Tool Execution
+            </Badge>
+          </div>
+        )}
         </div>
         
         {message.type === 'MemoryQueryEvent' && (
@@ -152,8 +166,52 @@ const MessageComponent = memo(({ message }) => {
             )}
           </div>
         )}
+
+        {message.type === 'ToolCallRequestEvent' && (
+          <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                Tool Call Request
+              </span>
+            </div>
+            <div className="rounded-lg overflow-x-auto">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={markdownComponents}
+              >
+                {message.content}
+              </Markdown>
+            </div>
+          </div>
+        )}
+
+        {message.type === 'ToolCallExecutionEvent' && (
+          <div className="mt-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm font-medium text-green-800 dark:text-green-200">
+                Tool Execution Result
+              </span>
+            </div>
+            <div className="rounded-lg overflow-x-auto">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={markdownComponents}
+              >
+                {message.content}
+              </Markdown>
+            </div>
+          </div>
+        )}
         
-        {message.type !== 'MemoryQueryEvent' && (
+        {message.type !== 'MemoryQueryEvent' && message.type !== 'ToolCallRequestEvent' && message.type !== 'ToolCallExecutionEvent' && (
         <div className="relative">
           <Markdown
             remarkPlugins={[remarkGfm]}

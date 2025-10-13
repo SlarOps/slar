@@ -57,6 +57,27 @@ export const useChatHistory = (setMessagesFromHistory, sessionId = null) => {
                 : JSON.stringify(msg.content);
             }
 
+            // if (msg.type === 'ToolCallExecutionEvent') {
+            //   const toolResults = [];
+            //   for (const toolCall of msg.content) {
+            //     console.log(toolCall);
+            //     console.log(JSON.parse(toolCall.content));
+            //     toolResults.push(`🔧 **${toolCall.name || 'Tool'} Result:**\n\`\`\`\n${toolCall.content}\n\`\`\``);
+            //   }
+            //   processedContent = toolResults.join('\n\n');
+            // }
+
+            // if (msg.type === 'ToolCallRequestEvent') {
+            //   console.log("ToolCallRequestEvent");
+            //   console.log(msg.content);
+            //   const toolRequests = [];
+            //   for (const toolCall of msg.content) {
+            //     console.log(toolCall);
+            //     toolRequests.push(`⚡ **Calling ${toolCall.name}**\n\`\`\`json\n${toolCall.arguments}\n\`\`\``);
+            //   }
+            //   processedContent = toolRequests.join('\n\n');
+            // }
+
             // Map AutoGen message types to UI roles
             let role = 'assistant'; // default
             if (msg.source === 'user') {
