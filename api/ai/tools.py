@@ -111,8 +111,6 @@ class ToolManager:
                 print(f"Warning: Skipping server config without name: {server_config}")
                 continue
 
-            # Check if server is enabled via environment variable
-            enabled = os.getenv(f"ENABLE_{server_name.upper()}", "true").lower() == "true"
             
             # Extract server parameters
             command = server_data.get("command")
@@ -133,7 +131,7 @@ class ToolManager:
                     headers=headers,
                     timeout=timeout,
                     terminate_on_close=terminate_on_close,
-                    enabled=enabled
+                    enabled=True
                 )
                 servers.append(server)
             except ValueError as e:
