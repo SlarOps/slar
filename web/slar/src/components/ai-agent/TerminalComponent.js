@@ -89,11 +89,16 @@ const TerminalComponent = ({ sessionId }) => {
         };
         window.addEventListener('resize', handleResize);
 
+        let wsUrl;
         // Setup WebSocket connection
         // Connect to standalone Terminal Server (port 8003)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = process.env.NEXT_PUBLIC_TERMINAL_HOST || 'localhost:8003';
-        const wsUrl = `${protocol}//${host}/ws/terminal/${sessionId}`;
+        if (process.env.NEXT_PUBLIC_TERMINAL_HOST) {
+          wsUrl = process.env.NEXT_PUBLIC_TERMINAL_HOST+'?session_id='+sessionId;
+        } else {
+          wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+        }
+
         const ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
@@ -102,6 +107,15 @@ const TerminalComponent = ({ sessionId }) => {
           setStatus('connected');
           term.focus();
           fitAndResizeNotify();
+          
+          // Send GEMINI_API_KEY from sessionStorage if available
+          const geminiKey = sessionStorage.getItem('GEMINI_API_KEY');
+          if (geminiKey) {
+            // Send as environment variable setup
+            ws.send(JSON.stringify({ 
+              env: { GEMINI_API_KEY: geminiKey }
+            }));
+          }
         });
 
         ws.addEventListener('close', () => {

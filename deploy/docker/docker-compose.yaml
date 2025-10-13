@@ -25,6 +25,19 @@ services:
     restart: unless-stopped
     networks:
       - slar-network
+  
+  terminal:
+    container_name: slar-ai-terminal
+    build:
+      context: ../../api/ai/terminal
+    image: 192.168.100.137:5000/slar-ai-terminal:latest
+    expose:
+      - "8003"
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+    networks:
+      - slar-network
 
   api:
     container_name: slar-api

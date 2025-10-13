@@ -157,14 +157,22 @@ async def health_check():
     }
 
 
-@app.websocket("/ws/terminal/{session_id}")
-async def terminal_websocket(websocket: WebSocket, session_id: str):
+@app.websocket("/ws/terminal")
+async def terminal_websocket(websocket: WebSocket):
     """
     WebSocket endpoint for terminal connections.
     
-    Args:
-        session_id: Unique identifier for the terminal session
+    Query params:
+        session_id: Unique identifier for the terminal session (required)
+        shell_cmd: Optional shell command to run (defaults to 'gemini')
     """
+    # Get session_id from query params
+    session_id = websocket.query_params.get("session_id")
+    if not session_id:
+        await websocket.close(code=1008, reason="Missing session_id parameter")
+        logger.error("WebSocket connection rejected: Missing session_id parameter")
+        return
+    
     await websocket.accept()
     logger.info(f"Terminal WebSocket connection accepted for session {session_id}")
     

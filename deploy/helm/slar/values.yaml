@@ -187,6 +187,19 @@ components:
           ]
         }
 
+  terminal:
+    image:
+      name: slar-ai-terminal
+      tag: latest
+      pullPolicy: Always
+    service:
+      enabled: true
+      type: ClusterIP
+      port: 8003
+    env:
+      - name: PORT
+        value: "8003"
+
   api:
     image:
       name: slar-api

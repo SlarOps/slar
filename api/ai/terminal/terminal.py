@@ -130,13 +130,23 @@ class TerminalSession:
                     # Check if it's text or bytes
                     if 'text' in message:
                         msg_text = message['text']
-                        # Check for control message (JSON with {"resize": [cols, rows]})
+                        # Check for control message (JSON with {"resize": [cols, rows]} or {"env": {...}})
                         try:
                             obj = json.loads(msg_text)
-                            if isinstance(obj, dict) and "resize" in obj:
-                                cols, rows = obj["resize"]
-                                self.set_winsize(int(cols), int(rows))
-                                continue
+                            if isinstance(obj, dict):
+                                # Handle resize command
+                                if "resize" in obj:
+                                    cols, rows = obj["resize"]
+                                    self.set_winsize(int(cols), int(rows))
+                                    continue
+                                # Handle environment variables
+                                elif "env" in obj:
+                                    env_vars = obj["env"]
+                                    if isinstance(env_vars, dict):
+                                        for key, value in env_vars.items():
+                                            os.environ[key] = str(value)
+                                            logger.info(f"Set environment variable: {key}")
+                                    continue
                         except (json.JSONDecodeError, ValueError, KeyError):
                             # Not JSON control; treat as text input
                             pass
