@@ -1,8 +1,8 @@
 #!/bin/bash
+REGISTRY=$1
 
-cat docker-compose.yaml | sed 's/ghcr.io\/slarops\//192.168.100.137:5000\/slarops\//g' | docker compose -f - build
-
-cat docker-compose.yaml | sed 's/ghcr.io\/slarops\//192.168.100.137:5000\/slarops\//g' | docker compose -f - push
+cat docker-compose.yaml | sed "s/ghcr.io\/slarops\//$REGISTRY\/slarops\//g" | docker compose -f - build
+cat docker-compose.yaml | sed "s/ghcr.io\/slarops\//$REGISTRY\/slarops\//g" | docker compose -f - push
 
 kubectl rollout restart deployment slar-api -n slar
 kubectl rollout restart deployment slar-web -n slar
