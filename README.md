@@ -14,7 +14,9 @@
 - **Timeline Visualization** - Interactive schedule views with real-time updates
 - **Slack Integration** - Native notifications and incident management workflows
 - **AI Runbook System** - Automated runbook retrieval and incident response guidance
-- **Secure Authentication** - Comming soon
+- **Secure Authentication** - Coming soon
+- **Telegram Integration** - Coming soon
+- **Mobile App** - Coming soon
 
 
 ### Supabase Setup
