@@ -23,6 +23,15 @@
 2. **Configure Auth**: Enable email authentication, set Site URL to `http://localhost:3000`
 3. **Get Credentials**: Copy Project URL and API keys from Settings > API
 
+### Migrate database
+
+Install the [supabase CLI](https://supabase.com/docs/reference/cli/introduction)
+
+```bash
+supabase link
+cd supabase && supabase db push
+```
+
 ## Deployment
 
 ### Option A: Docker Compose (local)
