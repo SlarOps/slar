@@ -4,7 +4,7 @@
 
 # SLAR - Smart Live Alert & Response
 
-🚧 SLAR is currently in active development (MVP stage). An open-source on-call management platform with AI-powered incident response and intelligent alerting.
+🚧 SLAR is currently in active development. An open-source on-call management platform with AI-powered incident response and intelligent alerting.
 
 ## Features
 
@@ -45,12 +45,12 @@ docker compose -f deploy/docker/docker-compose.yaml up -d
 
 ````yaml
 kubectl create secret generic slar-secrets \
-  --from-literal=xxxx \
-  --from-literal=xxxx \
-  --from-literal=xxxx \
-  --from-literal=xxxx \
-  --from-literal=xxxx \
-  --from-literal=xxxx \
+  --from-literal=openai-api-key=xxxx \
+  --from-literal=database-url=xxxx \
+  --from-literal=supabase-anon-key=xxxx \
+  --from-literal=supabase-jwt-secret=xxxx \
+  --from-literal=slack-bot-token=xxxx \
+  --from-literal=slack-app-token=xxxx \
   --from-literal=supabase-url=xxxx
 ````
 
@@ -77,7 +77,6 @@ Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/vanchonlee/slar/issues)
-- **Documentation**: [Project Wiki](https://github.com/vanchonlee/slar/wiki)
+- **Issues**: [GitHub Issues](https://github.com/slarops/slar/issues)
 
 ---
