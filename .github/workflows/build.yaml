@@ -3,6 +3,10 @@ name: Build Docker Images on Dockerfile changes
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'api/**'
+      - 'web/**'
+      - '.github/workflows/build.yaml'
   workflow_dispatch:
 
 permissions:
