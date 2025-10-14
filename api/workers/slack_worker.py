@@ -675,70 +675,6 @@ class SlackWorker:
             self.log_notification(notification_msg_with_recipient, 'slack', False, str(e))
             return False
 
-    def send_incident_acknowledged_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
-        """Update ALL Slack messages for incident acknowledgment from web"""
-        try:
-            incident_message = SlackMessage(incident_data)
-            blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
-
-            incident_id = incident_data.get('id')
-
-            # Find ALL Slack messages for this incident to update all recipients
-            all_messages = self.find_all_slack_messages_for_incident(incident_id)
-
-            if not all_messages:
-                logger.warning(f"⚠️  No Slack messages found for incident {incident_id}")
-                logger.info(f"📨 Sending new acknowledgment notification instead")
-                # Fallback: send a new notification message
-                return self.send_new_acknowledgment_notification(user_data, incident_data, notification_msg)
-
-            logger.info(f"📨 Found {len(all_messages)} Slack messages to update for incident {incident_id}")
-
-            # Add view incident button (no acknowledge button since it's already acknowledged)
-            if incident_data.get('id'):
-                blocks.append({
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "View Incident"
-                            },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
-                            "style": "primary"
-                        }
-                    ]
-                })
-
-            # Update ALL messages for all recipients (A, B, etc.)
-            incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-            incident_title = incident_message.get_title()
-            notification_text = f"[Acknowledged] {incident_title}"
-            
-            updated_count = 0
-            for channel_id, message_ts in all_messages:
-                try:
-                    # Update each message
-                    response = self.slack_client.chat_update(
-                        channel=channel_id,
-                        ts=message_ts,
-                        text=notification_text,
-                        blocks=blocks
-                    )
-                    updated_count += 1
-                    logger.info(f"   ✅ Updated message in channel {channel_id}")
-                except Exception as e:
-                    logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
-
-            logger.info(f"✅ Updated {updated_count}/{len(all_messages)} Slack messages for acknowledged incident {incident_id}")
-            return updated_count > 0
-
-        except Exception as e:
-            logger.error(f"❌ Failed to update Slack message for acknowledged incident: {e}")
-            return False
-
-
     def send_incident_x_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict, status: str) -> bool:
         """Update ALL Slack messages for incident status change (acknowledged/resolved)"""
         try:
@@ -782,14 +718,15 @@ class SlackWorker:
             # Update ALL messages for all recipients (A, B, etc.)
             user_name = user_data.get('name', 'Unknown User')
             incident_title = incident_message.get_title()
-            status_emoji = "✅" if status == "acknowledged" else "🎉"
+            incident_short_id = incident_message.get_incident_short_id()
+            status_emoji = "🔔" if status == "acknowledged" else "🎉"
             status_text = f"[{status.title()}]"
             notification_text = f"{status_text} {incident_title}"
             
             updated_count = 0
             for channel_id, message_ts in all_messages:
                 try:
-                    # Update each message
+                    # Update each message (visual state)
                     response = self.slack_client.chat_update(
                         channel=channel_id,
                         ts=message_ts,
@@ -798,6 +735,15 @@ class SlackWorker:
                     )
                     updated_count += 1
                     logger.info(f"   ✅ Updated message in channel {channel_id}")
+                    
+                    # Send notification message for immediate alert (so users get notified)
+                    alert_text = f"{status_emoji} Incident {incident_short_id} \"{incident_title}\" was {status} by {user_name}"
+                    self.slack_client.chat_postMessage(
+                        channel=channel_id,
+                        text=alert_text
+                    )
+                    logger.info(f"   📨 Sent notification to channel {channel_id}")
+                    
                 except Exception as e:
                     logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
 
@@ -1329,9 +1275,12 @@ class SlackWorker:
             
             # Update all messages
             incident_short_id = f"#{incident_id[-8:]}"
+            incident_message = SlackMessage(incident_data)
+            incident_title = incident_message.get_title()
             updated_count = 0
             for channel_id, message_ts in all_messages:
                 try:
+                    # Update each message (visual state)
                     response = self.slack_client.chat_update(
                         channel=channel_id,
                         ts=message_ts,
@@ -1340,6 +1289,15 @@ class SlackWorker:
                     )
                     updated_count += 1
                     logger.info(f"   ✅ Updated message in channel {channel_id}")
+                    
+                    # Send notification message for immediate alert (so users get notified)
+                    alert_text = f"🔔 Incident {incident_short_id} \"{incident_title}\" was acknowledged by {user_name}"
+                    self.slack_client.chat_postMessage(
+                        channel=channel_id,
+                        text=alert_text
+                    )
+                    logger.info(f"   📨 Sent notification to channel {channel_id}")
+                    
                 except Exception as e:
                     logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
             
