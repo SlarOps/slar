@@ -5,6 +5,7 @@ services:
     container_name: slar-ai
     build:
       context: ../../api/ai
+    image: ghcr.io/slarops/slar-ai:latest
     expose:
       - "8002"
     ports:
@@ -24,11 +25,25 @@ services:
     restart: unless-stopped
     networks:
       - slar-network
+  
+  terminal:
+    container_name: slar-ai-terminal
+    build:
+      context: ../../api/ai/terminal
+    image: ghcr.io/slarops/slar-ai-terminal:latest
+    expose:
+      - "8003"
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+    networks:
+      - slar-network
 
   api:
     container_name: slar-api
     build:
       context: ../../api
+    image: ghcr.io/slarops/slar-api:latest
     expose:
       - "8080"
     ports:
@@ -48,7 +63,7 @@ services:
     container_name: slar-worker
     build:
       context: ../../api
-    image: slar-api:latest
+    image: ghcr.io/slarops/slar-api:latest
     command: ["./worker"]
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
@@ -65,6 +80,7 @@ services:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
+    image: ghcr.io/slarops/slar-slack-worker:latest
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
@@ -83,6 +99,7 @@ services:
     container_name: slar-web
     build:
       context: ../../web/slar
+    image: ghcr.io/slarops/slar-web:latest
     expose:
       - "3000"
     environment:

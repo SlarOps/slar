@@ -889,6 +889,49 @@ class APIClient {
     return this.request('/history', {}, this.aiBaseURL);
   }
 
+  // Get session-specific chat history
+  async getSessionHistory(sessionId) {
+    return this.request(`/sessions/${sessionId}/history`, {}, this.aiBaseURL);
+  }
+
+  // Get session information
+  async getSessionInfo(sessionId) {
+    return this.request(`/sessions/${sessionId}`, {}, this.aiBaseURL);
+  }
+
+  // Load session from disk
+  async loadSession(sessionId) {
+    return this.request(`/sessions/${sessionId}/load`, {
+      method: 'POST'
+    }, this.aiBaseURL);
+  }
+
+  // List all active sessions
+  async listSessions() {
+    return this.request('/sessions', {}, this.aiBaseURL);
+  }
+
+  // Stop streaming session
+  async stopSession(sessionId) {
+    return this.request(`/sessions/${sessionId}/stop`, {
+      method: 'POST'
+    }, this.aiBaseURL);
+  }
+
+  // Reset session team
+  async resetSession(sessionId) {
+    return this.request(`/sessions/${sessionId}/reset`, {
+      method: 'POST'
+    }, this.aiBaseURL);
+  }
+
+  // Delete session
+  async deleteSession(sessionId) {
+    return this.request(`/sessions/${sessionId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
   // ===========================
   // RUNBOOK APIs (port 8002)
   // ===========================

@@ -394,7 +394,18 @@ func (w *IncidentWorker) processEscalationTarget(incident db.Incident, level db.
 
 // escalateToUser assigns incident to a specific user
 func (w *IncidentWorker) escalateToUser(incident db.Incident, userID string) bool {
-	return w.escalateToUserWithNotification(incident, userID, true)
+	// Assign without sending assignment notification (we'll send escalation notification instead)
+	success := w.escalateToUserWithNotification(incident, userID, false)
+	if success && w.NotificationWorker != nil {
+		// Send escalation notification instead of assignment notification
+		if err := w.NotificationWorker.SendIncidentEscalatedNotification(userID, incident.ID); err != nil {
+			log.Printf("⚠️  Failed to send incident escalation notification: %v", err)
+		} else {
+			log.Printf("✅ Sent incident escalation notification to user %s", userID)
+		}
+	}
+	
+	return success
 }
 
 // escalateToUserWithNotification assigns incident to a specific user with optional notification

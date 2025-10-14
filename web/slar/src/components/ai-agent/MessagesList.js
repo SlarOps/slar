@@ -25,7 +25,7 @@ const MessagesList = memo(({ messages, isSending, endRef }) => {
 
   return (
     <main className="flex-1 overflow-y-auto pb-32">
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-3xl mx-auto px-1 py-8">
         {visibleMessages.map((message, idx) => (
           <MessageComponent 
             key={`${message.role}-${idx}-${message.content?.slice(0, 50) || ''}`} 

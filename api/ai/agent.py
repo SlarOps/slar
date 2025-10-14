@@ -1,17 +1,14 @@
 import json
 import os
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Dict
 import aiofiles
-import venv
 
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse
 from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
-from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse, UserProxyAgent
-from autogen_core import CancellationToken
+from autogen_core import CancellationToken, AgentId, MessageContext, RoutedAgent, message_handler
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination
+from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination, TokenUsageTermination, ExternalTermination
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
-from autogen_core import AgentId, MessageContext, RoutedAgent, message_handler
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 
 from tools_slar import get_incidents
@@ -87,12 +84,13 @@ class SLARAgentManager:
         self._approval_func: Optional[Callable[[ApprovalRequest], ApprovalResponse]] = None
         self._code_excutor = None
         
-        # MCP tools caching for performance
-        self._mcp_tools_cache: Optional[list[Any]] = None
+        # MCP workbenches caching for performance
+        self._mcp_tools_cache: Optional[Dict[str, Any]] = None
         self._mcp_initialized = False
 
     def get_model_client(self) -> OpenAIChatCompletionClient:
         """Get or create the OpenAI model client."""
+
         if self._model_client is None:
             self._model_client = OpenAIChatCompletionClient(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o"),
@@ -101,34 +99,35 @@ class SLARAgentManager:
         return self._model_client
 
     async def initialize_mcp_tools(self, config_path: str = "mcp_config.yaml"):
-        """Pre-initialize MCP tools to avoid delay on first connection."""
+        """Pre-initialize MCP workbenches to avoid delay on first connection."""
         if self._mcp_initialized:
             return self._mcp_tools_cache
             
         try:
-            print("🚀 Pre-initializing MCP tools...")
+            print("🚀 Pre-initializing MCP workbenches...")
             self.tool_manager.load_mcp_config(config_path)
-            tools = await self.tool_manager.load_mcp_tools()
+            workbenches = await self.tool_manager.load_mcp_workbenches()
             
-            self._mcp_tools_cache = tools
+            # Store workbenches, not tools
+            self._mcp_tools_cache = workbenches
             self._mcp_initialized = True
             
-            if not tools:
-                print("⚠️  Warning: No MCP tools loaded. Agent will run with limited capabilities.")
+            if not workbenches:
+                print("⚠️  Warning: No MCP workbenches loaded. Agent will run with limited capabilities.")
             else:
-                print(f"✅ MCP tools pre-initialized successfully: {len(tools)} tools loaded")
+                print(f"✅ MCP workbenches pre-initialized successfully: {len(workbenches)} workbenches loaded")
             
-            return tools
+            return workbenches
         except Exception as e:
-            print(f"❌ Error pre-initializing MCP tools: {e}")
+            print(f"❌ Error pre-initializing MCP workbenches: {e}")
             print("🔄 Falling back to basic tools only")
-            self._mcp_tools_cache = []
+            self._mcp_tools_cache = {}
             self._mcp_initialized = True
-            return []
+            return {}
 
     async def load_mcp_tools(self, config_path: str = "mcp_config.yaml"):
-        """Load MCP tools using the tool manager with error handling and caching."""
-        # Use cached tools if available
+        """Load MCP workbenches using the tool manager with error handling and caching."""
+        # Use cached workbenches if available
         if self._mcp_initialized and self._mcp_tools_cache is not None:
             return self._mcp_tools_cache
             
@@ -140,14 +139,17 @@ class SLARAgentManager:
         if model_client is None:
             model_client = self.get_model_client()
         
-        tools = await self.load_mcp_tools()
+        workbenches = await self.load_mcp_tools()
+
+        # Convert workbenches dict to list for AssistantAgent
+        workbench_list = list(workbenches.values()) if workbenches else None
 
         return AssistantAgent(
             "SREAgent",
             description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
             model_client=model_client,
             memory=[self.rag_memory],
-            tools=tools,
+            workbench=workbench_list,  # Use workbench parameter instead of tools
             reflect_on_tool_use=True,
             system_message="""
             You are an expert SRE (Site Reliability Engineering) planning agent for the SLAR (Smart Live Alert & Response) system.
@@ -208,11 +210,15 @@ class SLARAgentManager:
         if model_client is None:
             model_client = self.get_model_client()
 
-        tools = await self.load_mcp_tools()
+        workbenches = await self.load_mcp_tools()
+        
+        # Convert workbenches dict to list for AssistantAgent
+        workbench_list = list(workbenches.values()) if workbenches else None
+        
         return AssistantAgent(
             name="k8s_agent",
             model_client=model_client,
-            tools=tools,  # type: ignore
+            workbench=workbench_list,  # Use workbench parameter instead of tools
             system_message="""
             You are a Kubernetes agent.
             Your job is to manage Kubernetes clusters.
@@ -234,7 +240,10 @@ class SLARAgentManager:
     async def create_code_executor_agent(self, approval_func: Callable[[ApprovalRequest], ApprovalResponse]) -> CodeExecutorAgent:
         """Create the code executor agent."""
         
-
+        # Ensure code executor is created first
+        if self._code_excutor is None:
+            await self.create_excutor()
+        
         await self._code_excutor.start()
 
         code_executor_agent = CodeExecutorAgent(
@@ -259,7 +268,7 @@ class SLARAgentManager:
             input_func=user_input_func,
         )
 
-    async def get_selector_group_chat(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> SelectorGroupChat:
+    async def get_selector_group_chat(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]], external_termination: Optional[ExternalTermination] = None) -> SelectorGroupChat:
         """Create the swarm team."""
         planning_agent = await self.create_agent_planer()
         agents = [planning_agent]
@@ -291,7 +300,7 @@ class SLARAgentManager:
         team = SelectorGroupChat(
             agents + [user_proxy],
             selector_prompt=selector_prompt,
-            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user"),
+            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user") | TokenUsageTermination(max_total_token=12000) | external_termination,
             model_client=self.get_model_client(),
         )
 

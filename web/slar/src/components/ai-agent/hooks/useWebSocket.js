@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 export const useWebSocket = (session, setMessages, setIsSending) => {
   const [wsConnection, setWsConnection] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [sessionId, setSessionId] = useState(null);
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -17,11 +18,14 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
       
       // Generate or get session ID for reconnection support
-      let sessionId = localStorage.getItem('ai_chat_session_id');
-      if (!sessionId) {
-        sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-        localStorage.setItem('ai_chat_session_id', sessionId);
+      let currentSessionId = localStorage.getItem('ai_chat_session_id');
+      if (!currentSessionId) {
+        currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        localStorage.setItem('ai_chat_session_id', currentSessionId);
       }
+      
+      // Update sessionId state
+      setSessionId(currentSessionId);
       
       let wsUrl;
       
@@ -29,10 +33,10 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
         // Use custom WS URL but ensure token and session_id are appended
         const baseUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
         const separator = baseUrl.includes('?') ? '&' : '?';
-        wsUrl = `${baseUrl}${separator}token=${session.access_token}&session_id=${sessionId}`;
+        wsUrl = `${baseUrl}${separator}token=${session.access_token}&session_id=${currentSessionId}`;
       } else {
         // Use default URL with token and session_id
-        wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session.access_token}&session_id=${sessionId}`;
+        wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session.access_token}&session_id=${currentSessionId}`;
       }
 
       
@@ -193,19 +197,19 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
           console.log("WebSocket disconnected:", event.code, event.reason);
           setConnectionStatus("disconnected");
           setWsConnection(null);
-          setMessages((prev) => [...prev, {
-            role: "assistant",
-            content: "Connection closed. Please refresh the page."
-          }]);
+          // setMessages((prev) => [...prev, {
+          //   role: "assistant",
+          //   content: "Connection closed. Please refresh the page."
+          // }]);
 
           // Attempt to reconnect after 3 seconds if not a normal closure
-          // if (event.code !== 1000) {
-          //   setTimeout(() => {
-          //     if (wsRef.current?.readyState === WebSocket.CLOSED) {
-          //       connectWebSocket();
-          //     }
-          //   }, 3000);
-          // }
+          if (event.code !== 1000) {
+            setTimeout(() => {
+              if (wsRef.current?.readyState === WebSocket.CLOSED) {
+                connectWebSocket();
+              }
+            }, 3000);
+          }
         };
 
       } catch (error) {
@@ -225,5 +229,5 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
     };
   }, [session, setMessages, setIsSending]);
 
-  return { wsConnection, connectionStatus };
+  return { wsConnection, connectionStatus, sessionId };
 };

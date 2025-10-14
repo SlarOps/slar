@@ -1,5 +1,6 @@
 {{- $root := . -}}
 {{- range $name, $comp := ( .Values.components | default dict ) }}
+{{- $repository := $comp.image.repository | default $root.Values.image.repository }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -56,7 +57,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ $comp.image.repository }}:{{ $comp.image.tag | default $root.Chart.AppVersion }}"
+          image: "{{  $repository }}{{ $comp.image.name }}:{{ $comp.image.tag | default $root.Chart.AppVersion }}"
           imagePullPolicy: {{ default $root.Values.image.pullPolicy $comp.image.pullPolicy | default "IfNotPresent" }}
           {{- if eq $name "kong" }}
           {{- if and $comp.service $comp.service.ports }}

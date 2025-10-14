@@ -59,6 +59,19 @@ data:
               - /ws/chat
         plugins:
           - name: cors
+      
+      ## WebSocket for AI Terminal
+      - name: ai-terminal-websocket
+        _comment: 'WebSocket: /ws/terminal?session_id=xxx -> ws://{{ include "slar.componentFullname" (dict "root" $root "name" "terminal") }}:8003/ws/terminal?session_id=xxx'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "terminal") }}:8003
+        protocol: ws
+        routes:
+          - name: ai-terminal-ws-route
+            strip_path: false
+            paths:
+              - /ws/terminal
+        plugins:
+          - name: cors
 
       ## Web Frontend
       - name: web-service
