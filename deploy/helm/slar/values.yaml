@@ -178,10 +178,7 @@ components:
           "mcpServers": [
             {
               "context7" : {
-                "url": "https://mcp.context7.com/mcp",
-                "headers": {
-                  "CONTEXT7_API_KEY": "ctx7sk-9dfa3d11-51ca-4ea9-a7fc-0150630879ee"
-                }
+                "url": "https://mcp.context7.com/mcp"
               }
             }
           ]
