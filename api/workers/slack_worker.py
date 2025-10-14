@@ -284,8 +284,9 @@ class SlackWorker:
                     row = dict(row)
                     logger.info(f"🔍 Processing PGMQ message from {queue_name}: keys={list(row.keys())}")
 
-                    # Extract message id and message payload
+                    # Extract message id, read count and message payload
                     msg_id = row.get("msg_id")
+                    read_ct = row.get("read_ct", 0)  # Track how many times message has been read
                     message_json = row.get("message")
 
                     # Coerce JSON payload into a dict if it is a string (common if stored as TEXT)
@@ -328,8 +329,8 @@ class SlackWorker:
                             self.delete_message(queue_name, msg_id)
                             messages_processed += 1
                         else:
-                            # Handle retry logic
-                            self.handle_failed_message(queue_name, msg_id, message)
+                            # Handle retry logic using PGMQ's read_ct
+                            self.handle_failed_message(queue_name, msg_id, message, read_ct)
 
                     except (json.JSONDecodeError, TypeError, ValueError) as e:
                         logger.error(f"❌ Failed to parse/handle message JSON for msg_id={msg_id}: {e}")
@@ -435,8 +436,8 @@ class SlackWorker:
                 user_name = feedback_msg.get('user_name', 'Unknown')
                 logger.info(f"✅ Processing acknowledgment success feedback for incident {incident_id}")
                 
-                # Update message to final acknowledged state
-                self.update_message_optimistically(body, incident_id, user_name, "acknowledged")
+                # Update ALL messages to final acknowledged state (for all recipients A, B, etc.)
+                self.update_all_messages_for_incident(incident_id, user_name, "acknowledged")
                 return True
                 
             elif action == "acknowledgment_failure":
@@ -509,14 +510,16 @@ class SlackWorker:
             'triggered': '[Triggered]',
             'acknowledged': '[Acknowledged]',
             'resolved': '[Resolved]',
-            'closed': '[Closed]'
+            'closed': '[Closed]',
+            'escalated': '[Escalated]'
         }
 
         emoji_mapping = {
             'triggered': ":fire:",
             'acknowledged': ":large_yellow_circle:",
             'resolved': ":white_check_mark:",
-            'closed': ":lock:"
+            'closed': ":lock:",
+            'escalated': ":zap:"
         }
 
         status_emoji = emoji_mapping.get(status, ":question:")    
@@ -527,9 +530,9 @@ class SlackWorker:
         # Build header text with length limit (Slack header text must be < 151 characters)
         # Only add status display if title doesn't already contain it
         if title_has_status:
-            header_prefix = f"{status_emoji} {incident_short_id}: "
+            header_prefix = f"{status_emoji} "
         else:
-            header_prefix = f"{status_emoji} {incident_short_id}: [{priority}] {status_display.get(status, '[Unknown]')} "
+            header_prefix = f"{status_emoji} [{priority}] {status_display.get(status, '[Unknown]')} "
         max_title_length = 150 - len(header_prefix)
 
         if len(title) > max_title_length:
@@ -544,7 +547,7 @@ class SlackWorker:
             truncated_title = title
 
         url = f"{self.config['api_base_url']}/incidents/{incident_data['id']}"
-        header_text = f"> *<{url}|{header_prefix}{truncated_title}>*"
+        header_text = f"*<{url}|{header_prefix}{truncated_title}>* - `{incident_short_id}`"
         routed_teams = self.get_routed_teams(incident_data)
 
         # Build blocks (no attachment wrapper)
@@ -555,9 +558,6 @@ class SlackWorker:
                     "type": "mrkdwn",
                     "text": header_text
                 }
-            },
-            {
-                "type": "divider"
             },
             {
                 "type": "section",
@@ -602,6 +602,7 @@ class SlackWorker:
         """Send Slack notification for incident assignment"""
         try:
             slack_user_id = user_data['slack_user_id'].lstrip('@')
+            incident_message = SlackMessage(incident_data)
             
             # Create formatted blocks
             blocks = self.format_incident_blocks(incident_data, notification_msg, 'triggered')
@@ -631,16 +632,12 @@ class SlackWorker:
                         }
                     ]
                 })
-
-                blocks.append({
-                    "type": "divider"
-                })
             
             # Send message with blocks
-            incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
+            notification_text = f"[Assigned] {incident_message.get_title()}"
             response = self.slack_client.chat_postMessage(
                 channel=f"@{slack_user_id}",
-                text=f"Incident {incident_short_id} assigned to you",
+                text=notification_text,
                 blocks=blocks
             )
 
@@ -679,29 +676,23 @@ class SlackWorker:
             return False
 
     def send_incident_acknowledged_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
-        """Update original Slack message for incident acknowledgment from web"""
+        """Update ALL Slack messages for incident acknowledgment from web"""
         try:
             incident_message = SlackMessage(incident_data)
             blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
 
-            slack_user_id = user_data['slack_user_id'].lstrip('@')
             incident_id = incident_data.get('id')
-            user_id = user_data.get('id')
 
-            # Find the original Slack message for this incident
-            # Since any user can acknowledge an incident, we should look for any message for this incident
-            # (not just messages for the current user)
-            original_message_info = self.find_any_slack_message_for_incident(incident_id)
+            # Find ALL Slack messages for this incident to update all recipients
+            all_messages = self.find_all_slack_messages_for_incident(incident_id)
 
-            if original_message_info:
-                logger.info(f"📨 Found Slack message for incident {incident_id}, will update it")
-            else:
-                logger.warning(f"⚠️  No original Slack message found for incident {incident_id}")
+            if not all_messages:
+                logger.warning(f"⚠️  No Slack messages found for incident {incident_id}")
                 logger.info(f"📨 Sending new acknowledgment notification instead")
                 # Fallback: send a new notification message
                 return self.send_new_acknowledgment_notification(user_data, incident_data, notification_msg)
 
-            channel_id, message_ts = original_message_info
+            logger.info(f"📨 Found {len(all_messages)} Slack messages to update for incident {incident_id}")
 
             # Add view incident button (no acknowledge button since it's already acknowledged)
             if incident_data.get('id'):
@@ -720,104 +711,54 @@ class SlackWorker:
                     ]
                 })
 
-            # Update the original message
+            # Update ALL messages for all recipients (A, B, etc.)
             incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-            response = self.slack_client.chat_update(
-                channel=channel_id,
-                ts=message_ts,
-                text=f"[Acknowledged] {incident_message.get_title()}",
-                blocks=blocks
-            )
+            incident_title = incident_message.get_title()
+            notification_text = f"[Acknowledged] {incident_title}"
+            
+            updated_count = 0
+            for channel_id, message_ts in all_messages:
+                try:
+                    # Update each message
+                    response = self.slack_client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=notification_text,
+                        blocks=blocks
+                    )
+                    updated_count += 1
+                    logger.info(f"   ✅ Updated message in channel {channel_id}")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
 
-            # Send notification message for immediate alert
-            user_name = user_data.get('name', 'Unknown User')
-            incident_title = incident_data.get('title', 'Unknown Incident')
-            notification_text = f"🔔 Incident {incident_short_id} \"{incident_title}\" was acknowledged by {user_name}"
-            self.slack_client.chat_postMessage(
-                channel=channel_id,
-                text=notification_text
-            )
-
-            logger.info(f"✅ Updated original Slack message and sent notification for acknowledged incident {incident_id}")
-            return True
+            logger.info(f"✅ Updated {updated_count}/{len(all_messages)} Slack messages for acknowledged incident {incident_id}")
+            return updated_count > 0
 
         except Exception as e:
             logger.error(f"❌ Failed to update Slack message for acknowledged incident: {e}")
             return False
 
-    # def send_new_acknowledgment_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
-    #     """Send new Slack notification for incident acknowledgment (fallback when original message not found)"""
-    #     try:
-    #         slack_user_id = user_data['slack_user_id'].lstrip('@')
-
-    #         blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
-    #         incident_message = SlackMessage(incident_data)
-
-    #         # Add view incident button
-    #         if incident_data.get('id'):
-    #             blocks.append({
-    #                 "type": "actions",
-    #                 "elements": [
-    #                     {
-    #                         "type": "button",
-    #                         "text": {
-    #                             "type": "plain_text",
-    #                             "text": "View Incident"
-    #                         },
-    #                         "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
-    #                         "style": "primary"
-    #                     }
-    #                 ]
-    #             })
-
-    #         # Send new message
-    #         incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-            
-    #         response = self.slack_client.chat_postMessage(
-    #             channel=f"@{slack_user_id}",
-    #             text=f"Incident {incident_short_id} \"{incident_message.get_title()}\" acknowledged",
-    #             blocks=blocks
-    #         )
-
-    #         # Log notification
-    #         notification_msg_with_recipient = notification_msg.copy()
-    #         notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
-    #         self.log_notification(notification_msg_with_recipient, 'slack', True, None)
-
-    #         logger.info(f"✅ Sent new incident acknowledged notification to @{slack_user_id}")
-    #         return True
-
-    #     except Exception as e:
-    #         logger.error(f"❌ Failed to send new Slack acknowledged notification: {e}")
-    #         notification_msg_with_recipient = notification_msg.copy()
-    #         notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
-    #         self.log_notification(notification_msg_with_recipient, 'slack', False, str(e))
-    #         return False
 
     def send_incident_x_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict, status: str) -> bool:
-        """Update original Slack message for incident resolution from web"""
+        """Update ALL Slack messages for incident status change (acknowledged/resolved)"""
         try:
             blocks = self.format_incident_blocks(incident_data, notification_msg, status)
 
             incident_message = SlackMessage(incident_data)
             incident_id = incident_message.get_id()
 
-            # Find the original Slack message for this incident
-            # Since any user can resolve an incident, we should look for any message for this incident
-            # (not just messages for the current user)
-            original_message_info = self.find_any_slack_message_for_incident(incident_id)
+            # Find ALL Slack messages for this incident to update all recipients
+            all_messages = self.find_all_slack_messages_for_incident(incident_id)
 
-            if original_message_info:
-                logger.info(f"📨 Found Slack message for incident {incident_id}, will update it")
-            else:
-                logger.warning(f"⚠️  No original Slack message found for incident {incident_id}")
-                logger.info(f"📨 Sending new resolution notification instead")
+            if not all_messages:
+                logger.warning(f"⚠️  No Slack messages found for incident {incident_id}")
+                logger.info(f"📨 Sending new notification instead")
                 # Fallback: send a new notification message
                 return self.send_new_resolution_notification(user_data, incident_data, notification_msg)
 
-            channel_id, message_ts = original_message_info
+            logger.info(f"📨 Found {len(all_messages)} Slack messages to update for incident {incident_id}")
 
-            # Add view incident button (no action buttons since it's resolved)
+            # Add view incident button (no action buttons for resolved/acknowledged)
             if incident_data.get('id'):
                 blocks.append({
                     "type": "actions",
@@ -838,29 +779,82 @@ class SlackWorker:
                 "type": "divider"
             })
 
-            # Update the original message
+            # Update ALL messages for all recipients (A, B, etc.)
+            user_name = user_data.get('name', 'Unknown User')
+            incident_title = incident_message.get_title()
+            status_emoji = "✅" if status == "acknowledged" else "🎉"
+            status_text = f"[{status.title()}]"
+            notification_text = f"{status_text} {incident_title}"
+            
+            updated_count = 0
+            for channel_id, message_ts in all_messages:
+                try:
+                    # Update each message
+                    response = self.slack_client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=notification_text,
+                        blocks=blocks
+                    )
+                    updated_count += 1
+                    logger.info(f"   ✅ Updated message in channel {channel_id}")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
+
+            logger.info(f"✅ Updated {updated_count}/{len(all_messages)} Slack messages for {status} incident {incident_id}")
+            return updated_count > 0
+
+        except Exception as e:
+            logger.error(f"❌ Failed to update Slack messages for {status} incident: {e}")
+            return False
+
+    def send_new_acknowledgment_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
+        """Send new Slack notification for incident acknowledgment (fallback when original message not found)"""
+        try:
+            slack_user_id = user_data['slack_user_id'].lstrip('@')
+
+            # Create formatted message for acknowledgment
+            blocks = self.format_incident_blocks(incident_data, notification_msg, 'acknowledged')
+
+            # Add view incident button
+            if incident_data.get('id'):
+                blocks.append({
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "View Incident"
+                            },
+                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "style": "primary"
+                        }
+                    ]
+                })
+
+            # Send new message
             incident_short_id = f"#{incident_data.get('id', '')[-8:]}" if incident_data.get('id') else "#Unknown"
-            response = self.slack_client.chat_update(
-                channel=channel_id,
-                ts=message_ts,
-                text=f"Incident {incident_short_id} resolved",
+            incident_title = incident_data.get('title', 'Unknown Incident')
+            response = self.slack_client.chat_postMessage(
+                channel=f"@{slack_user_id}",
+                text=f"Incident {incident_short_id} \"{incident_title}\" acknowledged",
                 blocks=blocks
             )
 
-            # Send notification message for immediate alert
-            user_name = user_data.get('name', 'Unknown User')
-            incident_title = incident_data.get('title', 'Unknown Incident')
-            notification_text = f"🎉 Incident {incident_short_id} \"{incident_title}\" was resolved by {user_name}"
-            self.slack_client.chat_postMessage(
-                channel=channel_id,
-                text=notification_text
-            )
+            # Log notification
+            notification_msg_with_recipient = notification_msg.copy()
+            notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
+            self.log_notification(notification_msg_with_recipient, 'slack', True, None)
 
-            logger.info(f"✅ Updated original Slack message and sent notification for resolved incident {incident_id}")
+            logger.info(f"✅ Sent new incident acknowledged notification to @{slack_user_id}")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to update Slack message for resolved incident: {e}")
+            logger.error(f"❌ Failed to send new Slack acknowledged notification: {e}")
+            notification_msg_with_recipient = notification_msg.copy()
+            notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
+            self.log_notification(notification_msg_with_recipient, 'slack', False, str(e))
             return False
 
     def send_new_resolution_notification(self, user_data: Dict, incident_data: Dict, notification_msg: Dict) -> bool:
@@ -997,13 +991,15 @@ class SlackWorker:
                 })
             
             # Send message
+            text_message = f"[Escalated] {incident_message.get_title()}"
+            notification_text = f"🔄 {text_message}"
             response = self.slack_client.chat_postMessage(
                 channel=f"@{slack_user_id}",
-                text=f"🔄 Escalated #{incident_message.get_title()} assigned to you",
+                text=notification_text,
                 blocks=blocks
             )
 
-            # Log notification with message timestamp for future updates
+            # Prepare notification message with recipient info
             notification_msg_with_recipient = notification_msg.copy()
             notification_msg_with_recipient['recipient'] = f"@{slack_user_id}"
 
@@ -1185,6 +1181,42 @@ class SlackWorker:
         except Exception as e:
             logger.error(f"❌ Error finding any Slack message for incident: {e}")
             return None
+    
+    def find_all_slack_messages_for_incident(self, incident_id: str) -> List[tuple]:
+        """Find ALL Slack messages for an incident (for updating all recipients when status changes)"""
+        try:
+            with self.db.cursor() as cursor:
+                cursor.execute("""
+                    SELECT external_message_id, user_id, notification_type
+                    FROM notification_logs
+                    WHERE incident_id = %s
+                    AND channel = 'slack'
+                    AND status = 'sent'
+                    AND external_message_id IS NOT NULL
+                    AND notification_type IN ('assigned', 'escalated')
+                    ORDER BY created_at ASC
+                """, (incident_id,))
+
+                results = cursor.fetchall()
+                messages = []
+                
+                for result in results:
+                    if result and result['external_message_id']:
+                        # external_message_id format: "channel_id:message_ts"
+                        external_message_id = result['external_message_id']
+                        parts = external_message_id.split(':', 1)
+                        if len(parts) == 2:
+                            channel_id, message_ts = parts
+                            messages.append((channel_id, message_ts))
+                            user_short = result['user_id'][:8] if result['user_id'] else 'None'
+                            logger.info(f"   Found message: Channel {channel_id}, User {user_short}, Type: {result['notification_type']}")
+                
+                logger.info(f"✅ Found {len(messages)} Slack messages for incident {incident_id[:8]}")
+                return messages
+                
+        except Exception as e:
+            logger.error(f"❌ Error finding all Slack messages for incident: {e}")
+            return []
             
     def delete_message(self, queue_name: str, msg_id: int):
         """Delete message from PGMQ queue"""
@@ -1195,16 +1227,16 @@ class SlackWorker:
         except Exception as e:
             logger.error(f"❌ Failed to delete message {msg_id}: {e}")
             
-    def handle_failed_message(self, queue_name: str, msg_id: int, notification_msg: Dict):
-        """Handle failed message processing with retry logic"""
+    def handle_failed_message(self, queue_name: str, msg_id: int, notification_msg: Dict, read_ct: int = 0):
+        """Handle failed message processing with retry logic using PGMQ's read_ct"""
         try:
-            current_retry = notification_msg.get('retry_count', 0)
-            
-            if current_retry >= self.config['max_retries']:
-                logger.error(f"❌ Message {msg_id} exceeded max retries, deleting")
+            # Use PGMQ's read_ct (how many times message has been read) for retry logic
+            # read_ct starts at 1 on first read, so we compare directly with max_retries
+            if read_ct > self.config['max_retries']:
+                logger.error(f"❌ Message {msg_id} exceeded max retries (read_ct={read_ct}), deleting")
                 self.delete_message(queue_name, msg_id)
             else:
-                logger.warning(f"⚠️  Message {msg_id} failed, retry count: {current_retry}")
+                logger.warning(f"⚠️  Message {msg_id} failed, read_ct: {read_ct}/{self.config['max_retries']}")
                 # Message will be retried automatically when visibility timeout expires
                 
         except Exception as e:
@@ -1249,6 +1281,73 @@ class SlackWorker:
             logger.error(f"❌ Error queuing acknowledgment request: {e}")
             return False
     
+    def update_all_messages_for_incident(self, incident_id: str, user_name: str, state: str):
+        """Update ALL Slack messages for an incident (for all recipients A, B, etc.)"""
+        try:
+            # Get incident data to format blocks
+            incident_data = self.get_incident_data(incident_id)
+            if not incident_data:
+                logger.error(f"❌ Could not find incident {incident_id}")
+                return
+            
+            # Format blocks for the new state
+            blocks = self.format_incident_blocks(incident_data, {}, state)
+            
+            # Add view incident button
+            blocks.append({
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View Incident"
+                        },
+                        "url": f"{self.config['api_base_url']}/incidents/{incident_id}",
+                        "style": "primary"
+                    }
+                ]
+            })
+            
+            # Add acknowledgment info
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Acknowledged by:* @{user_name}\n*Time:* {datetime.now().strftime('%H:%M %d/%m/%Y')}"
+                }
+            })
+            
+            # Find ALL messages for this incident
+            all_messages = self.find_all_slack_messages_for_incident(incident_id)
+            
+            if not all_messages:
+                logger.warning(f"⚠️  No Slack messages found for incident {incident_id}")
+                return
+            
+            logger.info(f"📨 Updating {len(all_messages)} Slack messages for incident {incident_id}")
+            
+            # Update all messages
+            incident_short_id = f"#{incident_id[-8:]}"
+            updated_count = 0
+            for channel_id, message_ts in all_messages:
+                try:
+                    response = self.slack_client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=f"Incident {incident_short_id} acknowledged by @{user_name}",
+                        blocks=blocks
+                    )
+                    updated_count += 1
+                    logger.info(f"   ✅ Updated message in channel {channel_id}")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to update message in channel {channel_id}: {e}")
+            
+            logger.info(f"✅ Updated {updated_count}/{len(all_messages)} messages for incident {incident_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating all messages for incident: {e}")
+    
     def update_message_optimistically(self, body: dict, incident_id: str, user_name: str, state: str):
         """Update Slack message optimistically using top-level blocks"""
         try:
@@ -1291,8 +1390,8 @@ class SlackWorker:
                 for block in updated_blocks:
                     if block.get("type") == "section":
                         original_text = block["text"]["text"]
-                        updated_text = original_text.replace("[Acknowledging]", "[Acknowledged]").replace("[Triggered]", "[Acknowledged]")
-                        updated_text = updated_text.replace(":fire: ", ":large_yellow_circle: ")
+                        updated_text = original_text.replace("[Acknowledging]", "[Acknowledged]").replace("[Triggered]", "[Acknowledged]").replace("[Escalated]", "[Acknowledged]")
+                        updated_text = updated_text.replace(":fire: ", ":large_yellow_circle: ").replace(":zap: ", ":large_yellow_circle: ")
                         block["text"]["text"] = f"{updated_text}"
                         break
                 
