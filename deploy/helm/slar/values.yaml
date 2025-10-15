@@ -7,7 +7,7 @@ replicaCount: 1
 
 # Default image settings
 image:
-  repository: 192.168.100.137:5000/
+  repository: ghcr.io/slarops/
   pullPolicy: IfNotPresent
   tag: ""
 
