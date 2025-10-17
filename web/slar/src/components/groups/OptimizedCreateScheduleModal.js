@@ -168,6 +168,12 @@ export default function OptimizedCreateScheduleModal({
   useEffect(() => {
     if (isOpen) {
       if (mode === 'edit' && schedulerData) {
+        // Skip initialization if still loading
+        if (schedulerData.loading) {
+          console.log('⏳ Waiting for scheduler data to load...');
+          return;
+        }
+        
         // Edit mode: populate form with existing scheduler data
         console.log('📝 Edit mode - Loading scheduler data:', schedulerData);
         
@@ -305,7 +311,7 @@ export default function OptimizedCreateScheduleModal({
 
   return (
     <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+      <div className="bg-white dark:bg-gray-800 w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -322,7 +328,26 @@ export default function OptimizedCreateScheduleModal({
           </button>
         </div>
 
-        {/* Loading Overlay */}
+        {/* Loading Data Overlay (when fetching scheduler data for edit) */}
+        {mode === 'edit' && schedulerData?.loading && (
+          <div className="absolute inset-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm flex items-center justify-center z-10">
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-8 shadow-xl border border-gray-200 dark:border-gray-700">
+              <div className="flex flex-col items-center space-y-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-blue-600"></div>
+                <div className="text-center">
+                  <div className="text-base font-medium text-gray-900 dark:text-white">
+                    Loading scheduler data...
+                  </div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    Please wait a moment
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Loading Overlay (when submitting) */}
         {isSubmitting && (
           <div className="absolute inset-0 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm flex items-center justify-center z-10">
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg border border-gray-200 dark:border-gray-700">

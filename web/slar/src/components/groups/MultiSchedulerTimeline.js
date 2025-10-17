@@ -281,7 +281,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                     
                     return uniqueMembers;
                   })()}
-                  viewMode="week"
+                  viewMode="2-week"
                   isVisible={true}
                 />
               )}

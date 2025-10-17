@@ -138,25 +138,33 @@ export default function ScheduleManagement({ groupId, members }) {
     setShowCreateSchedule(true);
   };
 
-  // NEW: Handle edit scheduler
+  // NEW: Handle edit scheduler (with progressive loading)
   const handleEditScheduler = async (schedulerId) => {
     if (!session?.access_token) {
       toast.error('Not authenticated');
       return;
     }
 
+    // OPTIMIZATION: Show modal immediately with loading state
+    setEditingScheduler({ id: schedulerId, loading: true });
+    setShowEditSchedule(true);
+
     try {
-      // Fetch scheduler with shifts
+      // Fetch scheduler with shifts in background
       apiClient.setToken(session.access_token);
       const schedulerData = await apiClient.getSchedulerWithShifts(groupId, schedulerId);
       
       console.log('📝 Fetched scheduler for editing:', schedulerData);
       
-      setEditingScheduler(schedulerData.scheduler);
-      setShowEditSchedule(true);
+      // Update with actual data
+      setEditingScheduler({ ...schedulerData.scheduler, loading: false });
     } catch (error) {
       console.error('Failed to fetch scheduler:', error);
       toast.error('Failed to load scheduler data');
+      
+      // Close modal on error
+      setShowEditSchedule(false);
+      setEditingScheduler(null);
     }
   };
 
@@ -330,32 +338,6 @@ export default function ScheduleManagement({ groupId, members }) {
           </button>
         </div>
       </div>
-
-      {/* Current On-Call Status */}
-      {currentOnCall && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-500 text-white rounded-full flex items-center justify-center font-medium">
-              {(currentOnCall.user_name || 'U').charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-medium text-green-900 dark:text-green-100">
-                  {currentOnCall.user_name || 'Unknown User'}
-                </h3>
-                <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-full text-green-600 bg-green-100 dark:bg-green-900/30">
-                  Currently On Call
-                </span>
-              </div>
-              <p className="text-sm text-green-700 dark:text-green-300">
-                {formatScheduleTime(currentOnCall.start_time, currentOnCall.end_time)}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-
 
       {/* Schedule Timeline */}
         

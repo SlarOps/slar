@@ -338,8 +338,8 @@ const ScheduleTimeline = forwardRef(({
         end = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000); // 4 days ahead
         break;
       case '2-week':
-        start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // 1 week ago
-        end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 1 week ahead
+        start = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 4 days ago
+        end = new Date(now.getTime() + 11 * 24 * 60 * 60 * 1000); // 10 days ahead
         break;
       case 'month':
         start = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000); // 2 weeks ago
@@ -355,8 +355,8 @@ const ScheduleTimeline = forwardRef(({
       showCurrentTime: true,
 
       // View configuration
-      orientation: 'top',
-      stack: false,
+      // orientation: 'top',
+      stack: true,
 
       // Time window - fixed window, don't auto-adjust
       start: start,
@@ -369,16 +369,16 @@ const ScheduleTimeline = forwardRef(({
       zoomable: true,
       moveable: true,
       zoomMin: 1000 * 60 * 60, // 1 hour
-      zoomMax: 1000 * 60 * 60 * 24 * 365, // 1 year
+      zoomMax: 1000 * 60 * 60 * 24 * 90, // 1 year
 
       // Height
-      height: '300px',
+      // height: '300px',
 
       // Margins
       margin: {
         item: {
-          horizontal: 5,
-          vertical: 10
+          // horizontal: 5,
+          // vertical: 10
         }
       },
 
@@ -605,7 +605,7 @@ const ScheduleTimeline = forwardRef(({
       <div
         ref={timelineRef}
         id={componentIdRef.current}
-        className="timeline-container dark:border-gray-700"
+        className="timeline-container dark:border-gray-100 rounded-lg"
         style={{ width: '100%', minHeight: '300px' }}
         data-timeline-instance={componentIdRef.current}
       />
