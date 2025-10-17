@@ -337,6 +337,13 @@ class APIClient {
     return this.request(`/groups/${groupId}/schedulers/${schedulerId}`);
   }
 
+  async updateSchedulerWithShifts(groupId, schedulerId, data) {
+    return this.request(`/groups/${groupId}/schedulers/${schedulerId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
   async deleteScheduler(groupId, schedulerId) {
     return this.request(`/groups/${groupId}/schedulers/${schedulerId}`, {
       method: 'DELETE'

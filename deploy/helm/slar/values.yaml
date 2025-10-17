@@ -328,7 +328,7 @@ components:
       pullPolicy: IfNotPresent
     service:
       enabled: true
-      type: LoadBalancer
+      type: ClusterIP
       port: 8000
       ports:
         - name: proxy

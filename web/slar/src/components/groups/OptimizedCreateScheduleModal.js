@@ -8,6 +8,137 @@ import MembersList from './MembersList';
 import SchedulePreview from './SchedulePreview';
 import { TIME_ZONES, DEFAULT_ROTATION } from './scheduleConstants';
 
+// Helper: Transform shifts back to rotation format for editing
+const transformShiftsToRotations = (shifts) => {
+  if (!shifts || shifts.length === 0) {
+    return [{
+      ...DEFAULT_ROTATION,
+      id: 1,
+      startDate: new Date().toISOString().split('T')[0],
+      startTime: '00:04'
+    }];
+  }
+
+  // Sort shifts by start time
+  const sortedShifts = [...shifts].sort((a, b) => 
+    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+
+  // Get the first shift to extract common rotation settings
+  const firstShift = sortedShifts[0];
+  const startDate = new Date(firstShift.start_time).toISOString().split('T')[0];
+  const startTime = new Date(firstShift.start_time).toISOString().split('T')[1].substring(0, 5);
+  
+  // Calculate shift duration
+  const shiftStart = new Date(firstShift.start_time);
+  const shiftEnd = new Date(firstShift.end_time);
+  const shiftDurationMs = shiftEnd.getTime() - shiftStart.getTime();
+  const shiftDurationHours = Math.round(shiftDurationMs / (1000 * 60 * 60));
+  
+  // Get rotation days for logic below
+  const rotationDays = firstShift.rotation_days || 7;
+  
+  // For rotation schedules, endTime is usually the same as startTime (handoff time)
+  // Unless it's a partial day shift
+  let endTime = startTime; // Default: handoff at same time
+  
+  // If shift is less than 1 day, calculate actual end time
+  if (rotationDays < 1 || shiftDurationHours < 24) {
+    endTime = new Date(shiftEnd).toISOString().split('T')[1].substring(0, 5);
+  } else {
+    // For multi-day rotations, check if end time is different from start
+    const endTimeOfDay = new Date(shiftEnd).toISOString().split('T')[1].substring(0, 5);
+    // If end time is midnight (00:00), use start time instead (typical for rotation handoff)
+    if (endTimeOfDay === '00:00') {
+      endTime = startTime;
+    } else {
+      endTime = endTimeOfDay;
+    }
+  }
+
+  // Determine shift length from rotation_days
+  let shiftLength = 'one_week'; // default
+
+  if (rotationDays === 1) {
+    shiftLength = 'one_day';
+  } else if (rotationDays === 7) {
+    shiftLength = 'one_week';
+  } else if (rotationDays === 14) {
+    shiftLength = 'two_weeks';
+  } else if (rotationDays === 30 || rotationDays === 31) {
+    shiftLength = 'one_month';
+  }
+
+  // Determine handoff day from start date
+  const startDateObj = new Date(firstShift.start_time);
+  const dayOfWeek = startDateObj.getUTCDay(); // 0 = Sunday, 1 = Monday, etc
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const handoffDay = dayNames[dayOfWeek];
+
+  // Extract handoff time from start time
+  const handoffTime = startTime;
+
+  // Check if there's an end date by looking at the last shift
+  const lastShift = sortedShifts[sortedShifts.length - 1];
+  const lastEndDate = new Date(lastShift.end_time);
+  
+  // Calculate expected end date based on rotation pattern
+  // If last shift end is significantly in the future, we have an end date
+  const now = new Date();
+  const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+  const hasEndDate = lastEndDate < oneYearFromNow && sortedShifts.length > 1;
+  
+  const endDate = hasEndDate ? lastEndDate.toISOString().split('T')[0] : '';
+
+  // Extract all unique participants from all shifts (in order)
+  const participants = [];
+  const seenUsers = new Set();
+
+  sortedShifts.forEach(shift => {
+    if (!seenUsers.has(shift.user_id)) {
+      seenUsers.add(shift.user_id);
+      participants.push({
+        user_id: shift.user_id,
+        user_name: shift.user_name
+      });
+    }
+  });
+
+  // Create single rotation with all participants
+  return [{
+    id: 1,
+    name: 'Rotation 1',
+    shiftLength,
+    handoffDay,
+    handoffTime,
+    startDate,
+    startTime,
+    hasEndDate,
+    endDate,
+    endTime,
+    participants
+  }];
+};
+
+// Helper: Extract selected members from shifts
+const extractSelectedMembers = (shifts) => {
+  if (!shifts || shifts.length === 0) return [];
+  
+  const uniqueMembers = new Map();
+  shifts.forEach(shift => {
+    if (!uniqueMembers.has(shift.user_id)) {
+      uniqueMembers.set(shift.user_id, {
+        user_id: shift.user_id,
+        user_name: shift.user_name,
+        user_email: shift.user_email,
+        user_team: shift.user_team
+      });
+    }
+  });
+
+  return Array.from(uniqueMembers.values());
+};
+
 export default function OptimizedCreateScheduleModal({ 
   isOpen, 
   onClose, 
@@ -15,7 +146,9 @@ export default function OptimizedCreateScheduleModal({
   groupId, 
   session, 
   onSubmit, 
-  existingSchedules = [] 
+  existingSchedules = [],
+  schedulerData = null, // NEW: For edit mode
+  mode = 'create' // NEW: 'create' or 'edit'
 }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -31,29 +164,47 @@ export default function OptimizedCreateScheduleModal({
   const [submitProgress, setSubmitProgress] = useState('');
   const [rotationIdCounter, setRotationIdCounter] = useState(1);
 
-  // Initialize with default rotation
+  // Initialize with default rotation or edit data
   useEffect(() => {
-    if (isOpen && formData.rotations.length === 0) {
-      const today = new Date();
-      setFormData(prev => ({
-        ...prev,
-        name: `Datajet - New Schedule - ${today.toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          month: 'short', 
-          day: 'numeric', 
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })} am`,
-        rotations: [{
-          ...DEFAULT_ROTATION,
-          id: 1,
-          startDate: today.toISOString().split('T')[0],
-          startTime: '00:04'
-        }]
-      }));
+    if (isOpen) {
+      if (mode === 'edit' && schedulerData) {
+        // Edit mode: populate form with existing scheduler data
+        console.log('📝 Edit mode - Loading scheduler data:', schedulerData);
+        
+        // Transform scheduler shifts back to rotation format
+        const rotations = transformShiftsToRotations(schedulerData.shifts || []);
+        
+        setFormData({
+          name: schedulerData.display_name || schedulerData.name || '',
+          timeZone: 'UTC', // Default timezone
+          team: '',
+          rotations: rotations,
+          conditions: [],
+          selectedMembers: extractSelectedMembers(schedulerData.shifts || [])
+        });
+      } else if (formData.rotations.length === 0) {
+        // Create mode: default rotation
+        const today = new Date();
+        setFormData(prev => ({
+          ...prev,
+          name: `Datajet - New Schedule - ${today.toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            month: 'short', 
+            day: 'numeric', 
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          })} am`,
+          rotations: [{
+            ...DEFAULT_ROTATION,
+            id: 1,
+            startDate: today.toISOString().split('T')[0],
+            startTime: '00:04'
+          }]
+        }));
+      }
     }
-  }, [isOpen, formData.rotations.length]);
+  }, [isOpen, mode, schedulerData, formData.rotations.length]);
 
   // Reset form when modal closes
   useEffect(() => {
@@ -106,7 +257,11 @@ export default function OptimizedCreateScheduleModal({
       // Add small delay to show progress
       await new Promise(resolve => setTimeout(resolve, 300));
       
-      setSubmitProgress('Creating scheduler...');
+      if (mode === 'edit') {
+        setSubmitProgress('Updating scheduler...');
+      } else {
+        setSubmitProgress('Creating scheduler...');
+      }
       
       // Convert to API format with scheduler information
       const scheduleData = {
@@ -118,24 +273,26 @@ export default function OptimizedCreateScheduleModal({
         schedulerName: formData.team || formData.name || 'default',
         schedulerDisplayName: formData.team ? `${formData.team} Team` : `${formData.name} Team`,
         description: `Scheduler for ${formData.team || formData.name}`,
-        rotationType: 'manual'
+        rotationType: 'manual',
+        // For edit mode
+        schedulerId: mode === 'edit' ? schedulerData?.id : undefined
       };
       
       setSubmitProgress('Saving to database...');
       
-      // Call the onSubmit prop
+      // Call the onSubmit prop (parent handles create vs edit)
       await onSubmit(scheduleData);
       
       // Success handled by parent component
       
     } catch (error) {
-      console.error('Failed to create schedule:', error);
-      toast.error(error.message || 'Failed to create schedule');
+      console.error(`Failed to ${mode === 'edit' ? 'update' : 'create'} schedule:`, error);
+      toast.error(error.message || `Failed to ${mode === 'edit' ? 'update' : 'create'} schedule`);
     } finally {
       setIsSubmitting(false);
       setSubmitProgress('');
     }
-  }, [formData, isSubmitting, onSubmit]);
+  }, [formData, isSubmitting, onSubmit, mode, schedulerData]);
 
   // Prevent closing modal while submitting
   const handleClose = useCallback(() => {
@@ -152,7 +309,7 @@ export default function OptimizedCreateScheduleModal({
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-            New schedule
+            {mode === 'edit' ? 'Edit schedule' : 'New schedule'}
           </h3>
           <button
             onClick={handleClose}
@@ -173,7 +330,7 @@ export default function OptimizedCreateScheduleModal({
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                 <div>
                   <div className="text-sm font-medium text-gray-900 dark:text-white">
-                    Creating Schedule...
+                    {mode === 'edit' ? 'Updating Schedule...' : 'Creating Schedule...'}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     {submitProgress}
@@ -307,7 +464,10 @@ export default function OptimizedCreateScheduleModal({
             {isSubmitting && (
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
             )}
-            {isSubmitting ? 'Creating...' : 'Create Schedule'}
+            {isSubmitting 
+              ? (mode === 'edit' ? 'Updating...' : 'Creating...') 
+              : (mode === 'edit' ? 'Update Schedule' : 'Create Schedule')
+            }
           </button>
         </div>
       </div>

@@ -184,7 +184,7 @@ const ScheduleTimeline = forwardRef(({
         content: `
           <div class="flex items-center gap-2 px-2 py-1">
             <div class="w-3 h-3 rounded-full" style="background-color: ${MEMBER_COLORS[index % MEMBER_COLORS.length]}"></div>
-            <span class="font-medium text-sm">${member.user_name}</span>
+            <span class="font-medium text-sm">${member.user_name[0].toUpperCase()}</span>
           </div>
         `,
         className: 'member-group'
@@ -303,7 +303,7 @@ const ScheduleTimeline = forwardRef(({
     }
 
     console.log(`[${componentIdRef.current}] Generated ${items.length} items and ${groups.length} groups`);
-    return { items, groups };
+    return { items };
   };
 
   // Get shift duration in days
@@ -605,7 +605,7 @@ const ScheduleTimeline = forwardRef(({
       <div
         ref={timelineRef}
         id={componentIdRef.current}
-        className="timeline-container dark:border-gray-700 rounded-lg"
+        className="timeline-container dark:border-gray-700"
         style={{ width: '100%', minHeight: '300px' }}
         data-timeline-instance={componentIdRef.current}
       />

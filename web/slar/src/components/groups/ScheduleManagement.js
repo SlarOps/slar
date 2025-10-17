@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/api';
-import { createScheduleWorkflow, createSchedulerWorkflow } from '../../services/scheduleService';
+import { createScheduleWorkflow, createSchedulerWorkflow, updateSchedulerWorkflow } from '../../services/scheduleService';
 import { createOptimizedSchedulerWorkflow } from '../../services/optimizedScheduleService';
 import EnhancedCreateScheduleModal from './EnhancedCreateScheduleModal';
 import OptimizedCreateScheduleModal from './OptimizedCreateScheduleModal';
@@ -57,6 +57,10 @@ export default function ScheduleManagement({ groupId, members }) {
   const [showShiftSwap, setShowShiftSwap] = useState(false);
   const [selectedScheduleForOverride, setSelectedScheduleForOverride] = useState(null);
   const [selectedScheduleForSwap, setSelectedScheduleForSwap] = useState(null);
+  
+  // NEW: Edit scheduler state
+  const [editingScheduler, setEditingScheduler] = useState(null);
+  const [showEditSchedule, setShowEditSchedule] = useState(false);
 
   
   // Confirmation modal state
@@ -130,7 +134,30 @@ export default function ScheduleManagement({ groupId, members }) {
 
 
   const handleCreateSchedule = () => {
+    setEditingScheduler(null); // Clear any editing state
     setShowCreateSchedule(true);
+  };
+
+  // NEW: Handle edit scheduler
+  const handleEditScheduler = async (schedulerId) => {
+    if (!session?.access_token) {
+      toast.error('Not authenticated');
+      return;
+    }
+
+    try {
+      // Fetch scheduler with shifts
+      apiClient.setToken(session.access_token);
+      const schedulerData = await apiClient.getSchedulerWithShifts(groupId, schedulerId);
+      
+      console.log('📝 Fetched scheduler for editing:', schedulerData);
+      
+      setEditingScheduler(schedulerData.scheduler);
+      setShowEditSchedule(true);
+    } catch (error) {
+      console.error('Failed to fetch scheduler:', error);
+      toast.error('Failed to load scheduler data');
+    }
   };
 
 
@@ -349,6 +376,7 @@ export default function ScheduleManagement({ groupId, members }) {
           <MultiSchedulerTimeline
             groupId={groupId}
             members={members}
+            onEditScheduler={handleEditScheduler}
           />
         )}
 
@@ -361,6 +389,7 @@ export default function ScheduleManagement({ groupId, members }) {
           groupId={groupId}
           session={session}
           existingSchedules={schedules}
+          mode="create"
           onSubmit={async (scheduleData) => {
             try {
               // Use new scheduler workflow (with automatic fallback to legacy)
@@ -417,7 +446,59 @@ export default function ScheduleManagement({ groupId, members }) {
         />
       )}
 
+      {/* Optimized Edit Schedule Modal */}
+      {showEditSchedule && editingScheduler && (
+        <OptimizedCreateScheduleModal
+          isOpen={showEditSchedule}
+          onClose={() => {
+            setShowEditSchedule(false);
+            setEditingScheduler(null);
+          }}
+          members={members}
+          groupId={groupId}
+          session={session}
+          existingSchedules={schedules}
+          mode="edit"
+          schedulerData={editingScheduler}
+          onSubmit={async (scheduleData) => {
+            try {
+              // Use update workflow for edit mode
+              const result = await updateSchedulerWorkflow({
+                apiClient,
+                session,
+                groupId,
+                schedulerId: editingScheduler.id,
+                scheduleData,
+                onProgress: (message) => {
+                  console.log('Progress:', message);
+                },
+                onSuccess: (scheduler, shifts) => {
+                  // Update shifts in the schedule list
+                  setSchedules(prev => {
+                    // Remove old shifts from this scheduler
+                    const filtered = prev.filter(s => s.scheduler_id !== editingScheduler.id);
+                    // Add new shifts
+                    return [...shifts, ...filtered];
+                  });
+                  setShowEditSchedule(false);
+                  setEditingScheduler(null);
 
+                  toast.success(
+                    `Scheduler "${scheduler.display_name || scheduler.name}" updated with ${shifts.length} shift(s)!`,
+                    { duration: 4000 }
+                  );
+                },
+                onError: (error) => {
+                  toast.error(`Failed to update scheduler: ${error.message}`);
+                }
+              });
+            } catch (error) {
+              console.error('Failed to update scheduler:', error);
+              toast.error('Failed to update scheduler. Please try again.');
+            }
+          }}
+        />
+      )}
 
       {/* Override Creation Modal */}
       {showCreateOverride && (

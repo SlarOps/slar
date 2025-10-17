@@ -439,13 +439,13 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 		// Insert shift and get auto-generated ID
 		err = tx.QueryRow(`
 			INSERT INTO shifts (scheduler_id, group_id, user_id, shift_type, start_time, end_time, 
-								is_active, is_recurring, rotation_days, service_id, 
+								is_active, is_recurring, rotation_days, service_id, schedule_scope,
 								created_at, updated_at, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			RETURNING id
 		`, shift.SchedulerID, shift.GroupID, shift.UserID, shift.ShiftType,
 			shift.StartTime, shift.EndTime, shift.IsActive, shift.IsRecurring,
-			shift.RotationDays, shift.ServiceID,
+			shift.RotationDays, shift.ServiceID, shift.ScheduleScope,
 			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy).Scan(&shift.ID)
 
 		if err != nil {
@@ -649,7 +649,7 @@ func (s *SchedulerService) getShiftsByScheduler(schedulerID string) ([]db.Shift,
 		SELECT s.id, s.scheduler_id, s.group_id, s.user_id, s.shift_type, s.start_time, s.end_time,
 		       s.is_active, s.is_recurring, s.rotation_days, s.created_at, s.updated_at,
 		       COALESCE(s.created_by, '') as created_by,
-		       COALESCE(s.service_id, '') as service_id, COALESCE(s.schedule_scope, 'group') as schedule_scope,
+		       s.service_id, s.schedule_scope,
 		       u.name as user_name, u.email as user_email, u.team as user_team,
 		       sc.name as scheduler_name, sc.display_name as scheduler_display_name
 		FROM shifts s
@@ -668,11 +668,13 @@ func (s *SchedulerService) getShiftsByScheduler(schedulerID string) ([]db.Shift,
 	var shifts []db.Shift
 	for rows.Next() {
 		var shift db.Shift
+		var serviceID sql.NullString
 
 		err := rows.Scan(
 			&shift.ID, &shift.SchedulerID, &shift.GroupID, &shift.UserID, &shift.ShiftType,
 			&shift.StartTime, &shift.EndTime, &shift.IsActive, &shift.IsRecurring,
 			&shift.RotationDays, &shift.CreatedAt, &shift.UpdatedAt, &shift.CreatedBy,
+			&serviceID, &shift.ScheduleScope,
 			&shift.UserName, &shift.UserEmail, &shift.UserTeam,
 			&shift.SchedulerName, &shift.SchedulerDisplayName,
 		)
@@ -681,9 +683,12 @@ func (s *SchedulerService) getShiftsByScheduler(schedulerID string) ([]db.Shift,
 			continue
 		}
 
-		// Set default values for removed fields
-		shift.ScheduleScope = "group"
-		shift.ServiceID = nil
+		// Handle nullable service_id
+		if serviceID.Valid {
+			shift.ServiceID = &serviceID.String
+		} else {
+			shift.ServiceID = nil
+		}
 
 		shifts = append(shifts, shift)
 	}
@@ -738,4 +743,142 @@ func (s *SchedulerService) GetAllShiftsInGroup(groupID string) ([]db.Shift, erro
 
 	log.Printf("🔍 GetAllShiftsInGroup: Found %d shifts for group %s", len(shifts), groupID)
 	return shifts, nil
+}
+
+// UpdateSchedulerWithShifts updates a scheduler and replaces all its shifts in a single transaction
+func (s *SchedulerService) UpdateSchedulerWithShifts(schedulerID string, schedulerReq db.CreateSchedulerRequest, shifts []db.CreateShiftRequest, updatedBy string) (db.Scheduler, []db.Shift, error) {
+	// Start transaction
+	tx, err := s.PG.Begin()
+	if err != nil {
+		return db.Scheduler{}, nil, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback() // Will be ignored if tx.Commit() succeeds
+
+	// Get existing scheduler
+	var scheduler db.Scheduler
+	err = tx.QueryRow(`
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		FROM schedulers
+		WHERE id = $1 AND is_active = true
+	`, schedulerID).Scan(
+		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
+		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return scheduler, nil, fmt.Errorf("scheduler not found")
+		}
+		return scheduler, nil, fmt.Errorf("failed to get scheduler: %w", err)
+	}
+
+	// Update scheduler fields
+	scheduler.DisplayName = schedulerReq.DisplayName
+	if scheduler.DisplayName == "" {
+		scheduler.DisplayName = schedulerReq.Name
+	}
+	scheduler.Description = schedulerReq.Description
+	scheduler.RotationType = schedulerReq.RotationType
+	if scheduler.RotationType == "" {
+		scheduler.RotationType = "manual"
+	}
+	scheduler.UpdatedAt = time.Now()
+
+	// Update scheduler in database
+	_, err = tx.Exec(`
+		UPDATE schedulers 
+		SET display_name = $2, description = $3, rotation_type = $4, updated_at = $5
+		WHERE id = $1
+	`, schedulerID, scheduler.DisplayName, scheduler.Description, scheduler.RotationType, scheduler.UpdatedAt)
+
+	if err != nil {
+		log.Println("Error updating scheduler:", err)
+		return scheduler, nil, fmt.Errorf("failed to update scheduler: %w", err)
+	}
+
+	// Soft delete all existing shifts for this scheduler
+	_, err = tx.Exec(`
+		UPDATE shifts
+		SET is_active = false, updated_at = $1
+		WHERE scheduler_id = $2
+	`, time.Now(), schedulerID)
+
+	if err != nil {
+		log.Println("Error deactivating old shifts:", err)
+		return scheduler, nil, fmt.Errorf("failed to deactivate old shifts: %w", err)
+	}
+
+	// Create new shifts
+	var createdShifts []db.Shift
+	for _, shiftReq := range shifts {
+		shift := db.Shift{
+			SchedulerID:  schedulerID,
+			GroupID:      scheduler.GroupID,
+			UserID:       shiftReq.UserID,
+			ShiftType:    shiftReq.ShiftType,
+			StartTime:    shiftReq.StartTime,
+			EndTime:      shiftReq.EndTime,
+			IsActive:     true,
+			IsRecurring:  shiftReq.IsRecurring,
+			RotationDays: shiftReq.RotationDays,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+			CreatedBy:    updatedBy,
+		}
+
+		// Set default values
+		if shift.ShiftType == "" {
+			shift.ShiftType = db.ScheduleTypeCustom
+		}
+		// Note: schedule_scope field exists in struct but not in DB table
+		if shiftReq.ScheduleScope != "" {
+			shift.ScheduleScope = shiftReq.ScheduleScope
+		} else {
+			shift.ScheduleScope = "group"
+		}
+		if shiftReq.ServiceID != nil {
+			shift.ServiceID = shiftReq.ServiceID
+		}
+
+		// Insert shift with schedule_scope
+		err = tx.QueryRow(`
+			INSERT INTO shifts (scheduler_id, group_id, user_id, shift_type, start_time, end_time,
+				is_active, is_recurring, rotation_days, service_id, schedule_scope,
+				created_at, updated_at, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			RETURNING id
+		`, shift.SchedulerID, shift.GroupID, shift.UserID, shift.ShiftType, shift.StartTime, shift.EndTime,
+			shift.IsActive, shift.IsRecurring, shift.RotationDays, shift.ServiceID, shift.ScheduleScope,
+			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy).Scan(&shift.ID)
+
+		if err != nil {
+			log.Printf("Error creating shift: %v", err)
+			return scheduler, nil, fmt.Errorf("failed to create shift: %w", err)
+		}
+
+		// Get user information for the shift
+		err = tx.QueryRow(`
+			SELECT name, email, team FROM users WHERE id = $1
+		`, shift.UserID).Scan(&shift.UserName, &shift.UserEmail, &shift.UserTeam)
+
+		if err != nil {
+			log.Printf("Warning: failed to get user info for shift %s: %v", shift.ID, err)
+		}
+
+		// Set scheduler name
+		shift.SchedulerName = scheduler.Name
+		shift.SchedulerDisplayName = scheduler.DisplayName
+
+		createdShifts = append(createdShifts, shift)
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		return scheduler, nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("✅ Updated scheduler %s with %d new shifts", schedulerID, len(createdShifts))
+	scheduler.Shifts = createdShifts
+	return scheduler, createdShifts, nil
 }

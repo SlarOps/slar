@@ -252,6 +252,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			groupRoutes.GET("/:id/schedulers/stats", schedulerHandler.GetSchedulerPerformanceStats)                        // Performance statistics
 			groupRoutes.POST("/:id/schedulers/benchmark", schedulerHandler.BenchmarkSchedulerCreation)                     // Performance benchmark
 			groupRoutes.GET("/:id/schedulers/:scheduler_id", schedulerHandler.GetSchedulerWithShifts)                      // Get scheduler with shifts
+			groupRoutes.PUT("/:id/schedulers/:scheduler_id", schedulerHandler.UpdateSchedulerWithShifts)                   // Update scheduler and its shifts
 			groupRoutes.DELETE("/:id/schedulers/:scheduler_id", schedulerHandler.DeleteScheduler)                          // Delete scheduler and its shifts
 			groupRoutes.GET("/:id/shifts", schedulerHandler.GetGroupShifts)                                                // Get all shifts in group (with scheduler context)
 
