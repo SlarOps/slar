@@ -2,7 +2,7 @@
 
 import React from 'react';
 
-export default function OverrideDetailModal({ isOpen, onClose, shift, originalMember, currentMember }) {
+export default function OverrideDetailModal({ isOpen, onClose, shift, originalMember, currentMember, onRemoveOverride }) {
   if (!isOpen || !shift) return null;
 
   const shiftStartDate = new Date(shift.start_time || shift.start);
@@ -98,16 +98,16 @@ export default function OverrideDetailModal({ isOpen, onClose, shift, originalMe
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
                           <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
-                            {currentMember.original_user_name}
+                            {originalMember.user_name[0].toUpperCase()}
                           </span>
                         </div>
                         <div>
                           <div className="font-medium text-gray-900 dark:text-white line-through opacity-60">
-                            {currentMember.user_name}
+                            {originalMember.user_name}
                           </div>
-                          {currentMember.user_email && (
+                          {originalMember.user_email && (
                             <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {currentMember.user_email}
+                              {originalMember.user_email}
                             </div>
                           )}
                         </div>
@@ -257,10 +257,24 @@ export default function OverrideDetailModal({ isOpen, onClose, shift, originalMe
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end items-center gap-3 p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+        <div className="flex justify-between items-center gap-3 p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+          {/* Left side - Remove Override button (only show if override exists) */}
+          {hasOverride && onRemoveOverride && (
+            <button
+              onClick={() => onRemoveOverride(shift)}
+              className="px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 bg-white dark:bg-gray-800 border border-red-300 dark:border-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Remove Override
+            </button>
+          )}
+
+          {/* Right side - Close button */}
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ml-auto"
           >
             Close
           </button>

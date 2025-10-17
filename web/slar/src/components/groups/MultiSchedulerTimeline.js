@@ -96,10 +96,14 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
     const hasOverride = shift.is_overridden || shift.override_id;
     
     if (hasOverride) {
-      // Find original and current members
-      const originalUserId = shift.user_id;
-      const effectiveUserId = shift.effective_user_id || shift.user_id;
-      
+      // IMPORTANT: Backend swaps user IDs when there's an override!
+      // - shift.user_id = EFFECTIVE user (person actually on-call after override)
+      // - shift.original_user_id = ORIGINAL user (person originally scheduled)
+      const originalUserId = shift.original_user_id; // Person originally scheduled
+      const effectiveUserId = shift.user_id; // Person actually on-call (override person)
+
+      console.log('Override shift clicked:', { originalUserId, effectiveUserId, shift });
+
       const originalMember = members.find(m => m.user_id === originalUserId);
       const currentMember = members.find(m => m.user_id === effectiveUserId);
       
@@ -120,16 +124,16 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
   const handleOverrideCreated = async (override) => {
     console.log('Override created:', override);
-    
+
     // Close the modal first
     setOverrideModal({ isOpen: false, shift: null });
-    
+
     // Refresh the shifts data to show the override
     await fetchSchedulerTimelines();
-    
+
     // Small delay to ensure state has updated
     await new Promise(resolve => setTimeout(resolve, 100));
-    
+
     // Force timeline to refresh and unselect current item
     if (timelineRef.current) {
       try {
@@ -138,7 +142,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
         if (timeline && timeline.setSelection) {
           timeline.setSelection([]);
         }
-        
+
         // Refresh timeline with new data
         timelineRef.current.refresh();
         console.log('Timeline refreshed after override creation');
@@ -146,8 +150,72 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
         console.warn('Failed to refresh timeline:', error);
       }
     }
-    
+
     toast.success('Override created successfully!');
+  };
+
+  const handleRemoveOverride = (shift) => {
+    const originalUserName = shift.original_user_name || 'Unknown User';
+    const overrideUserName = shift.user_name || 'Unknown User';
+
+    showConfirmation(
+      'Remove Override',
+      `Are you sure you want to remove this override? The shift will be restored to ${originalUserName} (originally scheduled person).`,
+      async () => {
+        setConfirmationModal(prev => ({ ...prev, isLoading: true }));
+
+        if (!session?.access_token) {
+          toast.error('Not authenticated');
+          closeConfirmation();
+          return;
+        }
+
+        if (!shift.override_id) {
+          toast.error('Override ID not found');
+          closeConfirmation();
+          return;
+        }
+
+        try {
+          apiClient.setToken(session.access_token);
+          await apiClient.deleteOverride(groupId, shift.override_id);
+
+          // Close the detail modal
+          setDetailModal({ isOpen: false, shift: null, originalMember: null, currentMember: null });
+
+          // Refresh the shifts data
+          await fetchSchedulerTimelines();
+
+          // Small delay to ensure state has updated
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          // Force timeline to refresh and unselect current item
+          if (timelineRef.current) {
+            try {
+              // Unselect current selection
+              const timeline = timelineRef.current.getTimeline();
+              if (timeline && timeline.setSelection) {
+                timeline.setSelection([]);
+              }
+
+              // Refresh timeline with new data
+              timelineRef.current.refresh();
+              console.log('Timeline refreshed after override removal');
+            } catch (error) {
+              console.warn('Failed to refresh timeline:', error);
+            }
+          }
+
+          toast.success('Override removed successfully');
+          closeConfirmation();
+        } catch (error) {
+          console.error('Failed to remove override:', error);
+          toast.error('Failed to remove override: ' + error.message);
+          closeConfirmation();
+        }
+      },
+      'Yes, Remove'
+    );
   };
 
   const handleDeleteScheduler = (schedulerId, schedulerName) => {
@@ -464,6 +532,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
         shift={detailModal.shift}
         originalMember={detailModal.originalMember}
         currentMember={detailModal.currentMember}
+        onRemoveOverride={handleRemoveOverride}
       />
     </div>
   );

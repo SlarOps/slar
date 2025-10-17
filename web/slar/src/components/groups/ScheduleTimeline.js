@@ -334,7 +334,7 @@ const ScheduleTimeline = forwardRef(({
               </div>
             `,
             className: `shift-item ${isCurrentShift ? 'current-shift' : ''}`,
-            style: `background-color: ${isCurrentShift ? '#f59e0b' : MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; color: white; border-radius: 4px; ${isCurrentShift ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}`
+            style: `background-color: ${isCurrentShift ? '#f59e0b' : MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; color: white; border-radius: 0px; ${isCurrentShift ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}`
           });
 
           // Track current on-call member
