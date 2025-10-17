@@ -95,7 +95,7 @@ func (s *OptimizedSchedulerService) generateUniqueNameOptimized(tx *sql.Tx, grou
 		WHERE group_id = $1 AND name LIKE $2 AND is_active = true
 		ORDER BY name
 	`
-	
+
 	pattern := baseName + "%"
 	rows, err := tx.Query(query, groupID, pattern)
 	if err != nil {
@@ -140,16 +140,16 @@ func (s *OptimizedSchedulerService) batchInsertShifts(tx *sql.Tx, schedulerID, g
 	// Build batch insert query
 	valueStrings := make([]string, 0, len(shifts))
 	valueArgs := make([]interface{}, 0, len(shifts)*13)
-	
+
 	now := time.Now()
-	
+
 	for i, shiftReq := range shifts {
 		// Set default values
 		shiftType := shiftReq.ShiftType
 		if shiftType == "" {
 			shiftType = db.ScheduleTypeCustom
 		}
-		
+
 		scheduleScope := shiftReq.ScheduleScope
 		if scheduleScope == "" {
 			scheduleScope = "group"
@@ -161,19 +161,19 @@ func (s *OptimizedSchedulerService) batchInsertShifts(tx *sql.Tx, schedulerID, g
 
 		// Add values
 		valueArgs = append(valueArgs,
-			schedulerID,                    // scheduler_id
-			groupID,                        // group_id
-			shiftReq.UserID,               // user_id
-			shiftType,                     // shift_type
-			shiftReq.StartTime,            // start_time
-			shiftReq.EndTime,              // end_time
-			true,                          // is_active
-			shiftReq.IsRecurring,          // is_recurring
-			shiftReq.RotationDays,         // rotation_days
-			shiftReq.ServiceID,            // service_id
-			scheduleScope,                 // schedule_scope
-			now,                           // created_at
-			createdBy,                     // created_by
+			schedulerID,           // scheduler_id
+			groupID,               // group_id
+			shiftReq.UserID,       // user_id
+			shiftType,             // shift_type
+			shiftReq.StartTime,    // start_time
+			shiftReq.EndTime,      // end_time
+			true,                  // is_active
+			shiftReq.IsRecurring,  // is_recurring
+			shiftReq.RotationDays, // rotation_days
+			shiftReq.ServiceID,    // service_id
+			scheduleScope,         // schedule_scope
+			now,                   // created_at
+			createdBy,             // created_by
 		)
 	}
 
@@ -207,7 +207,7 @@ func (s *OptimizedSchedulerService) batchInsertShifts(tx *sql.Tx, schedulerID, g
 			log.Printf("Error scanning shift: %v", err)
 			continue
 		}
-		
+
 		// Set updated_at to created_at for new records
 		shift.UpdatedAt = shift.CreatedAt
 		createdShifts = append(createdShifts, shift)
@@ -236,15 +236,15 @@ func (s *OptimizedSchedulerService) ValidateSchedulerRequest(req db.CreateSchedu
 		if strings.TrimSpace(shift.UserID) == "" {
 			return fmt.Errorf("shift %d: user_id is required", i+1)
 		}
-		
+
 		if shift.StartTime.IsZero() {
 			return fmt.Errorf("shift %d: start_time is required", i+1)
 		}
-		
+
 		if shift.EndTime.IsZero() {
 			return fmt.Errorf("shift %d: end_time is required", i+1)
 		}
-		
+
 		if shift.EndTime.Before(shift.StartTime) {
 			return fmt.Errorf("shift %d: end_time must be after start_time", i+1)
 		}
@@ -256,18 +256,18 @@ func (s *OptimizedSchedulerService) ValidateSchedulerRequest(req db.CreateSchedu
 // GetSchedulerStats returns performance statistics
 func (s *OptimizedSchedulerService) GetSchedulerStats(groupID string) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
-	
+
 	// Count schedulers
 	var schedulerCount int
 	err := s.PG.QueryRow(`
 		SELECT COUNT(*) FROM schedulers 
 		WHERE group_id = $1 AND is_active = true
 	`, groupID).Scan(&schedulerCount)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to count schedulers: %w", err)
 	}
-	
+
 	// Count shifts
 	var shiftCount int
 	err = s.PG.QueryRow(`
@@ -275,15 +275,15 @@ func (s *OptimizedSchedulerService) GetSchedulerStats(groupID string) (map[strin
 		JOIN schedulers sc ON s.scheduler_id = sc.id
 		WHERE sc.group_id = $1 AND s.is_active = true AND sc.is_active = true
 	`, groupID).Scan(&shiftCount)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to count shifts: %w", err)
 	}
-	
+
 	stats["schedulers"] = schedulerCount
 	stats["shifts"] = shiftCount
 	stats["avg_shifts_per_scheduler"] = float64(shiftCount) / float64(max(schedulerCount, 1))
-	
+
 	return stats, nil
 }
 
@@ -292,4 +292,84 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// UpdateSchedulerWithShiftsOptimized updates a scheduler and replaces all its shifts with optimization
+func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(schedulerID string, schedulerReq db.CreateSchedulerRequest, shifts []db.CreateShiftRequest, updatedBy string) (db.Scheduler, []db.Shift, error) {
+	// Start transaction
+	tx, err := s.PG.Begin()
+	if err != nil {
+		return db.Scheduler{}, nil, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback() // Will be ignored if tx.Commit() succeeds
+
+	// Get existing scheduler
+	var scheduler db.Scheduler
+	err = tx.QueryRow(`
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		FROM schedulers
+		WHERE id = $1 AND is_active = true
+	`, schedulerID).Scan(
+		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
+		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return scheduler, nil, fmt.Errorf("scheduler not found")
+		}
+		return scheduler, nil, fmt.Errorf("failed to get scheduler: %w", err)
+	}
+
+	// Update scheduler fields
+	scheduler.DisplayName = schedulerReq.DisplayName
+	if scheduler.DisplayName == "" {
+		scheduler.DisplayName = schedulerReq.Name
+	}
+	scheduler.Description = schedulerReq.Description
+	scheduler.RotationType = schedulerReq.RotationType
+	if scheduler.RotationType == "" {
+		scheduler.RotationType = "manual"
+	}
+	scheduler.UpdatedAt = time.Now()
+
+	// Update scheduler in database
+	_, err = tx.Exec(`
+		UPDATE schedulers 
+		SET display_name = $2, description = $3, rotation_type = $4, updated_at = $5
+		WHERE id = $1
+	`, schedulerID, scheduler.DisplayName, scheduler.Description, scheduler.RotationType, scheduler.UpdatedAt)
+
+	if err != nil {
+		log.Println("Error updating scheduler:", err)
+		return scheduler, nil, fmt.Errorf("failed to update scheduler: %w", err)
+	}
+
+	// OPTIMIZATION: Soft delete all existing shifts in single query
+	_, err = tx.Exec(`
+		UPDATE shifts
+		SET is_active = false, updated_at = $1
+		WHERE scheduler_id = $2
+	`, time.Now(), schedulerID)
+
+	if err != nil {
+		log.Println("Error deactivating old shifts:", err)
+		return scheduler, nil, fmt.Errorf("failed to deactivate old shifts: %w", err)
+	}
+
+	// OPTIMIZATION: Batch insert new shifts with single query
+	createdShifts, err := s.batchInsertShifts(tx, schedulerID, scheduler.GroupID, shifts, updatedBy)
+	if err != nil {
+		return scheduler, nil, fmt.Errorf("failed to create shifts: %w", err)
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		return scheduler, nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("✅ Updated scheduler '%s' (%s) with %d new shifts", scheduler.DisplayName, schedulerID, len(createdShifts))
+	scheduler.Shifts = createdShifts
+	return scheduler, createdShifts, nil
 }

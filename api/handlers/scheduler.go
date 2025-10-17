@@ -623,8 +623,11 @@ func (h *SchedulerHandler) UpdateSchedulerWithShifts(c *gin.Context) {
 		// SchedulerID will be used from the URL parameter
 	}
 
-	// Update scheduler with shifts using service
-	scheduler, shifts, err := h.SchedulerService.UpdateSchedulerWithShifts(
+	// OPTIMIZATION: Use optimized service with fallback
+	startTime := time.Now()
+
+	// Try optimized service first
+	scheduler, shifts, err := h.OptimizedSchedulerService.UpdateSchedulerWithShiftsOptimized(
 		schedulerID,
 		req.Scheduler,
 		req.Shifts,
@@ -632,20 +635,36 @@ func (h *SchedulerHandler) UpdateSchedulerWithShifts(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err.Error() == "scheduler not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Scheduler not found"})
+		log.Printf("⚠️  Optimized update failed, falling back to original service: %v", err)
+
+		// Fallback to original service
+		scheduler, shifts, err = h.SchedulerService.UpdateSchedulerWithShifts(
+			schedulerID,
+			req.Scheduler,
+			req.Shifts,
+			userID.(string),
+		)
+
+		if err != nil {
+			if err.Error() == "scheduler not found" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Scheduler not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update scheduler: " + err.Error()})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update scheduler: " + err.Error()})
-		return
 	}
 
-	log.Printf("✅ Scheduler %s updated successfully with %d shifts", schedulerID, len(shifts))
+	duration := time.Since(startTime)
+	log.Printf("✅ Scheduler %s updated successfully with %d shifts in %v", schedulerID, len(shifts), duration)
 
 	c.JSON(http.StatusOK, gin.H{
 		"scheduler": scheduler,
 		"shifts":    shifts,
 		"message":   "Scheduler updated successfully",
+		"performance": gin.H{
+			"duration_ms": duration.Milliseconds(),
+		},
 	})
 }
 
