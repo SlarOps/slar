@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/api';
 import ScheduleTimeline from './ScheduleTimeline';
 import ConfirmationModal from './ConfirmationModal';
+import CreateOverrideModal from './CreateOverrideModal';
+import OverrideDetailModal from './OverrideDetailModal';
 import toast from 'react-hot-toast';
 
 export default function MultiSchedulerTimeline({ groupId, members, onEditScheduler }) {
@@ -13,6 +15,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('');
+  const timelineRef = useRef(null);
 
   // Confirmation modal state
   const [confirmationModal, setConfirmationModal] = useState({
@@ -24,9 +27,43 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
     isLoading: false
   });
 
+  // Override modal state
+  const [overrideModal, setOverrideModal] = useState({
+    isOpen: false,
+    shift: null
+  });
+
+  // Override detail modal state
+  const [detailModal, setDetailModal] = useState({
+    isOpen: false,
+    shift: null,
+    originalMember: null,
+    currentMember: null
+  });
+
   useEffect(() => {
     fetchSchedulerTimelines();
   }, [groupId, session]);
+
+  // Auto-refresh timeline when shifts data changes
+  useEffect(() => {
+    if (timelineRef.current && shifts.length > 0 && !loading) {
+      console.log('Shifts data changed, refreshing timeline...', shifts.length, 'shifts');
+      // Small delay to ensure React has updated all components
+      const timer = setTimeout(() => {
+        if (timelineRef.current) {
+          try {
+            timelineRef.current.refresh();
+            console.log('Timeline auto-refreshed successfully');
+          } catch (error) {
+            console.warn('Failed to auto-refresh timeline:', error);
+          }
+        }
+      }, 50);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [shifts, loading]);
 
   // Helper function to show confirmation modal
   const showConfirmation = (title, message, onConfirm, confirmText = 'Confirm') => {
@@ -49,6 +86,68 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
       confirmText: 'Confirm',
       isLoading: false
     });
+  };
+
+  const handleShiftClick = (shift) => {
+    console.log('Shift clicked:', shift);
+    
+    // If shift has override, show detail modal
+    // Otherwise show create override modal
+    const hasOverride = shift.is_overridden || shift.override_id;
+    
+    if (hasOverride) {
+      // Find original and current members
+      const originalUserId = shift.user_id;
+      const effectiveUserId = shift.effective_user_id || shift.user_id;
+      
+      const originalMember = members.find(m => m.user_id === originalUserId);
+      const currentMember = members.find(m => m.user_id === effectiveUserId);
+      
+      setDetailModal({
+        isOpen: true,
+        shift: shift,
+        originalMember: originalMember,
+        currentMember: currentMember
+      });
+    } else {
+      // Create new override
+      setOverrideModal({
+        isOpen: true,
+        shift: shift
+      });
+    }
+  };
+
+  const handleOverrideCreated = async (override) => {
+    console.log('Override created:', override);
+    
+    // Close the modal first
+    setOverrideModal({ isOpen: false, shift: null });
+    
+    // Refresh the shifts data to show the override
+    await fetchSchedulerTimelines();
+    
+    // Small delay to ensure state has updated
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Force timeline to refresh and unselect current item
+    if (timelineRef.current) {
+      try {
+        // Unselect current selection
+        const timeline = timelineRef.current.getTimeline();
+        if (timeline && timeline.setSelection) {
+          timeline.setSelection([]);
+        }
+        
+        // Refresh timeline with new data
+        timelineRef.current.refresh();
+        console.log('Timeline refreshed after override creation');
+      } catch (error) {
+        console.warn('Failed to refresh timeline:', error);
+      }
+    }
+    
+    toast.success('Override created successfully!');
   };
 
   const handleDeleteScheduler = (schedulerId, schedulerName) => {
@@ -244,6 +343,23 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                   <span>•</span>
                   <span>{currentTimeline.schedule_count} shift{currentTimeline.schedule_count !== 1 ? 's' : ''}</span>
                 </div>
+                
+                {/* Legend */}
+                <div className="mt-3 flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-4 rounded" style={{ 
+                      backgroundImage: 'repeating-linear-gradient(45deg, #3b82f6, #3b82f6 10px, rgba(59, 130, 246, 0.7) 10px, rgba(59, 130, 246, 0.7) 20px)',
+                      border: '1px dashed rgba(255,255,255,0.5)'
+                    }}></div>
+                    <span>Override shift (click to view details)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+                    </svg>
+                    <span>Override indicator</span>
+                  </div>
+                </div>
               </div>
               
               {currentTimeline.schedules.length === 0 ? (
@@ -255,25 +371,47 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                 </div>
               ) : (
                 <ScheduleTimeline
+                  ref={timelineRef}
                   rotations={currentTimeline.schedules}
                   members={members}
                   selectedMembers={(() => {
                     // Get unique members from current scheduler shifts
+                    // Include both original users AND effective users (from overrides)
                     const uniqueMembers = [];
                     const seenIds = new Set();
                     
                     currentTimeline.schedules.forEach(shift => {
-                      if (shift.user_id && !seenIds.has(shift.user_id)) {
-                        seenIds.add(shift.user_id);
-                        const memberDetails = members.find(m => m.user_id === shift.user_id);
+                      // Get effective user ID (override user if exists, otherwise original user)
+                      const effectiveUserId = shift.effective_user_id || shift.user_id;
+                      
+                      // Add effective user (the one actually on-call)
+                      if (effectiveUserId && !seenIds.has(effectiveUserId)) {
+                        seenIds.add(effectiveUserId);
+                        const memberDetails = members.find(m => m.user_id === effectiveUserId);
                         if (memberDetails) {
                           uniqueMembers.push(memberDetails);
                         } else {
                           uniqueMembers.push({
-                            user_id: shift.user_id,
+                            user_id: effectiveUserId,
                             user_name: shift.user_name || 'Unknown User',
                             user_email: shift.user_email || '',
                             user_team: shift.user_team || ''
+                          });
+                        }
+                      }
+                      
+                      // Also add original user if different (for override context)
+                      if (shift.is_overridden && shift.user_id && shift.user_id !== effectiveUserId && !seenIds.has(shift.user_id)) {
+                        seenIds.add(shift.user_id);
+                        const originalMember = members.find(m => m.user_id === shift.user_id);
+                        if (originalMember) {
+                          uniqueMembers.push(originalMember);
+                        } else if (shift.original_user_name) {
+                          uniqueMembers.push({
+                            user_id: shift.user_id,
+                            user_name: shift.original_user_name,
+                            user_email: shift.original_user_email || '',
+                            user_team: shift.original_user_team || ''
                           });
                         }
                       }
@@ -283,6 +421,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                   })()}
                   viewMode="2-week"
                   isVisible={true}
+                  onShiftClick={handleShiftClick}
                 />
               )}
             </div>
@@ -300,6 +439,26 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
         confirmText={confirmationModal.confirmText}
         cancelText="Cancel"
         isLoading={confirmationModal.isLoading}
+      />
+
+      {/* Override Modal */}
+      <CreateOverrideModal
+        isOpen={overrideModal.isOpen}
+        onClose={() => setOverrideModal({ isOpen: false, shift: null })}
+        shift={overrideModal.shift}
+        members={members}
+        groupId={groupId}
+        session={session}
+        onOverrideCreated={handleOverrideCreated}
+      />
+
+      {/* Override Detail Modal */}
+      <OverrideDetailModal
+        isOpen={detailModal.isOpen}
+        onClose={() => setDetailModal({ isOpen: false, shift: null, originalMember: null, currentMember: null })}
+        shift={detailModal.shift}
+        originalMember={detailModal.originalMember}
+        currentMember={detailModal.currentMember}
       />
     </div>
   );

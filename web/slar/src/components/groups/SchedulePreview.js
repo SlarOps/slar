@@ -312,7 +312,6 @@ export default function SchedulePreview({ rotations, members: allMembers, select
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h4 className="text-lg font-semibold text-gray-900 dark:text-white">Schedule Preview</h4>
         
         {/* View Toggle */}
         <div className="flex items-center gap-2">

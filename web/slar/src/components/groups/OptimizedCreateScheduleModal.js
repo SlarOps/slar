@@ -115,7 +115,7 @@ const transformShiftsToRotations = (shifts) => {
   // Create single rotation with all participants
   return [{
     id: 1,
-    name: 'Rotation 1',
+    name: 'Rotation',
     shiftLength,
     handoffDay,
     handoffTime,
