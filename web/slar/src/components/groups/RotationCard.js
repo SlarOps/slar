@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { SHIFT_LENGTHS, HANDOFF_DAYS, TIME_ZONES } from './scheduleConstants';
+import { SHIFT_LENGTHS, HANDOFF_DAYS } from './scheduleConstants';
 
 export default function RotationCard({ rotation, onUpdate, onDelete, members }) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -15,6 +15,7 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
       <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-t-lg">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={() => setIsExpanded(!isExpanded)}
             className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
           >
@@ -29,6 +30,7 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
         </div>
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => setIsExpanded(!isExpanded)}
             className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
           >
@@ -37,6 +39,7 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
             </svg>
           </button>
           <button
+            type="button"
             onClick={() => onDelete(rotation.id)}
             className="text-red-400 hover:text-red-600 p-1"
           >
@@ -68,7 +71,7 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
           {/* Handoff Time */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Handoff Time
+              Handoff Day & Time
             </label>
             <div className="flex gap-2">
               <select
@@ -140,34 +143,6 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
                   className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
-            )}
-          </div>
-
-          {/* Rotation Time Zone - Optional */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Rotation Time Zone <span className="text-gray-400 text-xs">optional</span>
-              </label>
-              <label className="inline-flex items-center">
-                <input
-                  type="checkbox"
-                  checked={rotation.hasCustomTimeZone}
-                  onChange={(e) => updateRotation('hasCustomTimeZone', e.target.checked)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-              </label>
-            </div>
-            {rotation.hasCustomTimeZone && (
-              <select
-                value={rotation.timeZone}
-                onChange={(e) => updateRotation('timeZone', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              >
-                {TIME_ZONES.map(tz => (
-                  <option key={tz.value} value={tz.value}>{tz.label}</option>
-                ))}
-              </select>
             )}
           </div>
         </div>

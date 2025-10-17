@@ -49,27 +49,84 @@ export const calculateEndDateTime = (rotation) => {
 };
 
 /**
+ * Helper: Get day of week as number (0 = Sunday, 6 = Saturday)
+ */
+const getDayOfWeekNumber = (dayName) => {
+  const days = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+  return days[dayName.toLowerCase()] ?? 1; // Default to Monday
+};
+
+/**
+ * Helper: Calculate next occurrence of a specific day from a given date
+ */
+const getNextDayOfWeek = (fromDate, targetDayOfWeek, includeToday = true) => {
+  const result = new Date(fromDate);
+  const currentDay = result.getUTCDay();
+  let daysToAdd = targetDayOfWeek - currentDay;
+  
+  if (daysToAdd < 0 || (!includeToday && daysToAdd === 0)) {
+    daysToAdd += 7;
+  }
+  
+  result.setUTCDate(result.getUTCDate() + daysToAdd);
+  return result;
+};
+
+/**
  * Calculate member-specific start and end times based on rotation
  * @param {Object} rotation - Rotation configuration
- * @param {number} memberIndex - Index of member in the rotation
+ * @param {number} memberIndex - Index of member in the rotation (shift index, not just member)
  * @returns {Object} {memberStartTime, memberEndTime}
  */
 export const calculateMemberTimes = (rotation, memberIndex) => {
   const shiftDurationDays = getShiftDurationDays(rotation.shiftLength);
   const rotationStartDateTime = new Date(rotation.startDate + 'T' + rotation.startTime + ':00.000Z');
   
-  // Calculate this member's start time (rotation start + memberIndex * shiftDuration)
-  const memberStartTime = new Date(rotationStartDateTime);
-  memberStartTime.setDate(rotationStartDateTime.getDate() + (memberIndex * shiftDurationDays));
+  // Parse handoff time
+  const [handoffHours, handoffMinutes] = rotation.handoffTime ? 
+    rotation.handoffTime.split(':').map(n => parseInt(n)) : [0, 0];
   
-  // Calculate this member's end time (next member's start time)
-  const memberEndTime = new Date(memberStartTime);
-  memberEndTime.setDate(memberStartTime.getDate() + shiftDurationDays);
+  // Get handoff day of week
+  const handoffDayOfWeek = rotation.handoffDay ? 
+    getDayOfWeekNumber(rotation.handoffDay) : null;
   
-  // Apply handoff time if specified
-  if (rotation.handoffTime) {
-    const [handoffHours, handoffMinutes] = rotation.handoffTime.split(':');
-    memberEndTime.setUTCHours(parseInt(handoffHours), parseInt(handoffMinutes), 0, 0);
+  let memberStartTime, memberEndTime;
+  
+  if (memberIndex === 0) {
+    // First shift: starts at rotation start time
+    memberStartTime = new Date(rotationStartDateTime);
+    
+    // End at first handoff day/time
+    if (handoffDayOfWeek !== null) {
+      memberEndTime = getNextDayOfWeek(memberStartTime, handoffDayOfWeek, false);
+      memberEndTime.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+    } else {
+      // No handoff day specified, use simple duration
+      memberEndTime = new Date(memberStartTime);
+      memberEndTime.setUTCDate(memberStartTime.getUTCDate() + shiftDurationDays);
+      memberEndTime.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+    }
+  } else {
+    // Subsequent shifts: start at previous shift end (which is a handoff time)
+    // Calculate first handoff time
+    const firstHandoffTime = new Date(rotationStartDateTime);
+    if (handoffDayOfWeek !== null) {
+      const firstHandoff = getNextDayOfWeek(firstHandoffTime, handoffDayOfWeek, false);
+      firstHandoff.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+      
+      // Each subsequent shift starts at first handoff + (memberIndex * shiftDurationDays)
+      memberStartTime = new Date(firstHandoff);
+      memberStartTime.setUTCDate(firstHandoff.getUTCDate() + ((memberIndex - 1) * shiftDurationDays));
+    } else {
+      // No handoff day, simple calculation
+      memberStartTime = new Date(rotationStartDateTime);
+      memberStartTime.setUTCDate(rotationStartDateTime.getUTCDate() + (memberIndex * shiftDurationDays));
+      memberStartTime.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+    }
+    
+    // End time is always shiftDurationDays from start
+    memberEndTime = new Date(memberStartTime);
+    memberEndTime.setUTCDate(memberStartTime.getUTCDate() + shiftDurationDays);
   }
   
   return { memberStartTime, memberEndTime };
@@ -115,6 +172,12 @@ export const generateRotationShifts = (rotation, members, weeksAhead = 52) => {
   const totalDays = weeksAhead * 7;
   const totalShifts = Math.ceil(totalDays / shiftDurationDays);
 
+  // Parse handoff settings
+  const [handoffHours, handoffMinutes] = rotation.handoffTime ? 
+    rotation.handoffTime.split(':').map(n => parseInt(n)) : [0, 0];
+  const handoffDayOfWeek = rotation.handoffDay ? 
+    getDayOfWeekNumber(rotation.handoffDay) : null;
+
   console.log(`🔄 generateRotationShifts called with:`, {
     rotation: rotation.name || 'Unnamed',
     shiftLength: rotation.shiftLength,
@@ -125,6 +188,7 @@ export const generateRotationShifts = (rotation, members, weeksAhead = 52) => {
     membersCount: members.length,
     startDate: rotation.startDate,
     startTime: rotation.startTime,
+    handoffDay: rotation.handoffDay,
     handoffTime: rotation.handoffTime
   });
 
@@ -136,24 +200,29 @@ export const generateRotationShifts = (rotation, members, weeksAhead = 52) => {
     const memberIndex = shiftIndex % members.length;
     const member = members[memberIndex];
 
-    // Calculate shift start time
-    let shiftStartTime;
+    // Calculate shift start and end times using the same logic as calculateMemberTimes
+    let shiftStartTime, shiftEndTime;
+    
     if (shiftIndex === 0) {
-      // First shift starts at the rotation start time
+      // First shift starts at rotation start time
       shiftStartTime = new Date(rotationStartDateTime);
+      
+      // End at next handoff day/time
+      if (handoffDayOfWeek !== null) {
+        shiftEndTime = getNextDayOfWeek(shiftStartTime, handoffDayOfWeek, false);
+        shiftEndTime.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+      } else {
+        shiftEndTime = new Date(shiftStartTime);
+        shiftEndTime.setUTCDate(shiftStartTime.getUTCDate() + shiftDurationDays);
+        shiftEndTime.setUTCHours(handoffHours, handoffMinutes, 0, 0);
+      }
     } else {
-      // Subsequent shifts start exactly when the previous shift ended (continuous coverage)
+      // Subsequent shifts start at previous shift end (continuous coverage)
       shiftStartTime = new Date(previousShiftEndTime);
-    }
-
-    // Calculate shift end time (duration from start time)
-    const shiftEndTime = new Date(shiftStartTime);
-    shiftEndTime.setDate(shiftStartTime.getDate() + shiftDurationDays);
-
-    // Apply handoff time if specified
-    if (rotation.handoffTime) {
-      const [handoffHours, handoffMinutes] = rotation.handoffTime.split(':');
-      shiftEndTime.setUTCHours(parseInt(handoffHours), parseInt(handoffMinutes), 0, 0);
+      
+      // End at shiftDurationDays later
+      shiftEndTime = new Date(shiftStartTime);
+      shiftEndTime.setUTCDate(shiftStartTime.getUTCDate() + shiftDurationDays);
     }
 
     try {

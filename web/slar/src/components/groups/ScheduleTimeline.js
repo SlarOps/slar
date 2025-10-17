@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import { calculateMemberTimes } from '../../services/scheduleTransformer';
 import './timeline.css';
 
 // Color scheme for different members
@@ -245,7 +246,7 @@ const ScheduleTimeline = forwardRef(({
         }
       });
     } else {
-      // Handle rotation format (original logic)
+      // Handle rotation format with handoff day/time logic
       console.log(`[${componentIdRef.current}] Processing rotation format data`);
       const rotation = rotations[0];
       if (!rotation.startDate || !rotation.shiftLength) {
@@ -253,10 +254,11 @@ const ScheduleTimeline = forwardRef(({
         return { items, groups };
       }
 
-      const startDate = new Date(rotation.startDate);
       const shiftDurationDays = getShiftDurationInDays(rotation.shiftLength);
+      const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
+      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-      // Generate 60 days of schedule data
+      // Generate shifts for the year using handoff logic
       const totalDays = 365;
       const totalShifts = Math.ceil(totalDays / shiftDurationDays);
 
@@ -264,16 +266,13 @@ const ScheduleTimeline = forwardRef(({
         const memberIndex = shiftIndex % selectedMembers.length;
         const member = selectedMembers[memberIndex];
 
-        const shiftStart = new Date(startDate);
-        shiftStart.setDate(startDate.getDate() + (shiftIndex * shiftDurationDays));
-
-        const shiftEnd = new Date(shiftStart);
-        shiftEnd.setDate(shiftStart.getDate() + shiftDurationDays);
+        // Use calculateMemberTimes to get proper handoff times
+        const { memberStartTime, memberEndTime } = calculateMemberTimes(rotation, shiftIndex);
+        
+        const shiftStart = memberStartTime;
+        const shiftEnd = memberEndTime;
 
         // Don't show shifts that are too far in the past
-        const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
-        const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
         if (shiftEnd > oneWeekAgo) {
           const isCurrentShift = typeof window !== 'undefined' && now >= shiftStart && now < shiftEnd;
 

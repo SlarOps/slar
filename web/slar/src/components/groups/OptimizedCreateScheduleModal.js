@@ -6,7 +6,7 @@ import { toast } from '../ui';
 import RotationCard from './RotationCard';
 import MembersList from './MembersList';
 import SchedulePreview from './SchedulePreview';
-import { TIME_ZONES, DEFAULT_ROTATION } from './scheduleConstants';
+import { DEFAULT_ROTATION } from './scheduleConstants';
 
 // Helper: Transform shifts back to rotation format for editing
 const transformShiftsToRotations = (shifts) => {
@@ -69,14 +69,14 @@ const transformShiftsToRotations = (shifts) => {
     shiftLength = 'one_month';
   }
 
-  // Determine handoff day from start date
-  const startDateObj = new Date(firstShift.start_time);
-  const dayOfWeek = startDateObj.getUTCDay(); // 0 = Sunday, 1 = Monday, etc
+  // Determine handoff day from END time of first shift (not start!)
+  const firstShiftEndDate = new Date(firstShift.end_time);
+  const handoffDayOfWeek = firstShiftEndDate.getUTCDay(); // 0 = Sunday, 1 = Monday, etc
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const handoffDay = dayNames[dayOfWeek];
+  const handoffDay = dayNames[handoffDayOfWeek];
 
-  // Extract handoff time from start time
-  const handoffTime = startTime;
+  // Extract handoff time from END time of first shift (not start!)
+  const handoffTime = new Date(firstShift.end_time).toISOString().split('T')[1].substring(0, 5);
 
   // Check if there's an end date by looking at the last shift
   const lastShift = sortedShifts[sortedShifts.length - 1];
@@ -90,19 +90,27 @@ const transformShiftsToRotations = (shifts) => {
   
   const endDate = hasEndDate ? lastEndDate.toISOString().split('T')[0] : '';
 
-  // Extract all unique participants from all shifts (in order)
-  const participants = [];
-  const seenUsers = new Set();
-
+  // Extract all unique participants in rotation order
+  // Group shifts by member and find their first occurrence
+  const memberFirstShift = new Map();
+  
   sortedShifts.forEach(shift => {
-    if (!seenUsers.has(shift.user_id)) {
-      seenUsers.add(shift.user_id);
-      participants.push({
+    if (!memberFirstShift.has(shift.user_id)) {
+      memberFirstShift.set(shift.user_id, {
         user_id: shift.user_id,
-        user_name: shift.user_name
+        user_name: shift.user_name,
+        start_time: new Date(shift.start_time)
       });
     }
   });
+  
+  // Sort members by their first shift start time to get rotation order
+  const participants = Array.from(memberFirstShift.values())
+    .sort((a, b) => a.start_time.getTime() - b.start_time.getTime())
+    .map(m => ({
+      user_id: m.user_id,
+      user_name: m.user_name
+    }));
 
   // Create single rotation with all participants
   return [{
@@ -152,8 +160,6 @@ export default function OptimizedCreateScheduleModal({
 }) {
   const [formData, setFormData] = useState({
     name: '',
-    timeZone: 'UTC',
-    team: '',
     rotations: [],
     conditions: [],
     selectedMembers: []
@@ -162,7 +168,6 @@ export default function OptimizedCreateScheduleModal({
   // Loading states for better UX
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState('');
-  const [rotationIdCounter, setRotationIdCounter] = useState(1);
 
   // Initialize with default rotation or edit data
   useEffect(() => {
@@ -182,8 +187,6 @@ export default function OptimizedCreateScheduleModal({
         
         setFormData({
           name: schedulerData.display_name || schedulerData.name || '',
-          timeZone: 'UTC', // Default timezone
-          team: '',
           rotations: rotations,
           conditions: [],
           selectedMembers: extractSelectedMembers(schedulerData.shifts || [])
@@ -219,21 +222,6 @@ export default function OptimizedCreateScheduleModal({
       setSubmitProgress('');
     }
   }, [isOpen]);
-
-  const addRotation = useCallback(() => {
-    const newRotation = {
-      ...DEFAULT_ROTATION,
-      id: rotationIdCounter,
-      name: `Rotation ${formData.rotations.length + 1}`,
-      startDate: new Date().toISOString().split('T')[0]
-    };
-
-    setRotationIdCounter(prev => prev + 1);
-    setFormData(prev => ({
-      ...prev,
-      rotations: [...prev.rotations, newRotation]
-    }));
-  }, [formData.rotations.length, rotationIdCounter]);
 
   const updateRotation = useCallback((id, updatedRotation) => {
     setFormData(prev => ({
@@ -272,13 +260,12 @@ export default function OptimizedCreateScheduleModal({
       // Convert to API format with scheduler information
       const scheduleData = {
         name: formData.name,
-        time_zone: formData.timeZone,
         rotations: formData.rotations,
         members: formData.selectedMembers,
         // Scheduler information
-        schedulerName: formData.team || formData.name || 'default',
-        schedulerDisplayName: formData.team ? `${formData.team} Team` : `${formData.name} Team`,
-        description: `Scheduler for ${formData.team || formData.name}`,
+        schedulerName: formData.name || 'default',
+        schedulerDisplayName: formData.name,
+        description: `Scheduler for ${formData.name}`,
         rotationType: 'manual',
         // For edit mode
         schedulerId: mode === 'edit' ? schedulerData?.id : undefined
@@ -386,56 +373,9 @@ export default function OptimizedCreateScheduleModal({
                 />
               </div>
 
-              {/* Schedule Time Zone */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Schedule Time Zone <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.timeZone}
-                  onChange={(e) => setFormData(prev => ({ ...prev, timeZone: e.target.value }))}
-                  disabled={isSubmitting}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
-                >
-                  {TIME_ZONES.map(tz => (
-                    <option key={tz.value} value={tz.value}>{tz.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Teams */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Teams
-                </label>
-                <select
-                  value={formData.team}
-                  onChange={(e) => setFormData(prev => ({ ...prev, team: e.target.value }))}
-                  disabled={isSubmitting}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
-                >
-                  <option value="">Datajet</option>
-                </select>
-              </div>
-
               {/* Schedule Rotations */}
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Schedule Rotations
-                  </label>
-                  <button
-                    type="button"
-                    onClick={addRotation}
-                    disabled={isSubmitting}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                    Add
-                  </button>
-                </div>
+                
                 
                 <div className="space-y-4">
                   {formData.rotations.map(rotation => (

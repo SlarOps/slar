@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import dynamic from 'next/dynamic';
+import { calculateMemberTimes } from '../../services/scheduleTransformer';
 
 // Dynamically import timeline components to avoid hydration issues
 const ScheduleTimeline = dynamic(() => import('./ScheduleTimeline').catch(() => ({ default: () => null })), {
@@ -34,7 +35,6 @@ export default function SchedulePreview({ rotations, members: allMembers, select
     if (!rotations.length || !selectedMembers.length) return [];
     
     const rotation = rotations[0]; // Use first rotation for preview
-    const startDate = new Date(rotation.startDate);
     const previewData = [];
     
     // Determine number of days to generate based on view mode
@@ -56,19 +56,57 @@ export default function SchedulePreview({ rotations, members: allMembers, select
         daysToGenerate = 14;
     }
     
-    // Generate preview data
+    // Calculate enough shifts to cover the entire preview period
+    const startDate = new Date(rotation.startDate);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + daysToGenerate);
+    
+    // Generate shifts until we cover the entire preview period
+    const allShifts = [];
+    let shiftIndex = 0;
+    let lastShiftEnd = new Date(startDate);
+    
+    while (lastShiftEnd < endDate) {
+      const memberIndex = shiftIndex % selectedMembers.length;
+      const member = selectedMembers[memberIndex];
+      const { memberStartTime, memberEndTime } = calculateMemberTimes(rotation, shiftIndex);
+      
+      allShifts.push({
+        member,
+        startTime: memberStartTime,
+        endTime: memberEndTime
+      });
+      
+      lastShiftEnd = memberEndTime;
+      shiftIndex++;
+    }
+    
+    console.log('Preview shifts generated:', allShifts.map(s => ({
+      member: s.member.user_name,
+      start: s.startTime.toISOString(),
+      end: s.endTime.toISOString()
+    })));
+    
+    // Generate preview data for each day
     for (let i = 0; i < daysToGenerate; i++) {
       const date = new Date(startDate);
       date.setDate(startDate.getDate() + i);
+      date.setHours(12, 0, 0, 0); // Set to noon to avoid timezone issues
       
-      const memberIndex = Math.floor(i / (rotation.shiftLength === 'one_day' ? 1 : 7)) % selectedMembers.length;
-      const member = selectedMembers[memberIndex];
+      // Find which member is on-call for this day
+      let currentMember = null;
+      for (const shift of allShifts) {
+        if (date >= shift.startTime && date < shift.endTime) {
+          currentMember = shift.member;
+          break;
+        }
+      }
       
       previewData.push({
         date: date.toISOString().split('T')[0],
         dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
         dayNumber: date.getDate(),
-        member: member
+        member: currentMember || selectedMembers[0] // Fallback to first member
       });
     }
     
