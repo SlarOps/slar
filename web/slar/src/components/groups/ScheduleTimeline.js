@@ -210,8 +210,12 @@ const ScheduleTimeline = forwardRef(({
 
         // Check if this schedule has an override
         const hasOverride = schedule.is_overridden || schedule.override_id;
-        const originalUserId = schedule.user_id;
-        const effectiveUserId = schedule.effective_user_id || schedule.user_id;
+        
+        // IMPORTANT: Backend swaps user IDs when there's an override!
+        // - schedule.user_id = EFFECTIVE user (person actually on-call)
+        // - schedule.original_user_id = ORIGINAL user (person originally scheduled)
+        const effectiveUserId = schedule.user_id;
+        const originalUserId = schedule.original_user_id || schedule.user_id;
 
         // Find member for this schedule (use effective user for display)
         const member = selectedMembers.find(m => m.user_id === effectiveUserId) ||

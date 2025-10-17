@@ -381,8 +381,11 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                     const seenIds = new Set();
                     
                     currentTimeline.schedules.forEach(shift => {
-                      // Get effective user ID (override user if exists, otherwise original user)
-                      const effectiveUserId = shift.effective_user_id || shift.user_id;
+                      // IMPORTANT: Backend swaps user IDs when there's an override!
+                      // - shift.user_id = EFFECTIVE user (person actually on-call)
+                      // - shift.original_user_id = ORIGINAL user (person originally scheduled)
+                      const effectiveUserId = shift.user_id;
+                      const originalUserId = shift.original_user_id;
                       
                       // Add effective user (the one actually on-call)
                       if (effectiveUserId && !seenIds.has(effectiveUserId)) {
@@ -401,17 +404,19 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                       }
                       
                       // Also add original user if different (for override context)
-                      if (shift.is_overridden && shift.user_id && shift.user_id !== effectiveUserId && !seenIds.has(shift.user_id)) {
-                        seenIds.add(shift.user_id);
-                        const originalMember = members.find(m => m.user_id === shift.user_id);
+                      if (shift.is_overridden && originalUserId && originalUserId !== effectiveUserId && !seenIds.has(originalUserId)) {
+                        seenIds.add(originalUserId);
+                        const originalMember = members.find(m => m.user_id === originalUserId);
                         if (originalMember) {
                           uniqueMembers.push(originalMember);
-                        } else if (shift.original_user_name) {
+                        } else {
+                          // Fallback: Always create member from shift data for override context
+                          // Use original_user_* fields if available, otherwise fall back to regular fields
                           uniqueMembers.push({
-                            user_id: shift.user_id,
-                            user_name: shift.original_user_name,
-                            user_email: shift.original_user_email || '',
-                            user_team: shift.original_user_team || ''
+                            user_id: originalUserId,
+                            user_name: shift.original_user_name || shift.user_name || 'Unknown User',
+                            user_email: shift.original_user_email || shift.user_email || '',
+                            user_team: shift.original_user_team || shift.user_team || ''
                           });
                         }
                       }

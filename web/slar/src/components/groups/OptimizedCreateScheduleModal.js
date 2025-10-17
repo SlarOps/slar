@@ -128,23 +128,58 @@ const transformShiftsToRotations = (shifts) => {
   }];
 };
 
-// Helper: Extract selected members from shifts
+// Helper: Extract selected members from shifts, deduping by email (preferred) or id, and accounting for overrides
 const extractSelectedMembers = (shifts) => {
-  if (!shifts || shifts.length === 0) return [];
-  
-  const uniqueMembers = new Map();
-  shifts.forEach(shift => {
-    if (!uniqueMembers.has(shift.user_id)) {
-      uniqueMembers.set(shift.user_id, {
-        user_id: shift.user_id,
-        user_name: shift.user_name,
-        user_email: shift.user_email,
-        user_team: shift.user_team
+  if (!Array.isArray(shifts) || shifts.length === 0) return [];
+
+  // Use email as the primary dedupe key (stable across overrides). Fallback to id.
+  const unique = new Map();
+
+  const add = ({ user_id, user_name, user_email, user_team }) => {
+    const key = (user_email && user_email.trim().toLowerCase()) || user_id;
+    if (!key) return;
+    if (!unique.has(key)) {
+      unique.set(key, {
+        user_id: user_id || user_email || user_name || key,
+        user_name: user_name || user_email || 'Unknown',
+        user_email: user_email || '',
+        user_team: user_team || ''
       });
     }
-  });
+  };
 
-  return Array.from(uniqueMembers.values());
+  for (const s of shifts) {
+    // 1) Effective assignee (who actually carried the shift window)
+    if (s.effective_user_id) {
+      add({
+        user_id: s.effective_user_id,
+        user_name: s.user_name,       // Often mirrors effective user in your data
+        user_email: s.user_email,
+        user_team: s.user_team
+      });
+    }
+
+    // 2) Original assignee (pre‑override). These fields reliably carry the original person.
+    if (s.original_user_email || s.original_user_name || s.original_user_team) {
+      add({
+        // original_user_id may not exist; fall back to email as stable key
+        user_id: s.original_user_id || s.user_id, 
+        user_name: s.original_user_name,
+        user_email: s.original_user_email,
+        user_team: s.original_user_team
+      });
+    } else {
+      // 3) If there was no override metadata, include the scheduled user as well
+      add({
+        user_id: s.user_id,
+        user_name: s.user_name,
+        user_email: s.user_email,
+        user_team: s.user_team
+      });
+    }
+  }
+
+  return Array.from(unique.values());
 };
 
 export default function OptimizedCreateScheduleModal({ 
