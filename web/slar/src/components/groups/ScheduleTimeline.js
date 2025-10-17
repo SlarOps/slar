@@ -278,7 +278,7 @@ const ScheduleTimeline = forwardRef(({
           style: `
             background-color: ${isCurrentShift ? '#f59e0b' : MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; 
             color: white; 
-            border-radius: 4px; 
+            border-radius: 0px; 
             ${isCurrentShift ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}
             ${hasOverride ? 'background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,.1) 10px, rgba(255,255,255,.1) 20px); border: 2px dashed rgba(255,255,255,0.5);' : ''}
           `
@@ -418,7 +418,7 @@ const ScheduleTimeline = forwardRef(({
       zoomMax: 1000 * 60 * 60 * 24 * 90, // 1 year
 
       // Height
-      // height: '300px',
+      minHeight: '300px',
 
       // Margins
       margin: {
