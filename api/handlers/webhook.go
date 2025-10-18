@@ -1000,9 +1000,9 @@ func mapDatadogPriority(priority string) string {
 // Status mapping functions
 func mapDatadogStatus(transition string) string {
 	switch strings.ToLower(transition) {
-	case "triggered", "alerting":
+	case "triggered", "alerting", "warn":
 		return "firing"
-	case "recovered", "ok":
+	case "recovered", "ok", "info":
 		return "resolved"
 	default:
 		return "firing"
