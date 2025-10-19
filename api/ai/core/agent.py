@@ -1,20 +1,34 @@
 import json
 import os
-from typing import Any, Awaitable, Callable, Optional, Dict
+from typing import Any, Awaitable, Callable, Optional, Dict, TYPE_CHECKING
 import aiofiles
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, CodeExecutorAgent, ApprovalRequest, ApprovalResponse
-from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat, Swarm
 from autogen_core import CancellationToken, AgentId, MessageContext, RoutedAgent, message_handler
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination, TokenUsageTermination, ExternalTermination
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 
-from tools_slar import get_incidents
-from tools import ToolManager
+import logging
+logger = logging.getLogger(__name__)
 
-from dataclasses import dataclass
+# Import settings for configuration
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+parent_dir = str(Path(__file__).parent.parent)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from config.settings import Settings
+
+
+# Import for type checking only to avoid circular imports
+if TYPE_CHECKING:
+    from .tools import ToolManager
 
 
 class SLARAgentManager:
@@ -53,28 +67,36 @@ class SLARAgentManager:
     - Environment-based configuration
     """
 
-    def __init__(self, data_store: Optional[str] = None):
+    def __init__(self, data_store: Optional[str] = None, settings: Optional[Settings] = None):
         """
         Initialize the SLAR Agent Manager.
 
         Args:
-            data_store: Path to data storage directory. Defaults to current file directory.
+            data_store: Path to data storage directory. Defaults to settings value.
+            settings: Application settings instance. If not provided, will be imported.
         """
-        self.data_store = data_store or os.path.dirname(__file__)
+        # Import settings locally to avoid circular dependency
+        if settings is None:
+            from config.settings import get_settings
+            settings = get_settings()
+
+        self.settings = settings
+        self.data_store = data_store or settings.data_store
         self.state_path = os.path.join(self.data_store, "team_state.json")
         self.history_path = os.path.join(self.data_store, "team_history.json")
 
-        # Initialize vector memory
+        # Initialize vector memory using settings
         self.rag_memory = ChromaDBVectorMemory(
             config=PersistentChromaDBVectorMemoryConfig(
-                collection_name="autogen_docs",
-                persistence_path=os.path.join(self.data_store, ".chromadb_autogen"),
-                k=3,  # Return top 3 results
-                score_threshold=0.4,  # Minimum similarity score
+                collection_name=settings.chroma_collection_name,
+                persistence_path=settings.chromadb_path,
+                k=settings.chroma_k_results,
+                score_threshold=settings.chroma_score_threshold,
             )
         )
 
-        # Initialize tool manager
+        # Initialize tool manager (will be imported locally to avoid circular deps)
+        from .tools import ToolManager
         self.tool_manager = ToolManager()
 
         # Cache for model client
@@ -93,18 +115,21 @@ class SLARAgentManager:
 
         if self._model_client is None:
             self._model_client = OpenAIChatCompletionClient(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-                api_key=os.getenv("OPENAI_API_KEY"),
+                model=self.settings.openai_model,
+                api_key=self.settings.openai_api_key,
             )
         return self._model_client
 
-    async def initialize_mcp_tools(self, config_path: str = "mcp_config.yaml"):
+    async def initialize_mcp_tools(self, config_path: Optional[str] = None):
         """Pre-initialize MCP workbenches to avoid delay on first connection."""
         if self._mcp_initialized:
             return self._mcp_tools_cache
-            
+
+        if config_path is None:
+            config_path = self.settings.mcp_config_path
+
         try:
-            print("🚀 Pre-initializing MCP workbenches...")
+            logger.info("Pre-initializing MCP workbenches...")
             self.tool_manager.load_mcp_config(config_path)
             workbenches = await self.tool_manager.load_mcp_workbenches()
             
@@ -113,19 +138,18 @@ class SLARAgentManager:
             self._mcp_initialized = True
             
             if not workbenches:
-                print("⚠️  Warning: No MCP workbenches loaded. Agent will run with limited capabilities.")
+                logger.warning("No MCP workbenches loaded. Agent will run with limited capabilities.")
             else:
-                print(f"✅ MCP workbenches pre-initialized successfully: {len(workbenches)} workbenches loaded")
+                logger.info(f"MCP workbenches pre-initialized successfully: {len(workbenches)} workbenches loaded")
             
             return workbenches
         except Exception as e:
-            print(f"❌ Error pre-initializing MCP workbenches: {e}")
-            print("🔄 Falling back to basic tools only")
+            logger.error(f"Error pre-initializing MCP workbenches: {e}")
             self._mcp_tools_cache = {}
             self._mcp_initialized = True
             return {}
 
-    async def load_mcp_tools(self, config_path: str = "mcp_config.yaml"):
+    async def load_mcp_tools(self, config_path: Optional[str] = None):
         """Load MCP workbenches using the tool manager with error handling and caching."""
         # Use cached workbenches if available
         if self._mcp_initialized and self._mcp_tools_cache is not None:
@@ -133,49 +157,6 @@ class SLARAgentManager:
             
         # Otherwise initialize them
         return await self.initialize_mcp_tools(config_path)
-
-    async def create_sre_agent(self, model_client: Optional[OpenAIChatCompletionClient] = None) -> AssistantAgent:
-        """Create the SRE planning agent."""
-        if model_client is None:
-            model_client = self.get_model_client()
-        
-        workbenches = await self.load_mcp_tools()
-
-        # Convert workbenches dict to list for AssistantAgent
-        workbench_list = list(workbenches.values()) if workbenches else None
-
-        return AssistantAgent(
-            "SREAgent",
-            description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
-            model_client=model_client,
-            memory=[self.rag_memory],
-            workbench=workbench_list,  # Use workbench parameter instead of tools
-            reflect_on_tool_use=True,
-            system_message="""
-            You are an expert SRE (Site Reliability Engineering) planning agent for the SLAR (Smart Live Alert & Response) system.
-
-            Your primary responsibilities:
-            1. **Incident Analysis**: Analyze incoming incidents and alerts to understand their scope and impact
-            2. **Task Decomposition**: Break down complex incident response tasks into smaller, actionable subtasks
-            3. **Knowledge Retrieval**: Use your RAG memory to find relevant runbooks, procedures, and historical solutions
-            4. **Context7 Integration**: Leverage Context7 tools to gather additional knowledge and best practices
-            5. **Coordination**: Plan the sequence of actions needed for effective incident resolution
-
-            When handling incidents:
-            - Always start by gathering context using available tools
-            - Reference relevant runbooks and documentation from your memory
-            - Consider the severity and urgency of the incident
-            - Plan step-by-step remediation approaches
-            - Suggest monitoring and verification steps
-
-            Available tools include:
-            - Context7 for external knowledge and best practices
-            - RAG memory for internal runbooks and procedures
-            - Incident management tools for real-time data
-
-            Always be thorough, methodical, and prioritize system stability and user impact.
-            """,
-        )
 
     async def create_agent_planer(self, model_client: Optional[OpenAIChatCompletionClient] = None) -> AssistantAgent:
         """Create the agent planner."""
@@ -193,6 +174,9 @@ class SLARAgentManager:
             You are a planning agent.
             Your job is to break down complex tasks into smaller, manageable subtasks.
             
+            Your team members are:
+            - k8s_agent: A Kubernetes agent that can manage Kubernetes clusters.
+
             You only plan and delegate tasks - you do not execute them yourself.
 
             When assigning tasks, use this format:
@@ -200,7 +184,7 @@ class SLARAgentManager:
 
             After all tasks are complete, summarize the findings and end with "TERMINATE".
             """,
-                reflect_on_tool_use=True,
+                reflect_on_tool_use=False,
                 model_client_stream=True,
         )
         return agent
@@ -211,10 +195,10 @@ class SLARAgentManager:
             model_client = self.get_model_client()
 
         workbenches = await self.load_mcp_tools()
-        
+
         # Convert workbenches dict to list for AssistantAgent
         workbench_list = list(workbenches.values()) if workbenches else None
-        
+
         return AssistantAgent(
             name="k8s_agent",
             model_client=model_client,
@@ -226,14 +210,14 @@ class SLARAgentManager:
             - get logs from pod
             - describe logs
             """,
-            reflect_on_tool_use=True,
+            reflect_on_tool_use=False,
             model_client_stream=True,
         )
-    
+
     async def create_excutor(self):
         code_executor = DockerCommandLineCodeExecutor(
-            work_dir="coding",
-            image="python:3.11-slim"
+            work_dir=self.settings.code_executor_work_dir,
+            image=self.settings.code_executor_image
         )
         self._code_excutor = code_executor
     
@@ -273,11 +257,11 @@ class SLARAgentManager:
         planning_agent = await self.create_agent_planer()
         agents = [planning_agent]
 
-        if os.getenv("ENABLE_KUBERNETES", "false").lower() == "true":
+        if self.settings.enable_kubernetes:
             k8s_agent = await self.create_k8s_agent()
             agents.append(k8s_agent)
-        
-        if os.getenv("ENABLE_CODE_EXECUTOR", "false").lower() == "true":
+
+        if self.settings.enable_code_executor:
             code_executor_agent = await self.create_code_executor_agent(approval_func=self._approval_func)
             agents.append(code_executor_agent)
 
@@ -300,43 +284,149 @@ class SLARAgentManager:
         team = SelectorGroupChat(
             agents + [user_proxy],
             selector_prompt=selector_prompt,
-            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user") | TokenUsageTermination(max_total_token=12000) | external_termination,
+            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user") | TokenUsageTermination(max_total_token=self.settings.max_total_tokens) | external_termination,
             model_client=self.get_model_client(),
         )
 
         return team
-
-    async def get_team(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]]) -> RoundRobinGroupChat:
+    
+    async def get_swarm_team(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]], external_termination: Optional[ExternalTermination] = None) -> Swarm:
         """
-        Create and configure the SLAR agent team.
+        Create a Swarm team with handoff-based agent collaboration.
+
+        Swarm enables dynamic agent-to-agent handoffs, allowing agents to:
+        - Transfer tasks to specialized agents based on expertise
+        - Hand off to user for input or approval
+        - Collaborate through natural conversation flow
 
         Args:
-            user_input_func: Function to handle user input requests
+            user_input_func: Function to get user input
+            external_termination: Optional external termination condition
 
         Returns:
-            RoundRobinGroupChat: Configured team ready for use
+            Swarm: Configured swarm team with agents and handoffs
         """
-        # Create agents
-        planning_agent = await self.create_sre_agent()
-        user_proxy = self.create_user_proxy(user_input_func)
+        # Build list of available agent names for handoffs
+        available_agents = []
 
-        # Set up termination conditions
-        termination = TextMentionTermination("TERMINATE")
-        handoff_termination = HandoffTermination(target="user")
+        # Create planning agent with handoffs to all other agents
+        if self.settings.enable_kubernetes:
+            available_agents.append("k8s_agent")
+        if self.settings.enable_code_executor:
+            available_agents.append("code_executor")
+        available_agents.append("user")
 
-        # Create the team
-        team = RoundRobinGroupChat(
-            [planning_agent, user_proxy],
-            termination_condition=termination | handoff_termination,
+        # Create planning agent with handoffs configured
+        model_client = self.get_model_client()
+        tools = await self.load_mcp_tools()
+
+        planning_agent = AssistantAgent(
+            name="sre_agent",
+            model_client=model_client,
+            description="An SRE planning agent that coordinates incident response and delegates to specialized agents.",
+            memory=[self.rag_memory],
+            handoffs=available_agents,  # Can handoff to all other agents
+            system_message=f"""
+            You are an SRE (Site Reliability Engineering) planning agent.
+            Your role is to coordinate incident response by breaking down tasks and delegating to specialized agents.
+
+            Available agents:
+            {f"- k8s_agent: Kubernetes cluster management and diagnostics" if self.settings.enable_kubernetes else ""}
+            {f"- code_executor: Execute code and scripts for analysis or remediation" if self.settings.enable_code_executor else ""}
+            - user: Hand off to user for input, approval, or when task is complete
+
+            Workflow:
+            1. Analyze the incident or task
+            2. Break it down into manageable steps
+            3. Delegate specific tasks to appropriate agents using handoffs
+            4. Coordinate responses and synthesize findings
+            5. When complete or user input needed, hand off to user with TERMINATE
+
+            Always explain your reasoning before handing off tasks.
+            Use TERMINATE when the incident is resolved or task is complete.
+            """,
+            reflect_on_tool_use=False,
+            model_client_stream=True,
         )
 
-        # Load state from file if it exists
-        if os.path.exists(self.state_path):
-            async with aiofiles.open(self.state_path, "r") as file:
-                state = json.loads(await file.read())
-            await team.load_state(state)
+        agents = [planning_agent]
 
-        return team
+        # Create k8s agent if enabled
+        if self.settings.enable_kubernetes:
+            workbenches = await self.load_mcp_tools()
+            workbench_list = list(workbenches.values()) if workbenches else None
+
+            k8s_agent = AssistantAgent(
+                name="k8s_agent",
+                model_client=model_client,
+                workbench=workbench_list,
+                handoffs=["sre_agent", "user"],  # Can handoff back to planner or user
+                system_message="""
+                You are a Kubernetes specialist agent.
+
+                Your expertise:
+                - Kubernetes cluster diagnostics and management
+                - Pod, deployment, and service analysis
+                - Log retrieval and analysis
+                - Resource monitoring and troubleshooting
+
+                Workflow:
+                1. Execute K8s operations using available tools
+                2. Analyze results and provide clear findings
+                3. For complex issues, break down into smaller steps
+                4. Hand off to sre_agent with findings when task is complete
+                5. Hand off to user if user input or approval is needed
+
+                Always provide context with your findings before handing off.
+                """,
+                reflect_on_tool_use=False,
+                model_client_stream=True,
+            )
+            agents.append(k8s_agent)
+
+        # Create code executor agent if enabled
+        if self.settings.enable_code_executor:
+            if self._code_excutor is None:
+                await self.create_excutor()
+            await self._code_excutor.start()
+
+            code_executor_agent = CodeExecutorAgent(
+                name="code_executor",
+                code_executor=self._code_excutor,
+                approval_func=self._approval_func,
+            )
+            # Note: CodeExecutorAgent may not support handoffs directly
+            # It will automatically return results to the calling agent
+            agents.append(code_executor_agent)
+
+        # Create user proxy
+        user_proxy = self.create_user_proxy(user_input_func)
+        agents.append(user_proxy)
+
+        # Configure termination conditions
+        # Swarm terminates when:
+        # 1. An agent hands off to 'user'
+        # 2. 'TERMINATE' is mentioned
+        # 3. Token usage exceeds limit
+        # 4. External termination is triggered
+        termination = (
+            HandoffTermination(target="user") |
+            TextMentionTermination("TERMINATE") |
+            TokenUsageTermination(max_total_token=self.settings.max_total_tokens)
+        )
+
+        if external_termination:
+            termination = termination | external_termination
+
+        # Create and return Swarm team
+        swarm = Swarm(
+            participants=agents,
+            termination_condition=termination
+        )
+
+        return swarm
+
+
 
     async def save_team_state(self, team: RoundRobinGroupChat):
         """Save team state to file."""
@@ -360,6 +450,17 @@ class SLARAgentManager:
         """Configure additional tools for agents."""
         if additional_tools is None:
             additional_tools = []
+        # Import get_incidents locally to avoid circular dependency
+        try:
+            # Try relative import first
+            from ..utils.slar_tools import get_incidents
+        except ImportError:
+            # Fallback to looking in parent directory
+            import sys
+            parent_path = str(Path(__file__).parent.parent)
+            if parent_path not in sys.path:
+                sys.path.insert(0, parent_path)
+            from utils.slar_tools import get_incidents
         # This can be extended to add more tools dynamically
         return [get_incidents] + additional_tools
 
@@ -367,7 +468,7 @@ class SLARAgentManager:
         """Get the RAG memory instance."""
         return self.rag_memory
 
-    def get_tool_manager(self) -> ToolManager:
+    def get_tool_manager(self) -> "ToolManager":
         """Get the tool manager instance."""
         return self.tool_manager
 
@@ -380,28 +481,9 @@ class SLARAgentManager:
         # Reinitialize RAG memory with new path
         self.rag_memory = ChromaDBVectorMemory(
             config=PersistentChromaDBVectorMemoryConfig(
-                collection_name="autogen_docs",
+                collection_name=self.settings.chroma_collection_name,
                 persistence_path=os.path.join(self.data_store, ".chromadb_autogen"),
-                k=3,
-                score_threshold=0.4,
+                k=self.settings.chroma_k_results,
+                score_threshold=self.settings.chroma_score_threshold,
             )
         )
-
-@dataclass
-class SlarMessageType:
-    content: str
-
-from autogen_agentchat.messages import TextMessage
-class SlarAgent(RoutedAgent):
-    def __init__(self, name: str) -> None:
-        super().__init__(name)
-        model_client = OpenAIChatCompletionClient(model="gpt-4o")
-        self._delegate = AssistantAgent(name, model_client=model_client)
-    
-    @message_handler
-    async def handle_slar_message_type(self, message: SlarMessageType, ctx: MessageContext) -> None:
-        print(f"{self.id.type} received message: {message.content}")
-        response = await self._delegate.on_messages(
-            [TextMessage(content=message.content, source="user")], ctx.cancellation_token
-        )
-        print(f"{self.id.type} responded: {response.chat_message}")

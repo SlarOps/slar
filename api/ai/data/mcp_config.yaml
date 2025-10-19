@@ -1,0 +1,11 @@
+"slar.advanced": {
+  "mcpServers": [
+    {
+      "kubernetes" : {
+        "url": "http://localhost:3001/mcp",
+        "timeout": 60.0,
+        "terminate_on_close": true
+      }
+    }
+  ]
+}

@@ -1,6 +1,13 @@
 """
 Main FastAPI application entry point.
-Refactored to use modular components.
+
+This is the single entry point for the SLAR AI API application.
+All functionality is organized into modular components:
+- config: Application configuration and settings
+- core: Core business logic (agents, sessions, tools)
+- models: Data models and schemas
+- routes: API route handlers
+- utils: Utility functions and helpers
 """
 
 import logging
@@ -19,28 +26,19 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-try:
-    # Try relative import first (works with python -m main)
-    from .agent import SLARAgentManager
-    from .session import SessionManager
-    from .routes import health_router, sessions_router, runbook_router, websocket_router
-except ImportError:
-    # Fallback to absolute import (works with python main.py)
-    from agent import SLARAgentManager
-    from session import SessionManager
-    from routes import health_router, sessions_router, runbook_router, websocket_router
-
-from autogen_core.memory import MemoryContent, MemoryMimeType
+# Import modular components
+from config import get_settings
+from core import SLARAgentManager, SessionManager
+from routes import health_router, sessions_router, runbook_router, websocket_router
 
 logger = logging.getLogger(__name__)
 
-# Global configuration
-data_store = os.getenv("DATA_STORE", os.path.dirname(__file__))
-SOURCES_FILE = os.path.join(data_store, "indexed_sources.json")
+# Get application settings
+settings = get_settings()
 
-# Initialize managers
-slar_agent_manager = SLARAgentManager(data_store)
-session_manager = SessionManager(data_store)
+# Initialize managers with settings
+slar_agent_manager = SLARAgentManager(settings=settings)
+session_manager = SessionManager(settings.data_store)
 
 # Legacy compatibility - keep rag_memory for existing code
 rag_memory = slar_agent_manager.get_rag_memory()
@@ -117,13 +115,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting vector store initialization...")
     try:
         # Lightweight Chroma connectivity check (no OpenAI model call needed)
-        config = getattr(rag_memory, '_config', None)
-        collection_name = getattr(config, 'collection_name', 'autogen_docs')
-        persistence_path = getattr(config, 'persistence_path', data_store)
         import chromadb
-        client = chromadb.PersistentClient(path=persistence_path)
-        client.get_or_create_collection(name=collection_name)
-        print("✅ Vector store connectivity verified")
+        client = chromadb.PersistentClient(path=settings.chromadb_path)
+        client.get_or_create_collection(name=settings.chroma_collection_name)
         logger.info("Vector store connectivity verified")
         await slar_agent_manager.create_excutor()
     except Exception as e:
@@ -131,43 +125,26 @@ async def lifespan(app: FastAPI):
         logger.error(f"Vector store connectivity check failed: {str(e)}")
         # Don't fail startup, but log the error
 
-    # Pre-initialize MCP tools to avoid delay on first connection
-    try:
-        print("🔧 Pre-initializing MCP tools...")
-        logger.info("Pre-initializing MCP tools...")
-        await slar_agent_manager.initialize_mcp_tools()
-        print("✅ MCP tools pre-initialization completed")
-        logger.info("MCP tools pre-initialization completed")
-    except Exception as e:
-        print(f"❌ Failed to pre-initialize MCP tools: {str(e)}")
-        logger.error(f"Failed to pre-initialize MCP tools: {str(e)}")
-        # Don't fail startup, but log the error
-
     # Initial session cleanup
     try:
-        print("🧹 Running initial session cleanup...")
         await session_manager.cleanup_old_sessions()
-        print("✅ Initial session cleanup completed")
+        logger.info("Initial session cleanup completed")
     except Exception as e:
-        print(f"❌ Failed initial session cleanup: {str(e)}")
         logger.error(f"Failed initial session cleanup: {str(e)}")
 
     # Start periodic auto-save
     try:
-        print("⏰ Starting periodic auto-save...")
+        logger.info("Starting periodic auto-save...")
         await session_manager.start_auto_save()
-        print("✅ Periodic auto-save started")
+        logger.info("Periodic auto-save started")
     except Exception as e:
-        print(f"❌ Failed to start periodic auto-save: {str(e)}")
         logger.error(f"Failed to start periodic auto-save: {str(e)}")
 
-    print("🎯 Application startup completed successfully!")
     logger.info("Application startup completed successfully!")
 
     yield
 
     # Shutdown: Clean up resources gracefully
-    print("🔄 Shutting down services...")
     logger.info("Shutting down services...")
     
     # Trigger graceful shutdown if not already triggered
@@ -177,18 +154,15 @@ async def lifespan(app: FastAPI):
     # Wait for graceful shutdown to complete
     try:
         await asyncio.wait_for(shutdown_event.wait(), timeout=35.0)
-        print("✅ Graceful shutdown completed")
         logger.info("Graceful shutdown completed")
     except asyncio.TimeoutError:
-        print("⚠️  Graceful shutdown timeout")
         logger.warning("Graceful shutdown timeout")
     
     # Shutdown vector store
     try:
         await rag_memory.close()
-        print("✅ Vector store shutdown completed")
+        logger.info("Vector store shutdown completed")
     except Exception as e:
-        print(f"❌ Error during vector store shutdown: {str(e)}")
         logger.error(f"Error during vector store shutdown: {str(e)}")
 
 
@@ -198,7 +172,7 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=settings.cors_origins,  # Use settings for CORS origins
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
@@ -242,4 +216,4 @@ async def get_history():
 if __name__ == "__main__":
     import uvicorn
     # Vector store initialization is now handled by FastAPI lifespan events
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host=settings.host, port=settings.port)

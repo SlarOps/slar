@@ -198,7 +198,8 @@ class AutoGenChatSession:
                 slar_agent_manager = SLARAgentManager()
             
             # Create team using factory function
-            base_team = await slar_agent_manager.get_selector_group_chat(user_input_func, self.external_termination)
+            # base_team = await slar_agent_manager.get_selector_group_chat(user_input_func, self.external_termination)
+            base_team = await slar_agent_manager.get_swarm_team(user_input_func, self.external_termination)
             
             # Use the team directly
             self.team = base_team

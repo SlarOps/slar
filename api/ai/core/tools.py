@@ -159,6 +159,8 @@ class ToolManager:
         """Fallback default configuration - tries multiple config files"""
         # Try alternative config file locations
         default_config_paths = [
+            "data/mcp_config.yaml",
+            "data/mcp_config.json",
             "mcp_config.yaml",
             "mcp_config.json"
         ]

@@ -11,8 +11,8 @@ from fastapi import APIRouter, HTTPException
 # Import models and utilities with fallback
 try:
     from ..models import (
-        IncidentRunbookRequest, 
-        RunbookRetrievalResponse, 
+        IncidentRunbookRequest,
+        RunbookRetrievalResponse,
         RunbookResult,
         GitHubIndexRequest,
         GitHubIndexResponse,
@@ -20,10 +20,10 @@ try:
         DocumentStatsResponse,
         DocumentDetailResponse
     )
-    from ..indexers import GitHubDocumentIndexer
     from ..utils import (
-        generate_source_id, 
-        detect_source_type, 
+        GitHubDocumentIndexer,
+        generate_source_id,
+        detect_source_type,
         load_indexed_sources,
         save_indexed_source,
         save_indexed_sources,
@@ -31,8 +31,8 @@ try:
     )
 except ImportError:
     from models import (
-        IncidentRunbookRequest, 
-        RunbookRetrievalResponse, 
+        IncidentRunbookRequest,
+        RunbookRetrievalResponse,
         RunbookResult,
         GitHubIndexRequest,
         GitHubIndexResponse,
@@ -40,10 +40,10 @@ except ImportError:
         DocumentStatsResponse,
         DocumentDetailResponse
     )
-    from indexers import GitHubDocumentIndexer
     from utils import (
-        generate_source_id, 
-        detect_source_type, 
+        GitHubDocumentIndexer,
+        generate_source_id,
+        detect_source_type,
         load_indexed_sources,
         save_indexed_source,
         save_indexed_sources,
