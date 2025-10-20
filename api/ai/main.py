@@ -29,7 +29,10 @@ if current_dir not in sys.path:
 # Import modular components
 from config import get_settings
 from core import SLARAgentManager, SessionManager
+from core.queue_manager import SessionQueueManager
+from workers.agent_worker import AgentWorker
 from routes import health_router, sessions_router, runbook_router, websocket_router
+from routes.websocket_queue import router as websocket_queue_router
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,11 @@ settings = get_settings()
 # Initialize managers with settings
 slar_agent_manager = SLARAgentManager(settings=settings)
 session_manager = SessionManager(settings.data_store)
+
+# Initialize queue-based architecture (Following AutoGen pattern)
+# Based on: https://github.com/microsoft/autogen/blob/python-v0.7.4/python/docs/src/user-guide/core-user-guide/design-patterns/concurrent-agents.ipynb
+queue_manager = SessionQueueManager()
+agent_worker = AgentWorker(queue_manager=queue_manager, session_manager=session_manager)
 
 # Legacy compatibility - keep rag_memory for existing code
 rag_memory = slar_agent_manager.get_rag_memory()
@@ -146,18 +154,26 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: Clean up resources gracefully
     logger.info("Shutting down services...")
-    
+
+    # Stop agent workers (Following AutoGen pattern: runtime.stop())
+    try:
+        logger.info("Stopping agent workers...")
+        await agent_worker.stop_all_workers()
+        logger.info("Agent workers stopped")
+    except Exception as e:
+        logger.error(f"Error stopping agent workers: {str(e)}")
+
     # Trigger graceful shutdown if not already triggered
     if not shutdown_event.is_set():
         await graceful_shutdown()
-    
+
     # Wait for graceful shutdown to complete
     try:
         await asyncio.wait_for(shutdown_event.wait(), timeout=35.0)
         logger.info("Graceful shutdown completed")
     except asyncio.TimeoutError:
         logger.warning("Graceful shutdown timeout")
-    
+
     # Shutdown vector store
     try:
         await rag_memory.close()
@@ -183,6 +199,7 @@ app.include_router(health_router, tags=["health"])
 app.include_router(sessions_router, tags=["sessions"])
 app.include_router(runbook_router, tags=["runbook"])
 app.include_router(websocket_router, tags=["websocket"])
+app.include_router(websocket_queue_router, tags=["websocket-queue"])  # New queue-based WebSocket
 
 
 # Legacy wrapper functions for backward compatibility
