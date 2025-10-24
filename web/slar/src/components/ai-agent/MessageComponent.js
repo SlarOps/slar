@@ -1,12 +1,112 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Badge } from './Badge';
 import { statusColor, severityColor } from './utils';
 
+// Utility to summarize large tool execution results
+const summarizeToolResult = (content, maxLength = 300) => {
+  if (!content || typeof content !== 'string') return { summary: '', full: content, needsSummary: false };
+
+  // If content is short enough, no summary needed
+  if (content.length <= maxLength) {
+    return { summary: content, full: content, needsSummary: false };
+  }
+
+  // Try to parse as JSON to provide structured summary
+  try {
+    const parsed = JSON.parse(content);
+
+    // Handle objects with 'items' array (kubectl responses)
+    if (parsed.items && Array.isArray(parsed.items)) {
+      const itemCount = parsed.items.length;
+
+      // Get unique values for common fields
+      const getUnique = (field) => [...new Set(parsed.items.map(item => item[field]).filter(Boolean))];
+
+      const namespaces = getUnique('namespace');
+      const statuses = getUnique('status');
+      const kinds = getUnique('kind');
+
+      let summary = `**${itemCount} item${itemCount !== 1 ? 's' : ''} returned**\n\n`;
+
+      if (kinds.length > 0) summary += `**Type:** ${kinds.join(', ')}\n`;
+      if (namespaces.length > 0) summary += `**Namespace:** ${namespaces.join(', ')}\n`;
+      if (statuses.length > 0) summary += `**Status:** ${statuses.join(', ')}\n`;
+
+      return {
+        summary: summary + `\n*Click "Show Full Result" to see all ${itemCount} items*`,
+        full: content,
+        needsSummary: true,
+        count: itemCount,
+        itemType: 'items'
+      };
+    }
+
+    // Handle plain array responses
+    if (Array.isArray(parsed)) {
+      const itemCount = parsed.length;
+      const summary = `**${itemCount} item${itemCount !== 1 ? 's' : ''} returned**\n\n*Click "Show Full Result" to see all items*`;
+
+      return {
+        summary,
+        full: content,
+        needsSummary: true,
+        count: itemCount,
+        itemType: 'items'
+      };
+    }
+
+    // Handle object responses
+    if (typeof parsed === 'object' && parsed !== null) {
+      const keys = Object.keys(parsed);
+
+      // Show a few key fields if object is small-ish
+      if (keys.length <= 10) {
+        const preview = keys.slice(0, 3).map(k => {
+          const val = JSON.stringify(parsed[k]).substring(0, 30);
+          return `**${k}:** ${val}${JSON.stringify(parsed[k]).length > 30 ? '...' : ''}`;
+        }).join('\n');
+
+        return {
+          summary: `**Object with ${keys.length} field${keys.length !== 1 ? 's' : ''}**\n\n${preview}${keys.length > 3 ? `\n\n*... and ${keys.length - 3} more fields*` : ''}`,
+          full: content,
+          needsSummary: true,
+          count: keys.length,
+          itemType: 'fields'
+        };
+      }
+
+      return {
+        summary: `**Object with ${keys.length} fields**\n\n*Click "Show Full Result" to see all fields*`,
+        full: content,
+        needsSummary: true,
+        count: keys.length,
+        itemType: 'fields'
+      };
+    }
+  } catch (e) {
+    // Not JSON, treat as plain text
+  }
+
+  // For plain text, show first N characters
+  const truncated = content.substring(0, maxLength);
+  const lastNewline = truncated.lastIndexOf('\n');
+  const summary = lastNewline > maxLength * 0.5 ? truncated.substring(0, lastNewline) : truncated;
+
+  return {
+    summary: summary + '\n\n*...(truncated) - Click "Show Full Result" to see more*',
+    full: content,
+    needsSummary: true
+  };
+};
+
 // Memoized Message Component để tránh re-render không cần thiết
 const MessageComponent = memo(({ message }) => {
+  // State for expandable tool results
+  const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
+
   // Add streaming indicator with staggered animation
   const StreamingIndicator = () => (
     <span className="inline-flex items-center ml-2">
@@ -15,6 +115,14 @@ const MessageComponent = memo(({ message }) => {
       <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '400ms' }}>●</span>
     </span>
   );
+
+  // Memoize tool result summary
+  const toolResultData = useMemo(() => {
+    if (message.type === 'ToolCallExecutionEvent' && message.content) {
+      return summarizeToolResult(message.content);
+    }
+    return null;
+  }, [message.type, message.content]);
 
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
@@ -191,13 +299,42 @@ const MessageComponent = memo(({ message }) => {
 
         {message.type === 'ToolCallExecutionEvent' && (
           <div className="mt-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-sm font-medium text-green-800 dark:text-green-200">
-                Tool Execution Result
-              </span>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium text-green-800 dark:text-green-200">
+                  Tool Execution Result
+                  {toolResultData?.count && (
+                    <span className="ml-2 text-xs font-normal text-green-600 dark:text-green-400">
+                      ({toolResultData.count} {toolResultData.itemType || 'items'})
+                    </span>
+                  )}
+                </span>
+              </div>
+              {toolResultData?.needsSummary && (
+                <button
+                  onClick={() => setIsToolResultExpanded(!isToolResultExpanded)}
+                  className="text-xs px-2 py-1 rounded bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-700 transition-colors flex items-center gap-1"
+                >
+                  {isToolResultExpanded ? (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      </svg>
+                      Show Less
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                      Show Full Result
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             <div className="rounded-lg overflow-x-auto">
               <Markdown
@@ -205,7 +342,9 @@ const MessageComponent = memo(({ message }) => {
                 rehypePlugins={[rehypeHighlight]}
                 components={markdownComponents}
               >
-                {message.content}
+                {toolResultData?.needsSummary && !isToolResultExpanded
+                  ? toolResultData.summary
+                  : message.content}
               </Markdown>
             </div>
           </div>

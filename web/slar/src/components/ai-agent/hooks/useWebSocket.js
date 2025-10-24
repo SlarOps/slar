@@ -62,6 +62,10 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
               // Re-enable input when user input is requested
               setIsSending(false);
               // Don't add UserInputRequestedEvent to messages, just handle the state
+            } else if (data.type === 'ToolCallSummaryMessage') {
+              // Skip ToolCallSummaryMessage as it duplicates ToolCallExecutionEvent
+              // This message contains the same content as ToolCallExecutionEvent
+              console.log("Skipping duplicate ToolCallSummaryMessage");
             } else if (data.type === 'error') {
               // Display error message
               setMessages((prev) => [...prev, {
