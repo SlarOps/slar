@@ -27,17 +27,20 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 # Import modular components
-from config import get_settings
+from config import get_settings, setup_logging
 from core import SLARAgentManager, SessionManager
+
+# Get application settings
+settings = get_settings()
+
+# Configure logging early in the application startup
+setup_logging(settings.log_level)
 from core.queue_manager import SessionQueueManager
 from workers.agent_worker import AgentWorker
 from routes import health_router, sessions_router, runbook_router, websocket_router
 from routes.websocket_queue import router as websocket_queue_router
 
 logger = logging.getLogger(__name__)
-
-# Get application settings
-settings = get_settings()
 
 # Initialize managers with settings
 slar_agent_manager = SLARAgentManager(settings=settings)
