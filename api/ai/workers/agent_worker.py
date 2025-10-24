@@ -45,9 +45,9 @@ class AgentWorker:
         Start a background worker for a session.
         Following AutoGen pattern: runtime.start() runs in background.
         """
-        if session_id in self._worker_tasks:
-            logger.warning(f"Worker already running for session: {session_id}")
-            return
+        # if session_id in self._worker_tasks:
+        #     logger.warning(f"Worker already running for session: {session_id}")
+        #     return
 
         task = asyncio.create_task(self._process_session(session_id))
         self._worker_tasks[session_id] = task
@@ -154,7 +154,7 @@ class AgentWorker:
                     # Save state and history after stream completes
                     await chat_session.save_state()
                     await chat_session.save_history()
-                    logger.debug(f"Saved session state and history: {session_id}")
+                    logger.info(f"Saved session state and history: {session_id}")
 
                 except Exception as e:
                     logger.error(f"Error processing message for session {session_id}: {e}", exc_info=True)

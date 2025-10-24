@@ -58,7 +58,7 @@ class AutoGenChatSession:
         """Load session data from disk following AutoGen patterns."""
         try:
             if not os.path.exists(self.session_file):
-                logger.debug(f"No existing session file for {self.session_id}")
+                logger.info(f"No existing session file for {self.session_id}")
                 return False
                 
             async with aiofiles.open(self.session_file, "r") as f:
@@ -66,7 +66,7 @@ class AutoGenChatSession:
             
             # Validate session data structure
             if not self._validate_session_data(session_data):
-                logger.warning(f"Invalid session data for {self.session_id}, starting fresh")
+                logger.info(f"Invalid session data for {self.session_id}, starting fresh")
                 return False
             
             # Load basic session info
@@ -84,7 +84,7 @@ class AutoGenChatSession:
                 self.team_state = team_state
                 logger.info(f"Loaded valid AutoGen state for session {self.session_id}")
             else:
-                logger.warning(f"Invalid or missing team state for {self.session_id}")
+                logger.info(f"Invalid or missing team state for {self.session_id}")
                 self.team_state = None
             
             logger.info(f"Successfully loaded session from disk: {self.session_id}")
@@ -186,9 +186,11 @@ class AutoGenChatSession:
     
     async def get_or_create_team(self, user_input_func, user_approval_func):
         """Get existing team or create new one following AutoGen patterns with ExternalTermination support."""
+        logger.info(f"Getting or creating team for session: {self.session_id}")
         if self.team is None:
             # Create ExternalTermination for this session
             self.external_termination = ExternalTermination()
+            logger.info(f"Created ExternalTermination for session: {self.session_id}")
             
             # Import here to avoid circular imports
             try:
@@ -200,7 +202,7 @@ class AutoGenChatSession:
             # Create team using factory function
             # base_team = await slar_agent_manager.get_selector_group_chat(user_input_func, self.external_termination)
             base_team = await slar_agent_manager.get_swarm_team(user_input_func, self.external_termination)
-            
+            logger.info(f"Created Swarm team for session: {self.session_id}")
             # Use the team directly
             self.team = base_team
             
@@ -208,9 +210,9 @@ class AutoGenChatSession:
             if self.team_state:
                 try:
                     await self.team.load_state(self.team_state)
-                    logger.info(f"Successfully restored team state for session {self.session_id}")
+                    logger.info(f"Successfully restored team state for session: {self.session_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to restore team state: {e}")
+                    logger.info(f"Failed to restore team state: {e}")
                     # Clear invalid state
                     self.team_state = None
                     
@@ -256,7 +258,7 @@ class AutoGenChatSession:
             if self.external_termination:
                 try:
                     await self.external_termination.reset()
-                    logger.debug(f"ExternalTermination reset for session {self.session_id}")
+                    logger.info(f"ExternalTermination reset for session {self.session_id}")
                 except Exception as e:
                     logger.warning(f"Error resetting ExternalTermination: {e}")
             
@@ -265,15 +267,15 @@ class AutoGenChatSession:
             
             if force_reset or is_busy:
                 # Reset the team to clear state
-                await self.team.reset()
-                logger.info(f"Team reset completed for session {self.session_id}")
+                # await self.team.reset()
+                # logger.info(f"Team reset completed for session {self.session_id}")
                 
                 # Clear streaming flag after reset
                 self.is_streaming = False
                 return True
             else:
                 # Team is idle, no need to reset
-                logger.debug(f"Team is idle, skipping reset for session {self.session_id}")
+                logger.info(f"Team is idle, skipping reset for session {self.session_id}")
                 return True
                 
         except Exception as e:
@@ -554,6 +556,7 @@ class SessionManager:
     
     async def get_or_create_session(self, session_id: str) -> AutoGenChatSession:
         """Get existing session or create new one with disk loading."""
+        logger.info(f"Getting or creating session: {session_id}")
         if session_id not in self.active_sessions:
             # Create new session
             session = AutoGenChatSession(session_id, self.data_store)

@@ -24,7 +24,7 @@ def setup_logging(log_level: Optional[str] = None) -> None:
     - Timestamp, logger name, level, and message formatting
     """
     # Default to INFO if not specified
-    level = log_level or "INFO"
+    level = log_level or "ERROR"
 
     # Convert string level to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
@@ -45,6 +45,9 @@ def setup_logging(log_level: Optional[str] = None) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("chromadb").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("autogen_core").setLevel(logging.ERROR)
+    logging.getLogger("autogen_core.events").setLevel(logging.ERROR)
+    logging.getLogger("core.queue_manager").setLevel(logging.ERROR)
 
     logger = logging.getLogger(__name__)
     logger.info(f"Logging configured with level: {level}")
