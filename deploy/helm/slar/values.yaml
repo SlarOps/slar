@@ -159,7 +159,7 @@ components:
       - name: ai-data
         mountPath: /data
       - name: mcp-config
-        mountPath: /app/mcp_config.yaml
+        mountPath: /app/data/mcp_config.yaml
         subPath: mcp_config.yaml
         readOnly: true
     # Volumes definition

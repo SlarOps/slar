@@ -216,18 +216,9 @@ class SLARAgentManager:
         Only select one agent.
         """
 
-        review_agent = await self._create_assistant_agent(
-            name="review_agent",
-            description="An agent for reviewing the work of other agents. You are the final judge of the task.",
-            system_message="You are an SRE expert. Review the work of other agents and provide the summary of the task.",
-            model_client=self.get_model_client(),
-            reflect_on_tool_use=True,
-            include_memory=True
-        )
-
         # Create team with single SRE agent
         team = RoundRobinGroupChat(
-            [sre_agent, review_agent, user_proxy],
+            [sre_agent, user_proxy],
             termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user") | TokenUsageTermination(max_total_token=self.settings.max_total_tokens) | external_termination,
         )
 
