@@ -27,6 +27,10 @@ class Settings:
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5")
 
+        # Anthropic Configuration (for Claude Agent SDK)
+        self.anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+        self.anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+
         # Data Storage
         # Default to data/ subdirectory in the ai/ folder
         default_data_store = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -41,6 +45,10 @@ class Settings:
         # Feature Flags
         self.enable_kubernetes: bool = os.getenv("ENABLE_KUBERNETES", "false").lower() == "true"
         self.enable_code_executor: bool = os.getenv("ENABLE_CODE_EXECUTOR", "false").lower() == "true"
+
+        # Agent Framework Selection
+        # Options: "autogen" or "claude" - default to "autogen"
+        self.default_agent_type: str = os.getenv("DEFAULT_AGENT_TYPE", "autogen")
 
         # MCP Configuration
         default_mcp_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mcp_config.yaml")

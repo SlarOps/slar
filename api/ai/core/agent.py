@@ -10,6 +10,8 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.conditions import TextMentionTermination, HandoffTermination, TokenUsageTermination, ExternalTermination
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
+from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
+from .sre_agent import AssistantAgent as SreAssistantAgent
 
 import logging
 logger = logging.getLogger(__name__)
@@ -215,9 +217,8 @@ class SLARAgentManager:
         )
 
     async def create_excutor(self):
-        code_executor = DockerCommandLineCodeExecutor(
+        code_executor = LocalCommandLineCodeExecutor(
             work_dir=self.settings.code_executor_work_dir,
-            image=self.settings.code_executor_image
         )
         self._code_excutor = code_executor
     
@@ -290,7 +291,10 @@ class SLARAgentManager:
 
         return team
     
-    async def get_swarm_team(self, user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]], external_termination: Optional[ExternalTermination] = None) -> Swarm:
+    async def get_swarm_team(self, 
+                             user_input_func: Callable[[str, Optional[CancellationToken]], Awaitable[str]], 
+                             external_termination: Optional[ExternalTermination] = None,
+                             approval_func: Optional[Callable[[ApprovalRequest], ApprovalResponse]] = None) -> Swarm:
         """
         Create a Swarm team with handoff-based agent collaboration.
 
@@ -336,14 +340,13 @@ class SLARAgentManager:
             - user: Hand off to user for input, approval, or when task is complete
 
             Workflow:
-            1. Analyze the incident or task
-            2. Break it down into manageable steps
-            3. Delegate specific tasks to appropriate agents using handoffs
-            4. Coordinate responses and synthesize findings
-            5. When complete or user input needed, hand off to user with TERMINATE
+            - If the task is not related to Kubernetes or code execution, hand off to user.
+            - If the task is related to Kubernetes or code execution, break it down into manageable steps and delegate specific tasks to appropriate agents using handoffs.
+            - Coordinate responses and synthesize findings.
+            - When complete or user input needed, hand off to user.
+            - Use TERMINATE when the incident is resolved or task is complete or user input is needed.
 
             Always explain your reasoning before handing off tasks.
-            Use TERMINATE when the incident is resolved or task is complete.
             """,
             reflect_on_tool_use=False,
             model_client_stream=True,
@@ -356,7 +359,7 @@ class SLARAgentManager:
             workbenches = await self.load_mcp_tools()
             workbench_list = list(workbenches.values()) if workbenches else None
 
-            k8s_agent = AssistantAgent(
+            k8s_agent = SreAssistantAgent(
                 name="k8s_agent",
                 model_client=model_client,
                 workbench=workbench_list,
@@ -381,6 +384,7 @@ class SLARAgentManager:
                 """,
                 reflect_on_tool_use=False,
                 model_client_stream=True,
+                approval_func=approval_func,
             )
             agents.append(k8s_agent)
 
@@ -393,7 +397,7 @@ class SLARAgentManager:
             code_executor_agent = CodeExecutorAgent(
                 name="code_executor",
                 code_executor=self._code_excutor,
-                approval_func=self._approval_func,
+                approval_func=approval_func,
             )
             # Note: CodeExecutorAgent may not support handoffs directly
             # It will automatically return results to the calling agent

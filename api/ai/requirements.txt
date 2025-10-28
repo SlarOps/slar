@@ -115,3 +115,6 @@ websocket-client==1.8.0
 websockets==15.0.1
 yarl==1.22.0
 zipp==3.23.0
+
+# Claude Agent SDK (pending - needs more research)
+# claude-agent-sdk==0.1.5

@@ -10,6 +10,7 @@ This module contains the core business logic for SLAR agents:
 from .agent import SLARAgentManager
 from .session import SessionManager, AutoGenChatSession, DateTimeJSONEncoder
 from .tools import ToolManager, MCPServerConfig
+from .sre_agent import ToolApprovalRequest, ToolApprovalResponse
 
 __all__ = [
     # Agent management
@@ -21,4 +22,7 @@ __all__ = [
     # Tool management
     "ToolManager",
     "MCPServerConfig",
+    # Tool approval
+    "ToolApprovalRequest",
+    "ToolApprovalResponse",
 ]

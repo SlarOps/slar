@@ -58,6 +58,7 @@ class AgentWorker:
         Process messages for a session.
         Following AutoGen pattern: continuously process messages from queue.
         """
+        queue = self.queue_manager.get_input_queue(session_id)
         try:
             # Get or create chat session
             chat_session = await self.session_manager.get_or_create_session(session_id)
@@ -66,33 +67,38 @@ class AgentWorker:
             # This will wait for messages from the input queue
             async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
                 # Publish user input request to output queue
-                await self.queue_manager.publish_output(
-                    session_id,
-                    AgentOutput(
-                        session_id=session_id,
-                        content=prompt,
-                        source="system",
-                        message_type="UserInputRequestedEvent",
-                    ),
-                )
-
-                # Wait for user response from input queue
-                async for message in self.queue_manager.subscribe_input(session_id):
-                    if message.content.strip():
-                        return message.content.strip()
+                logger.info(f"Waiting for user input for session {session_id}")
+                while True:
+                    user_message = await queue.get()
+                    content = (user_message.content or "").strip()
+                    return content
 
             # User approval function (similar pattern)
             async def _user_approval(request) -> any:
                 # For now, auto-approve (can be enhanced later)
-                from autogen_agentchat.agents import ApprovalResponse
+                from core import ToolApprovalRequest, ToolApprovalResponse
 
-                return ApprovalResponse(approved=True, reason="Auto-approved")
+                while True:
+                    # put approval request to output queue
+                    print(f"Code execution approval requested:\n{request.tool_name}\nDo you want to execute this code? (y/n): ")
+                    # await queue.put(TextMessage(content=f"Code execution approval requested:\n{request.tool_name}\nDo you want to execute this code? (y/n): ", source="system"))
+                    # get approval response from input queue
+                    approval_response = await queue.get()
+                    content = (approval_response.content or "").strip()
+                    if content in ['y', 'yes']:
+                        return ToolApprovalResponse(approved=True, reason='Approved by user')
+                    elif content in ['n', 'no']:
+                        return ToolApprovalResponse(approved=False, reason='Denied by user')
+                    else:
+                        await queue.put(TextMessage(content=f"Please enter 'y' for yes or 'n' for no.", source="system"))
 
             # Get or create the team
             team = await chat_session.get_or_create_team(_user_input, _user_approval)
 
             # Process input messages
-            async for user_message in self.queue_manager.subscribe_input(session_id):
+            while True:
+                logger.info(f"Waiting for message for session {session_id}")
+                user_message = await queue.get()
                 try:
                     logger.info(f"Processing message for session {session_id}: {user_message.content[:50]}")
 
@@ -102,9 +108,9 @@ class AgentWorker:
                     )
 
                     # Smart reset team if needed
-                    reset_success = await chat_session.smart_reset_team(force_reset=False)
-                    if not reset_success:
-                        team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                    # reset_success = await chat_session.smart_reset_team(force_reset=False)
+                    # if not reset_success:
+                    #     team = await chat_session.get_or_create_team(_user_input, _user_approval)
 
                     # Set current task
                     chat_session.current_task = user_message.content
