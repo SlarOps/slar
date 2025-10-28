@@ -199,24 +199,6 @@ app.include_router(runbook_router, tags=["runbook"])
 app.include_router(websocket_router, tags=["websocket"])
 
 
-# Legacy wrapper functions for backward compatibility
-async def get_selector_group_chat(user_input_func, external_termination=None):
-    """
-    Get a configured SLAR agent team.
-    This function is now a wrapper around SLARAgentManager for backward compatibility.
-    """
-    slar_agent_manager.set_user_input_func(user_input_func)
-    return await slar_agent_manager.get_selector_group_chat(user_input_func, external_termination)
-
-
-async def get_history():
-    """
-    Get chat history from file.
-    This function is now a wrapper around SLARAgentManager for backward compatibility.
-    """
-    return await slar_agent_manager.get_history()
-
-
 # Example usage
 if __name__ == "__main__":
     import uvicorn

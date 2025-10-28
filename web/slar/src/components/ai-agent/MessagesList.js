@@ -24,7 +24,7 @@ const MessagesList = memo(({ messages, isSending, endRef }) => {
   }, [messages]);
 
   return (
-    <main className="flex-1 overflow-y-auto pb-32">
+    <main className="flex-1 overflow-y-auto pb-4">
       <div className="max-w-3xl mx-auto px-1 py-8">
         {visibleMessages.map((message, idx) => (
           <MessageComponent 

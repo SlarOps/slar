@@ -151,12 +151,13 @@ class SLARAgentManager:
         system_message: str,
         model_client: Optional[OpenAIChatCompletionClient] = None,
         reflect_on_tool_use: bool = True,
-        include_memory: bool = False
+        include_memory: bool = False,
+        disable_workbench: bool = True
     ) -> AssistantAgent:
         """Helper method to create an AssistantAgent with common configuration."""
         model_client = model_client or self.get_model_client()
-        workbenches = await self.load_mcp_tools()
-        workbench_list = list(workbenches.values()) if workbenches else None
+        workbenches = await self.load_mcp_tools() if not disable_workbench else []
+        workbench_list = list(workbenches.values()) if not disable_workbench else []
 
         kwargs = {
             "name": name,
@@ -177,10 +178,11 @@ class SLARAgentManager:
         """Create the SRE planning agent."""
         return await self._create_assistant_agent(
             name="sre_agent",
-            description="An agent for planning tasks, this agent should be the first to engage when given a new task.",
+            description="You are an SRE expert. Diagnose the issue, assess impact, and provide immediate action items",
             system_message="You are an SRE expert. Diagnose the issue, assess impact, and provide immediate action items.",
             model_client=model_client,
             reflect_on_tool_use=True,
+            disable_workbench=False,
             include_memory=True
         )
 
@@ -192,10 +194,10 @@ class SLARAgentManager:
         """Create the user proxy agent."""
         return UserProxyAgent(name="user", input_func=user_input_func)
 
-    async def get_selector_group_chat(self, user_input_func: Callable, external_termination: Optional[ExternalTermination] = None) -> SelectorGroupChat:
+    async def get_selector_group_chat(self, user_input_func: Callable, external_termination: Optional[ExternalTermination] = None) -> RoundRobinGroupChat:
         """Create the agent team with SRE agent and user proxy."""
         # Create SRE planning agent
-        planning_agent = await self.create_agent_planer()
+        sre_agent = await self.create_agent_planer()
 
         # Create user proxy
         if user_input_func is None:
@@ -214,26 +216,22 @@ class SLARAgentManager:
         Only select one agent.
         """
 
-        # Create team with single SRE agent
-        team = SelectorGroupChat(
-            [planning_agent, user_proxy],
-            selector_prompt=selector_prompt,
-            termination_condition=(
-                TextMentionTermination("TERMINATE") |
-                HandoffTermination(target="user") |
-                TokenUsageTermination(max_total_token=self.settings.max_total_tokens) |
-                external_termination
-            ),
+        review_agent = await self._create_assistant_agent(
+            name="review_agent",
+            description="An agent for reviewing the work of other agents. You are the final judge of the task.",
+            system_message="You are an SRE expert. Review the work of other agents and provide the summary of the task.",
             model_client=self.get_model_client(),
+            reflect_on_tool_use=True,
+            include_memory=True
+        )
+
+        # Create team with single SRE agent
+        team = RoundRobinGroupChat(
+            [sre_agent, review_agent, user_proxy],
+            termination_condition=TextMentionTermination("TERMINATE") | HandoffTermination(target="user") | TokenUsageTermination(max_total_token=self.settings.max_total_tokens) | external_termination,
         )
 
         return team
-
-    async def save_team_state(self, team: RoundRobinGroupChat):
-        """Save team state to file."""
-        state = await team.save_state()
-        async with aiofiles.open(self.state_path, "w") as file:
-            await file.write(json.dumps(state, indent=2))
 
     async def get_history(self) -> list[dict[str, Any]]:
         """Get chat history from file."""
@@ -242,33 +240,6 @@ class SLARAgentManager:
         async with aiofiles.open(self.history_path, "r") as file:
             return json.loads(await file.read())
 
-    async def save_history(self, history: list[dict[str, Any]]):
-        """Save chat history to file."""
-        async with aiofiles.open(self.history_path, "w") as file:
-            await file.write(json.dumps(history, indent=2))
-
-    def configure_agent_tools(self, additional_tools: list = None):
-        """Configure additional tools for agents."""
-        from utils.slar_tools import get_incidents
-        additional_tools = additional_tools or []
-        return [get_incidents] + additional_tools
-
     def get_rag_memory(self) -> ChromaDBVectorMemory:
         """Get the RAG memory instance."""
         return self.rag_memory
-
-    def get_tool_manager(self) -> ToolManager:
-        """Get the tool manager instance."""
-        return self.tool_manager
-
-    def set_data_store(self, data_store: str):
-        """Update the data store path and reinitialize paths."""
-        self.data_store = data_store
-        self.state_path = os.path.join(data_store, "team_state.json")
-        self.history_path = os.path.join(data_store, "team_history.json")
-
-        # Update settings chromadb path
-        self.settings.data_store = data_store
-
-        # Reinitialize RAG memory with new path
-        self.rag_memory = self._create_rag_memory()

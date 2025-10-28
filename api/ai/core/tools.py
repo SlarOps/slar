@@ -60,24 +60,9 @@ class MCPServerConfig:
 
 class ToolManager:
     def __init__(self):
-        self.tools = []
         self.mcp_servers: List[MCPServerConfig] = []
         self.server_tools: Dict[str, List] = {}
         self.workbenches: Dict[str, McpWorkbench] = {}  # Store workbenches by server name
-
-    def add_tool(self, tool):
-        """Add a single tool to the manager"""
-        self.tools.append(tool)
-
-    def get_tools(self):
-        """Get all loaded tools"""
-        return self.tools
-
-    def clear_tools(self):
-        """Clear all tools and workbenches"""
-        self.tools = []
-        self.server_tools = {}
-        self.workbenches = {}
 
     def _load_config_from_file(self, config_path: str) -> List[MCPServerConfig]:
         """Internal method to load config from a specific file"""
@@ -186,21 +171,6 @@ class ToolManager:
         self.mcp_servers = servers
         return servers
 
-    def configure_server(self, name: str, enabled: Optional[bool] = None) -> Optional[MCPServerConfig]:
-        """Enable or disable a specific MCP server"""
-        for server in self.mcp_servers:
-            if server.name == name:
-                if enabled is not None:
-                    server.enabled = enabled
-                return server
-        return None
-
-    def list_servers(self):
-        """List all configured MCP servers and their status"""
-        logger.info("Configured MCP Servers:")
-        for server in self.mcp_servers:
-            logger.info(f"  {server}")
-
     async def load_mcp_workbenches(self) -> Dict[str, McpWorkbench]:
         """Load McpWorkbench instances for all enabled MCP servers"""
         workbenches = {}
@@ -238,141 +208,3 @@ class ToolManager:
         self.workbenches = workbenches
         logger.info(f"Total workbenches created: {len(workbenches)}")
         return workbenches
-
-    def get_workbench(self, server_name: str) -> Optional[McpWorkbench]:
-        """Get workbench for a specific server"""
-        return self.workbenches.get(server_name)
-    
-    def get_all_workbenches(self) -> Dict[str, McpWorkbench]:
-        """Get all workbenches"""
-        return self.workbenches.copy()
-
-    async def close_workbenches(self):
-        """Close all workbenches properly"""
-        for server_name, workbench in self.workbenches.items():
-            try:
-                print(f"Closing workbench for {server_name}...")
-                await workbench.stop()
-            except Exception as e:
-                print(f"Warning: Error closing workbench for {server_name}: {e}")
-        self.workbenches = {}
-
-    async def load_mcp_tools(self) -> List[Any]:
-        """Load tools from all enabled MCP servers (both stdio and HTTP)"""
-        all_tools = []
-
-        for server in self.mcp_servers:
-            if not server.enabled:
-                print(f"Skipping disabled server: {server.name}")
-                continue
-
-            try:
-                print(f"Loading tools from {server.name} ({server.server_type})...")
-                
-                if server.server_type == "http":
-                    # Use StreamableHttpMcpToolAdapter for HTTP servers
-                    print(f"  Connecting to HTTP server at {server.url}...")
-                    # Create a tool adapter for the HTTP server
-                    try:
-                        # The from_server_params method returns a tool adapter that needs to be awaited
-                        adapter = await asyncio.wait_for(
-                            StreamableHttpMcpToolAdapter.from_server_params(server.params, ""),
-                            timeout=server.timeout
-                        )
-                        
-                        # For HTTP servers, we treat the adapter as a single "meta-tool"
-                        # that can handle multiple tool calls to the server
-                        tools = [adapter]
-                        
-                    except Exception as e:
-                        print(f"  Failed to create HTTP adapter for {server.name}: {e}")
-                        continue
-                    
-                elif server.server_type == "stdio":
-                    # Use mcp_server_tools for stdio servers
-                    print(f"  Starting stdio server: {server.command} {' '.join(server.args)}")
-                    tools = await asyncio.wait_for(
-                        mcp_server_tools(server.params),
-                        timeout=server.timeout
-                    )
-                else:
-                    print(f"  Unknown server type: {server.server_type}")
-                    continue
-                    
-                all_tools.extend(tools)
-                
-                # Handle tool names differently for HTTP vs stdio
-                if server.server_type == "http":
-                    # For HTTP servers, we might not know all tool names upfront
-                    self.server_tools[server.name] = [f"{server.name}_http_adapter"]
-                    print(f"✓ Created HTTP adapter for {server.name}")
-                    print(f"  HTTP adapter ready for tool calls")
-                else:
-                    # For stdio servers, we can get the actual tool names
-                    self.server_tools[server.name] = [getattr(tool, 'name', str(tool)) for tool in tools]
-                    print(f"✓ Loaded {len(tools)} tools from {server.name}")
-                    
-                    # Show available tools for stdio servers
-                    if tools:
-                        tool_names = [getattr(tool, 'name', str(tool)) for tool in tools]
-                        print(f"  Available tools: {', '.join(tool_names)}")
-
-            except asyncio.TimeoutError:
-                print(f"✗ Failed to load {server.name}: Connection timeout after {server.timeout} seconds")
-                continue
-            except Exception as e:
-                print(f"✗ Failed to load {server.name}: {e}")
-                # Print more detailed error info for debugging
-                import traceback
-                print(f"  Error details: {traceback.format_exc()}")
-                continue
-
-        self.tools = all_tools
-        print(f"\nTotal tools loaded: {len(all_tools)}")
-        return all_tools
-
-    def get_server_tools(self, server_name: str) -> List[str]:
-        """Get list of tool names for a specific server"""
-        return self.server_tools.get(server_name, [])
-
-    def get_all_server_tools(self) -> Dict[str, List[str]]:
-        """Get dictionary of all server tools"""
-        return self.server_tools.copy()
-
-    def create_default_config_file(self, config_path: str = "ai/mcp_config_default.yaml"):
-        """Create a default configuration file"""
-        default_config = {
-            "augment.advanced": {
-                "mcpServers": [
-                    {
-                        "name": "filesystem",
-                        "command": "npx",
-                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]
-                    },
-                    {
-                        "name": "context7",
-                        "command": "npx",
-                        "args": ["-y", "@upstash/context7-mcp@latest", "--api-key", "YOUR_API_KEY"]
-                    }
-                ]
-            }
-        }
-
-        try:
-            import os
-            dir_path = os.path.dirname(config_path)
-            if dir_path:  # Only create directory if there is one
-                os.makedirs(dir_path, exist_ok=True)
-
-            if config_path.endswith('.yaml') or config_path.endswith('.yml'):
-                with open(config_path, 'w') as f:
-                    yaml.dump(default_config, f, default_flow_style=False, indent=2)
-            else:
-                with open(config_path, 'w') as f:
-                    json.dump(default_config, f, indent=2)
-
-            print(f"✓ Created default configuration file: {config_path}")
-            return True
-        except Exception as e:
-            print(f"✗ Failed to create default config file: {e}")
-            return False

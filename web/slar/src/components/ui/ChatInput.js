@@ -17,7 +17,8 @@ const ChatInput = ({
   showModeSelector = true,
   onStop = null,
   sessionId = null,
-  isStreaming = false
+  isStreaming = false,
+  onSessionReset = null
 }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -87,6 +88,22 @@ const ChatInput = ({
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
             <div className="flex items-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2">
+              {/* New Session Button */}
+              {sessionId && onSessionReset && (
+                <div className="flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={onSessionReset}
+                    className="p-2 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-300 dark:hover:bg-red-900/20 rounded-md transition-colors"
+                    title="Start new session"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
               {/* Mode Selector */}
               {showModeSelector && (
                 <Menu as="div" className="relative">
