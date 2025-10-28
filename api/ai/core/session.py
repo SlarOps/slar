@@ -5,12 +5,14 @@ Session management for AutoGen chat sessions.
 import json
 import os
 import asyncio
-import aiofiles
 import logging
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
+import aiofiles
 from autogen_agentchat.conditions import ExternalTermination
+
+logger = logging.getLogger(__name__)
 
 
 class DateTimeJSONEncoder(json.JSONEncoder):
@@ -19,8 +21,6 @@ class DateTimeJSONEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super().default(obj)
-
-logger = logging.getLogger(__name__)
 
 
 class AutoGenChatSession:
@@ -104,41 +104,32 @@ class AutoGenChatSession:
     def _validate_session_data(self, data: dict) -> bool:
         """Validate basic session data structure."""
         try:
-            required_fields = ["session_id", "state_version"]
             return (
                 isinstance(data, dict) and
-                all(field in data for field in required_fields) and
-                data["session_id"] == self.session_id and
+                data.get("session_id") == self.session_id and
                 data.get("state_version") == self.state_version
             )
         except Exception:
             return False
-    
+
     def _validate_autogen_state(self, state: dict) -> bool:
-        """
-        Validate AutoGen team state structure.
-        Based on AutoGen state management patterns.
-        """
+        """Validate AutoGen team state structure."""
         try:
             if not isinstance(state, dict):
                 return False
-            
-            # Basic validation - check for expected AutoGen state keys
-            # This is a simplified validation - actual AutoGen state structure may vary
+
+            # Check for expected AutoGen state keys
             expected_keys = ["agents", "current_agent", "message_history"]
-            
-            # At least one expected key should be present
             has_valid_structure = any(key in state for key in expected_keys)
-            
-            # Additional checks for state integrity
+
+            # Validate data types
             if "agents" in state and not isinstance(state["agents"], (list, dict)):
                 return False
-            
             if "message_history" in state and not isinstance(state["message_history"], list):
                 return False
-            
+
             return has_valid_structure
-            
+
         except Exception as e:
             logger.debug(f"State validation error: {e}")
             return False
@@ -184,25 +175,20 @@ class AutoGenChatSession:
         self.history.append(message_dict)
         self.history_dirty = True  # Mark for saving
     
-    async def get_or_create_team(self, user_input_func, user_approval_func):
+    async def get_or_create_team(self, user_input_func):
         """Get existing team or create new one following AutoGen patterns with ExternalTermination support."""
         logger.info(f"Getting or creating team for session: {self.session_id}")
         if self.team is None:
             # Create ExternalTermination for this session
             self.external_termination = ExternalTermination()
             logger.info(f"Created ExternalTermination for session: {self.session_id}")
-            
+
             # Import here to avoid circular imports
-            try:
-                from main import slar_agent_manager
-            except ImportError:
-                from agent import SLARAgentManager
-                slar_agent_manager = SLARAgentManager()
-            
+            from main import slar_agent_manager
+
             # Create team using factory function
-            # base_team = await slar_agent_manager.get_selector_group_chat(user_input_func, self.external_termination)
-            base_team = await slar_agent_manager.get_swarm_team(user_input_func, self.external_termination, user_approval_func)
-            logger.info(f"Created Swarm team for session: {self.session_id}")
+            base_team = await slar_agent_manager.get_selector_group_chat(user_input_func, self.external_termination)
+            logger.info(f"Created SelectorGroupChat team for session: {self.session_id}")
             # Use the team directly
             self.team = base_team
             

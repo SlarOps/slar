@@ -11,7 +11,6 @@ from fastapi.encoders import jsonable_encoder
 
 from autogen_agentchat.messages import TextMessage, UserInputRequestedEvent, MemoryQueryEvent, ModelClientStreamingChunkEvent
 from autogen_agentchat.base import TaskResult
-from autogen_agentchat.agents import ApprovalRequest, ApprovalResponse
 from autogen_core import CancellationToken
 
 logger = logging.getLogger(__name__)
@@ -84,54 +83,6 @@ async def chat(websocket: WebSocket):
             if content:
                 return content
             # Ignore empty messages and keep waiting
-    
-    async def _user_approval(request: ApprovalRequest) -> ApprovalResponse:
-        # Send approval request to client
-        print("approval requested")
-        while True:
-            try:
-                # Check if connection is cancelled
-                # if connection_cancellation_token.is_cancelled:
-                #     raise RuntimeError("Connection cancelled due to WebSocket disconnect")
-                    
-                await websocket.send_json(jsonable_encoder({
-                    "type": "TextMessage",
-                    "content": f"Code execution approval requested:\n{request.code}\nDo you want to execute this code? (y/n): ",
-                    "source": "system"
-                }))
-
-                data = await websocket.receive_json()
-                message = TextMessage.model_validate(data)
-                
-                chat_session.append_to_history(message.model_dump())
-
-                content = (message.content or "").strip()
-                if content in ['y', 'yes']:
-                    return ApprovalResponse(approved=True, reason='Approved by user')
-                elif content in ['n', 'no']:
-                    return ApprovalResponse(approved=False, reason='Denied by user')
-                else:
-                    await websocket.send_json(jsonable_encoder({
-                        "type": "UserInputRequestedEvent",
-                        "content": "Please enter 'y' for yes or 'n' for no.",
-                        "source": "system"
-                    }))
-
-            except WebSocketDisconnect:
-                logger.info("Client disconnected while waiting for approval")
-                connection_cancellation_token.cancel()
-                
-                # Save session state immediately
-                try:
-                    if 'chat_session' in locals():
-                        chat_session.is_streaming = False
-                        await chat_session.save_state()
-                        await chat_session.save_history()
-                        logger.info(f"Session saved on approval disconnect: {session_id}")
-                except Exception as save_error:
-                    logger.error(f"Failed to save session on approval disconnect: {save_error}")
-                    
-                raise RuntimeError("Client disconnected") from None
 
     try:
         while True:
@@ -151,14 +102,14 @@ async def chat(websocket: WebSocket):
             
             try:
                 # Get team and load history (AutoGen pattern)
-                team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                team = await chat_session.get_or_create_team(_user_input)
                 history = await chat_session.get_history()  # Load history BEFORE stream
                 
                 # Smart reset team if needed (only when necessary)
                 reset_success = await chat_session.smart_reset_team(force_reset=False)
                 if not reset_success:
                     # If reset failed, recreate the team
-                    team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                    team = await chat_session.get_or_create_team(_user_input)
                 
                 # Always start with new task following AutoGen patterns
                 logger.info(f"Starting new stream for session {session_id} with {len(history)} historical messages")
@@ -170,7 +121,7 @@ async def chat(websocket: WebSocket):
                     if "need to recreate" in str(e) or "needs recreation" in str(e):
                         # Recreate team and try again
                         logger.info(f"Recreating team for session {session_id}")
-                        team = await chat_session.get_or_create_team(_user_input, _user_approval)
+                        team = await chat_session.get_or_create_team(_user_input)
                         stream = await chat_session.safe_run_stream(task=request)
                     else:
                         raise e

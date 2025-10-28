@@ -3,83 +3,80 @@ Runbook management routes.
 """
 
 import logging
-import os
+import chromadb
 from datetime import datetime
-from pathlib import Path
 from fastapi import APIRouter, HTTPException
+from autogen_core.memory import MemoryContent, MemoryMimeType
 
-# Import models and utilities with fallback
-try:
-    from ..models import (
-        IncidentRunbookRequest,
-        RunbookRetrievalResponse,
-        RunbookResult,
-        GitHubIndexRequest,
-        GitHubIndexResponse,
-        DocumentListResponse,
-        DocumentStatsResponse,
-        DocumentDetailResponse
-    )
-    from ..utils import (
-        GitHubDocumentIndexer,
-        generate_source_id,
-        detect_source_type,
-        load_indexed_sources,
-        save_indexed_source,
-        save_indexed_sources,
-        clear_collection
-    )
-except ImportError:
-    from models import (
-        IncidentRunbookRequest,
-        RunbookRetrievalResponse,
-        RunbookResult,
-        GitHubIndexRequest,
-        GitHubIndexResponse,
-        DocumentListResponse,
-        DocumentStatsResponse,
-        DocumentDetailResponse
-    )
-    from utils import (
-        GitHubDocumentIndexer,
-        generate_source_id,
-        detect_source_type,
-        load_indexed_sources,
-        save_indexed_source,
-        save_indexed_sources,
-        clear_collection
-    )
+from config import get_settings
+from models import (
+    IncidentRunbookRequest,
+    RunbookRetrievalResponse,
+    RunbookResult,
+    GitHubIndexRequest,
+    GitHubIndexResponse,
+    DocumentListResponse,
+    DocumentStatsResponse,
+    DocumentDetailResponse
+)
+from utils import (
+    GitHubDocumentIndexer,
+    generate_source_id,
+    detect_source_type,
+    load_indexed_sources,
+    save_indexed_source,
+    save_indexed_sources,
+    clear_collection
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+settings = get_settings()
 
 
-def get_main_imports():
-    """Helper function to get main imports with fallback."""
+def get_rag_memory():
+    """Get RAG memory from slar_agent_manager to avoid circular import."""
+    from main import slar_agent_manager
+    return slar_agent_manager.get_rag_memory()
+
+
+def get_chroma_collection():
+    """
+    Get ChromaDB collection with simplified logic.
+    Returns: (collection, collection_name) or raises HTTPException if not found.
+    """
+    collection_name = settings.chroma_collection_name
+    rag_memory = get_rag_memory()
+
+    # Try to get collection from rag_memory first
+    if hasattr(rag_memory, '_collection') and rag_memory._collection is not None:
+        return rag_memory._collection, collection_name
+
+    # Fallback: Create new client connection
     try:
-        from ..main import rag_memory, SOURCES_FILE
-        return rag_memory, SOURCES_FILE
-    except ImportError:
-        from main import rag_memory, SOURCES_FILE
-        return rag_memory, SOURCES_FILE
+        client = chromadb.PersistentClient(path=settings.chromadb_path)
+        collection = client.get_collection(name=collection_name)
+        return collection, collection_name
+    except Exception as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"ChromaDB collection not found: {str(e)}"
+        )
 
 
 @router.post("/runbook/retrieve", response_model=RunbookRetrievalResponse)
 async def retrieve_runbook_for_incident(request: IncidentRunbookRequest):
     """
     Retrieve relevant runbooks for a given incident.
-    This endpoint uses vector similarity search to find the most relevant runbooks
-    based on the incident title, description, and optional keywords.
+    Uses vector similarity search to find the most relevant runbooks.
     """
     try:
-        rag_memory, _ = get_main_imports()
-        from autogen_core.memory import MemoryContent, MemoryMimeType
-        
+        rag_memory = get_rag_memory()
+
         # Create search query from incident information
         search_parts = [request.incident_title, request.incident_description]
         if request.keywords:
             search_parts.extend(request.keywords)
-
         search_query = " ".join(search_parts)
 
         # Retrieve relevant runbooks using vector memory
@@ -90,7 +87,6 @@ async def retrieve_runbook_for_incident(request: IncidentRunbookRequest):
         # Process results into response format
         runbook_results = []
         for result in results:
-            # Extract runbook title from content
             content_lines = result.content.split('\n')
             runbook_title = "Unknown Runbook"
             relevance_keywords = []
@@ -180,16 +176,14 @@ async def index_github_runbooks(request: GitHubIndexRequest):
     Supports both repository URLs and direct file URLs.
     """
     try:
-        rag_memory, SOURCES_FILE = get_main_imports()
-        
+        rag_memory = get_rag_memory()
+
         # Validate GitHub URL
         if not request.github_url.startswith("https://github.com/"):
             raise HTTPException(status_code=400, detail="Invalid GitHub URL")
 
-        # Create GitHub content indexer
+        # Create GitHub content indexer and index the content
         github_indexer = GitHubDocumentIndexer(memory=rag_memory)
-
-        # Index the GitHub content
         result = await github_indexer.index_github_content(
             github_url=request.github_url,
             branch=request.branch
@@ -208,7 +202,7 @@ async def index_github_runbooks(request: GitHubIndexRequest):
             "status": "active"
         }
 
-        await save_indexed_source(source_info, SOURCES_FILE)
+        await save_indexed_source(source_info, settings.sources_file)
         logger.info(f"Saved source info for {request.github_url}")
 
         return GitHubIndexResponse(
@@ -228,41 +222,9 @@ async def index_github_runbooks(request: GitHubIndexRequest):
 async def list_indexed_documents():
     """
     List all documents that have been indexed in the ChromaDB vector memory.
-    This endpoint provides visibility into what runbooks and documents are available for retrieval.
     """
     try:
-        rag_memory, _ = get_main_imports()
-        
-        # Try multiple approaches to access the ChromaDB collection
-        collection = None
-        collection_name = "autogen_docs"  # default
-
-        # Method 1: Try accessing _collection attribute
-        if hasattr(rag_memory, '_collection') and rag_memory._collection is not None:
-            collection = rag_memory._collection
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-
-        # Method 2: Try accessing _client and get collection
-        elif hasattr(rag_memory, '_client') and rag_memory._client is not None:
-            client = rag_memory._client
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-                collection = client.get_collection(name=collection_name)
-
-        # Method 3: Try creating a new client connection
-        else:
-            import chromadb
-            # Use the same persistence path as configured
-            persistence_path = os.path.join(str(Path.home()), ".chromadb_autogen")
-            client = chromadb.PersistentClient(path=persistence_path)
-            collection = client.get_collection(name=collection_name)
-
-        if collection is None:
-            raise HTTPException(
-                status_code=404,
-                detail="ChromaDB collection not found. No documents have been indexed yet."
-            )
+        collection, collection_name = get_chroma_collection()
 
         # Get all documents from the collection
         result = collection.get()
@@ -351,43 +313,9 @@ async def get_document_statistics():
     Returns counts by source type and total document information.
     """
     try:
-        rag_memory, _ = get_main_imports()
-        
-        # Try multiple approaches to access the ChromaDB collection
-        collection = None
-        collection_name = "autogen_docs"  # default
-
-        # Method 1: Try accessing _collection attribute
-        if hasattr(rag_memory, '_collection') and rag_memory._collection is not None:
-            collection = rag_memory._collection
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-
-        # Method 2: Try accessing _client and get collection
-        elif hasattr(rag_memory, '_client') and rag_memory._client is not None:
-            client = rag_memory._client
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-                collection = client.get_collection(name=collection_name)
-
-        # Method 3: Try creating a new client connection
-        else:
-            import chromadb
-            # Use the same persistence path as configured
-            persistence_path = os.path.join(str(Path.home()), ".chromadb_autogen")
-            client = chromadb.PersistentClient(path=persistence_path)
-            collection = client.get_collection(name=collection_name)
-
-        if collection is None:
-            return DocumentStatsResponse(
-                total_documents=0,
-                collection_name=collection_name,
-                sources={},
-                total_chunks=0
-            )
+        collection, collection_name = get_chroma_collection()
 
         # Get all documents metadata to analyze sources
-        # Note: IDs are returned by default, only specify metadatas
         result = collection.get(include=['metadatas'])
 
         # Count by source type
@@ -418,38 +346,7 @@ async def get_document_detail(document_id: str):
     Get detailed information about a specific document including all its chunks.
     """
     try:
-        rag_memory, _ = get_main_imports()
-        
-        # Try multiple approaches to access the ChromaDB collection
-        collection = None
-        collection_name = "autogen_docs"  # default
-
-        # Method 1: Try accessing _collection attribute
-        if hasattr(rag_memory, '_collection') and rag_memory._collection is not None:
-            collection = rag_memory._collection
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-
-        # Method 2: Try accessing _client and get collection
-        elif hasattr(rag_memory, '_client') and rag_memory._client is not None:
-            client = rag_memory._client
-            if hasattr(rag_memory, '_config'):
-                collection_name = rag_memory._config.collection_name
-                collection = client.get_collection(name=collection_name)
-
-        # Method 3: Try creating a new client connection
-        else:
-            import chromadb
-            # Use the same persistence path as configured
-            persistence_path = os.path.join(str(Path.home()), ".chromadb_autogen")
-            client = chromadb.PersistentClient(path=persistence_path)
-            collection = client.get_collection(name=collection_name)
-
-        if collection is None:
-            raise HTTPException(
-                status_code=404,
-                detail="ChromaDB collection not found."
-            )
+        collection, _ = get_chroma_collection()
 
         # Get all documents to find the one with matching ID and related chunks
         result = collection.get()
@@ -524,14 +421,14 @@ async def get_document_detail(document_id: str):
 async def reindex_all_runbooks():
     """
     Reindex all previously indexed GitHub sources.
-    This endpoint reads from the JSON file and re-indexes all sources,
+    Reads from the JSON file and re-indexes all sources,
     clearing existing data first to avoid duplicates.
     """
     try:
-        rag_memory, SOURCES_FILE = get_main_imports()
-        
+        rag_memory = get_rag_memory()
+
         # Load sources from JSON file
-        sources = load_indexed_sources(SOURCES_FILE)
+        sources = load_indexed_sources(settings.sources_file)
 
         if not sources:
             return {
@@ -583,7 +480,7 @@ async def reindex_all_runbooks():
                 })
 
         # Save updated sources back to JSON
-        await save_indexed_sources(sources, SOURCES_FILE)
+        await save_indexed_sources(sources, settings.sources_file)
 
         # Prepare response
         response = {
@@ -614,9 +511,7 @@ async def list_indexed_sources_endpoint():
     Shows what sources are available for reindexing.
     """
     try:
-        _, SOURCES_FILE = get_main_imports()
-        
-        sources = load_indexed_sources(SOURCES_FILE)
+        sources = load_indexed_sources(settings.sources_file)
 
         # Calculate some statistics
         total_files = sum(source.get('files_processed', 0) for source in sources)
@@ -643,9 +538,7 @@ async def remove_indexed_source(source_id: str):
     This removes the source from future reindex operations.
     """
     try:
-        _, SOURCES_FILE = get_main_imports()
-        
-        sources = load_indexed_sources(SOURCES_FILE)
+        sources = load_indexed_sources(settings.sources_file)
         original_count = len(sources)
 
         # Filter out the source with matching ID
@@ -655,7 +548,7 @@ async def remove_indexed_source(source_id: str):
             raise HTTPException(status_code=404, detail="Source not found")
 
         # Save updated sources
-        await save_indexed_sources(sources, SOURCES_FILE)
+        await save_indexed_sources(sources, settings.sources_file)
 
         return {
             "status": "success",

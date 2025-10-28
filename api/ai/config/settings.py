@@ -42,14 +42,6 @@ class Settings:
         self.chroma_k_results: int = int(os.getenv("CHROMA_K_RESULTS", "3"))
         self.chroma_score_threshold: float = float(os.getenv("CHROMA_SCORE_THRESHOLD", "0.4"))
 
-        # Feature Flags
-        self.enable_kubernetes: bool = os.getenv("ENABLE_KUBERNETES", "false").lower() == "true"
-        self.enable_code_executor: bool = os.getenv("ENABLE_CODE_EXECUTOR", "false").lower() == "true"
-
-        # Agent Framework Selection
-        # Options: "autogen" or "claude" - default to "autogen"
-        self.default_agent_type: str = os.getenv("DEFAULT_AGENT_TYPE", "autogen")
-
         # MCP Configuration
         default_mcp_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mcp_config.yaml")
         self.mcp_config_path: str = os.getenv("MCP_CONFIG_PATH", default_mcp_config)
@@ -57,10 +49,6 @@ class Settings:
         # Session Management
         self.session_timeout_minutes: int = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
         self.auto_save_interval_seconds: int = int(os.getenv("AUTO_SAVE_INTERVAL_SECONDS", "300"))
-
-        # Code Executor Configuration
-        self.code_executor_image: str = os.getenv("CODE_EXECUTOR_IMAGE", "python:3.11-slim")
-        self.code_executor_work_dir: str = os.getenv("CODE_EXECUTOR_WORK_DIR", "coding")
 
         # Token Limits
         self.max_total_tokens: int = int(os.getenv("MAX_TOTAL_TOKENS", "12000"))
@@ -92,9 +80,7 @@ class Settings:
         """String representation hiding sensitive data."""
         return (
             f"Settings(host={self.host}, port={self.port}, "
-            f"model={self.openai_model}, "
-            f"kubernetes={self.enable_kubernetes}, "
-            f"code_executor={self.enable_code_executor})"
+            f"model={self.openai_model})"
         )
 
 

@@ -1,15 +1,21 @@
+"""
+Tool management and MCP integration for SLAR AI system.
+"""
+
 import asyncio
 import os
 import json
+import logging
+from typing import List, Dict, Any, Optional
+
 import yaml
-from typing import List, Dict, Any, Optional, Union
 from autogen_ext.tools.mcp import (
-    StdioServerParams, 
-    mcp_server_tools, 
-    StreamableHttpMcpToolAdapter, 
+    StdioServerParams,
     StreamableHttpServerParams,
     McpWorkbench
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MCPServerConfig:
@@ -71,13 +77,6 @@ class ToolManager:
         """Clear all tools and workbenches"""
         self.tools = []
         self.server_tools = {}
-        # Close all workbenches properly
-        for workbench in self.workbenches.values():
-            try:
-                # Note: workbenches should be closed in async context
-                pass  # We'll handle this in async methods
-            except Exception as e:
-                print(f"Warning: Error closing workbench: {e}")
         self.workbenches = {}
 
     def _load_config_from_file(self, config_path: str) -> List[MCPServerConfig]:
@@ -149,15 +148,14 @@ class ToolManager:
             return servers
 
         except FileNotFoundError:
-            print(f"Config file {config_path} not found. Using default configuration.")
+            logger.warning(f"Config file {config_path} not found. Using default configuration.")
             return self.get_default_config()
         except Exception as e:
-            print(f"Error loading config: {e}. Using default configuration.")
+            logger.error(f"Error loading config: {e}. Using default configuration.")
             return self.get_default_config()
 
     def get_default_config(self) -> List[MCPServerConfig]:
         """Fallback default configuration - tries multiple config files"""
-        # Try alternative config file locations
         default_config_paths = [
             "data/mcp_config.yaml",
             "data/mcp_config.json",
@@ -167,16 +165,16 @@ class ToolManager:
 
         for config_path in default_config_paths:
             try:
-                print(f"Trying fallback config: {config_path}")
+                logger.info(f"Trying fallback config: {config_path}")
                 servers = self._load_config_from_file(config_path)
-                print(f"✓ Loaded fallback configuration from {config_path}")
+                logger.info(f"Loaded fallback configuration from {config_path}")
                 return servers
-            except (FileNotFoundError, Exception) as e:
-                print(f"  Failed to load {config_path}: {e}")
+            except Exception as e:
+                logger.debug(f"Failed to load {config_path}: {e}")
                 continue
 
         # If no config files found, create minimal default
-        print("No config files found, using minimal default configuration")
+        logger.info("No config files found, using minimal default configuration")
         servers = [
             MCPServerConfig(
                 name="filesystem",
@@ -199,52 +197,46 @@ class ToolManager:
 
     def list_servers(self):
         """List all configured MCP servers and their status"""
-        print("Configured MCP Servers:")
+        logger.info("Configured MCP Servers:")
         for server in self.mcp_servers:
-            print(f"  {server}")
-        print()
+            logger.info(f"  {server}")
 
     async def load_mcp_workbenches(self) -> Dict[str, McpWorkbench]:
         """Load McpWorkbench instances for all enabled MCP servers"""
         workbenches = {}
-        
+
         for server in self.mcp_servers:
             if not server.enabled:
-                print(f"Skipping disabled server: {server.name}")
+                logger.info(f"Skipping disabled server: {server.name}")
                 continue
-                
+
             try:
-                print(f"Creating workbench for {server.name} ({server.server_type})...")
-                
-                # Create workbench with server params
+                logger.info(f"Creating workbench for {server.name} ({server.server_type})...")
+
+                # Create and start workbench
                 workbench = McpWorkbench(server_params=server.params)
-                
-                # Start the workbench
                 await workbench.start()
-                
                 workbenches[server.name] = workbench
-                print(f"✓ Created workbench for {server.name}")
-                
+                logger.info(f"Created workbench for {server.name}")
+
                 # Try to list tools to verify connection
                 try:
                     tools = await workbench.list_tools()
                     tool_names = [tool.get('name', 'unknown') for tool in tools]
                     self.server_tools[server.name] = tool_names
-                    print(f"  Available tools: {', '.join(tool_names[:5])}")
+                    logger.info(f"  Available tools: {', '.join(tool_names[:5])}")
                     if len(tool_names) > 5:
-                        print(f"  ... and {len(tool_names) - 5} more")
+                        logger.info(f"  ... and {len(tool_names) - 5} more")
                 except Exception as e:
-                    print(f"  Warning: Could not list tools for {server.name}: {e}")
+                    logger.warning(f"Could not list tools for {server.name}: {e}")
                     self.server_tools[server.name] = []
-                    
+
             except Exception as e:
-                print(f"✗ Failed to create workbench for {server.name}: {e}")
-                import traceback
-                print(f"  Error details: {traceback.format_exc()}")
+                logger.error(f"Failed to create workbench for {server.name}: {e}")
                 continue
-                
+
         self.workbenches = workbenches
-        print(f"\nTotal workbenches created: {len(workbenches)}")
+        logger.info(f"Total workbenches created: {len(workbenches)}")
         return workbenches
 
     def get_workbench(self, server_name: str) -> Optional[McpWorkbench]:

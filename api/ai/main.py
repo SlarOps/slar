@@ -35,10 +35,7 @@ settings = get_settings()
 
 # Configure logging early in the application startup
 setup_logging(settings.log_level)
-from core.queue_manager import SessionQueueManager
-from workers.agent_worker import AgentWorker
 from routes import health_router, sessions_router, runbook_router, websocket_router
-from routes.websocket_queue import router as websocket_queue_router
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +45,6 @@ session_manager = SessionManager(settings.data_store)
 
 # Initialize queue-based architecture (Following AutoGen pattern)
 # Based on: https://github.com/microsoft/autogen/blob/python-v0.7.4/python/docs/src/user-guide/core-user-guide/design-patterns/concurrent-agents.ipynb
-queue_manager = SessionQueueManager()
-agent_worker = AgentWorker(queue_manager=queue_manager, session_manager=session_manager)
 
 # Legacy compatibility - keep rag_memory for existing code
 rag_memory = slar_agent_manager.get_rag_memory()
@@ -121,7 +116,7 @@ async def lifespan(app: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     
-    # Startup: Initialize ChromaDB memory and download models
+    # Startup: Initialize ChromaDB memory
     print("🚀 Starting vector store initialization...")
     logger.info("Starting vector store initialization...")
     try:
@@ -130,7 +125,6 @@ async def lifespan(app: FastAPI):
         client = chromadb.PersistentClient(path=settings.chromadb_path)
         client.get_or_create_collection(name=settings.chroma_collection_name)
         logger.info("Vector store connectivity verified")
-        await slar_agent_manager.create_excutor()
     except Exception as e:
         print(f"❌ Vector store connectivity check failed: {str(e)}")
         logger.error(f"Vector store connectivity check failed: {str(e)}")
@@ -159,12 +153,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down services...")
 
     # Stop agent workers (Following AutoGen pattern: runtime.stop())
-    try:
-        logger.info("Stopping agent workers...")
-        await agent_worker.stop_all_workers()
-        logger.info("Agent workers stopped")
-    except Exception as e:
-        logger.error(f"Error stopping agent workers: {str(e)}")
+    # Note: Agent workers have been removed from this version
+    # try:
+    #     logger.info("Stopping agent workers...")
+    #     await agent_worker.stop_all_workers()
+    #     logger.info("Agent workers stopped")
+    # except Exception as e:
+    #     logger.error(f"Error stopping agent workers: {str(e)}")
 
     # Trigger graceful shutdown if not already triggered
     if not shutdown_event.is_set():
@@ -202,24 +197,14 @@ app.include_router(health_router, tags=["health"])
 app.include_router(sessions_router, tags=["sessions"])
 app.include_router(runbook_router, tags=["runbook"])
 app.include_router(websocket_router, tags=["websocket"])
-app.include_router(websocket_queue_router, tags=["websocket-queue"])  # New queue-based WebSocket
 
 
 # Legacy wrapper functions for backward compatibility
-async def get_team(user_input_func):
+async def get_selector_group_chat(user_input_func, external_termination=None):
     """
     Get a configured SLAR agent team.
     This function is now a wrapper around SLARAgentManager for backward compatibility.
     """
-    return await slar_agent_manager.get_team(user_input_func)
-
-
-async def get_selector_group_chat(user_input_func, approval_func, external_termination=None):
-    """
-    Get a configured SLAR agent team.
-    This function is now a wrapper around SLARAgentManager for backward compatibility.
-    """
-    slar_agent_manager.set_approval_func(approval_func)
     slar_agent_manager.set_user_input_func(user_input_func)
     return await slar_agent_manager.get_selector_group_chat(user_input_func, external_termination)
 
