@@ -100,7 +100,7 @@ function NavLinks({ onNavigate }) {
   return (
     <>
       <Link href="/ai-agent" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Ai agent
+        Assistant
       </Link>
       <Link href="/incidents" onClick={onNavigate} className="text-sm font-medium hover:underline">
         Incidents

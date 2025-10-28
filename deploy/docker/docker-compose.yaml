@@ -25,19 +25,6 @@ services:
     restart: unless-stopped
     networks:
       - slar-network
-  
-  terminal:
-    container_name: slar-ai-terminal
-    build:
-      context: ../../api/ai/terminal
-    image: ghcr.io/slarops/slar-ai-terminal:latest
-    expose:
-      - "8003"
-    ports:
-      - "8003:8003"
-    restart: unless-stopped
-    networks:
-      - slar-network
 
   api:
     container_name: slar-api
@@ -55,23 +42,6 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
       - SLAR_ENV=production
-    restart: unless-stopped
-    networks:
-      - slar-network
-
-  worker:
-    container_name: slar-worker
-    build:
-      context: ../../api
-    image: ghcr.io/slarops/slar-api:latest
-    command: ["./worker"]
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
-      - POLL_INTERVAL=1
-      - BATCH_SIZE=10
-      - MAX_RETRIES=3
-      - LOG_LEVEL=DEBUG
-      - LOG_FILE=/app/worker.log
     restart: unless-stopped
     networks:
       - slar-network

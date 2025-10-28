@@ -184,19 +184,6 @@ components:
           ]
         }
 
-  terminal:
-    image:
-      name: slar-ai-terminal
-      tag: latest
-      pullPolicy: Always
-    service:
-      enabled: true
-      type: ClusterIP
-      port: 8003
-    env:
-      - name: PORT
-        value: "8003"
-
   api:
     image:
       name: slar-api
@@ -231,31 +218,6 @@ components:
             key: supabase-jwt-secret
       - name: SLAR_ENV
         value: "production"
-
-  worker:
-    image:
-      name: slar-api
-      tag: latest
-      pullPolicy: Always
-    service:
-      enabled: false
-    command: ["./worker"]
-    env:
-      - name: DATABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: database-url
-      - name: POLL_INTERVAL
-        value: "1"
-      - name: BATCH_SIZE
-        value: "10"
-      - name: MAX_RETRIES
-        value: "3"
-      - name: LOG_LEVEL
-        value: "DEBUG"
-      - name: LOG_FILE
-        value: "/app/worker.log"
 
   slack-worker:
     image:
