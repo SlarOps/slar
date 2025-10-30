@@ -43,23 +43,28 @@ async def chat(websocket: WebSocket):
     # Create cancellation token for this WebSocket connection (not the entire session)
     connection_cancellation_token = CancellationToken()
 
+    # Flag to track WebSocket connection state
+    is_connected = True
+
     # User input function used by the team.
     async def _user_input(prompt: str, cancellation_token: CancellationToken | None) -> str:
+        nonlocal is_connected
         # Wait until we receive a non-empty TextMessage from the client.
         print("user input requested")
         while True:
             try:
-                # Check if connection is cancelled
-                # if connection_cancellation_token.is_cancelled:
-                #     raise RuntimeError("Connection cancelled due to WebSocket disconnect")
-                    
+                # Check if connection is still active
+                if not is_connected or connection_cancellation_token.is_cancelled:
+                    raise RuntimeError("Connection cancelled due to WebSocket disconnect")
+
                 data = await websocket.receive_json()
                 message = TextMessage.model_validate(data)
                 chat_session.append_to_history(message.model_dump())
-            except WebSocketDisconnect:
-                logger.info("Client disconnected while waiting for user input")
+            except (WebSocketDisconnect, RuntimeError) as e:
+                # Handle both WebSocketDisconnect and RuntimeError from Starlette
+                logger.info(f"Client disconnected while waiting for user input: {type(e).__name__}")
                 connection_cancellation_token.cancel()
-                
+
                 # Save session state immediately
                 try:
                     if 'chat_session' in locals():
@@ -69,7 +74,7 @@ async def chat(websocket: WebSocket):
                         logger.info(f"Session saved on user input disconnect: {session_id}")
                 except Exception as save_error:
                     logger.error(f"Failed to save session on user input disconnect: {save_error}")
-                    
+
                 raise RuntimeError("Client disconnected") from None
 
             # Try to validate as TextMessage; ignore other event types
@@ -155,8 +160,9 @@ async def chat(websocket: WebSocket):
             except WebSocketDisconnect:
                 # Client disconnected during message processing - save session before exit
                 logger.info("Client disconnected during message processing")
+                is_connected = False
                 connection_cancellation_token.cancel()
-                
+
                 # Save session state immediately
                 try:
                     if chat_session:
@@ -166,10 +172,27 @@ async def chat(websocket: WebSocket):
                         logger.info(f"Session saved on disconnect: {session_id}")
                 except Exception as save_error:
                     logger.error(f"Failed to save session on disconnect: {save_error}")
-                
+
                 break
             except Exception as e:
-                # Send error message to client
+                # Check if this is a disconnect-related error
+                if "Client disconnected" in str(e) or "Connection cancelled" in str(e):
+                    logger.info(f"Agent task interrupted by disconnect: {str(e)}")
+                    is_connected = False
+
+                    # Save session state immediately
+                    try:
+                        if chat_session:
+                            chat_session.is_streaming = False
+                            await chat_session.save_state()
+                            await chat_session.save_history()
+                            logger.info(f"Session saved after disconnect interrupt: {session_id}")
+                    except Exception as save_error:
+                        logger.error(f"Failed to save session after disconnect interrupt: {save_error}")
+
+                    break
+
+                # Send error message to client for other errors
                 error_message = {
                     "type": "error",
                     "content": f"Error: {str(e)}",
@@ -186,7 +209,8 @@ async def chat(websocket: WebSocket):
                 except WebSocketDisconnect:
                     # Client disconnected while sending error - save session before exit
                     logger.info("Client disconnected while sending error message")
-                    
+                    is_connected = False
+
                     # Save session state immediately
                     try:
                         if chat_session:
@@ -196,7 +220,7 @@ async def chat(websocket: WebSocket):
                             logger.info(f"Session saved on error disconnect: {session_id}")
                     except Exception as save_error:
                         logger.error(f"Failed to save session on error disconnect: {save_error}")
-                    
+
                     break
                 except Exception as send_error:
                     logger.error(f"Failed to send error message: {str(send_error)}")
@@ -204,8 +228,9 @@ async def chat(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
+        is_connected = False
         connection_cancellation_token.cancel()
-        
+
         # Save session state immediately on disconnect
         try:
             if chat_session:
@@ -227,7 +252,8 @@ async def chat(websocket: WebSocket):
         except WebSocketDisconnect:
             # Client already disconnected - save session before exit
             logger.info("Client disconnected before error could be sent")
-            
+            is_connected = False
+
             # Save session state immediately
             try:
                 if chat_session:
