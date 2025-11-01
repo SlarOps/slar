@@ -107,15 +107,6 @@ const MessageComponent = memo(({ message }) => {
   // State for expandable tool results
   const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
 
-  // Add streaming indicator with staggered animation
-  const StreamingIndicator = () => (
-    <span className="inline-flex items-center ml-2">
-      <span className="animate-pulse text-gray-400" style={{ animationDelay: '0ms' }}>●</span>
-      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '200ms' }}>●</span>
-      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '400ms' }}>●</span>
-    </span>
-  );
-
   // Memoize tool result summary
   const toolResultData = useMemo(() => {
     if (message.type === 'ToolCallExecutionEvent' && message.content) {
@@ -173,7 +164,7 @@ const MessageComponent = memo(({ message }) => {
         }`}
       >
         <div>
-          {message.role !== "user" ? (
+          {message.role !== "user" && (message.content || message.thought) ? (
             <div className="flex items-center gap-2 flex-wrap">
               <Badge color="bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
                 {message.source}
@@ -359,7 +350,6 @@ const MessageComponent = memo(({ message }) => {
           >
             {message.content}
           </Markdown>
-          {message.isStreaming && <StreamingIndicator />}
         </div>
         )}
       </div>

@@ -1,9 +1,0 @@
-__pycache__
-.env
-env
-coding/
-.chromadb_autogen
-.ruff_cache
-team_history.json
-team_state.json
-sessions/

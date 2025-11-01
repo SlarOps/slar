@@ -8,64 +8,60 @@ import {
   MessagesList,
   statusColor,
   severityColor,
-  useWebSocket,
-  useChatHistory,
   useAutoScroll,
   useAttachedIncident,
-  useChatSubmit,
-  useSessionId,
-  useMessagesState,
-  useStopSession
 } from '../../components/ai-agent';
+import { ToolApprovalModal } from '../../components/ai-agent/ToolApprovalModal';
 import 'highlight.js/styles/github.css';
+import { useHttpStreamingChat } from '../../hooks/useHttpStreamingChat';
 
 export default function AIAgentPage() {
   const { session } = useAuth();
   const [input, setInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
   const endRef = useRef(null);
 
-  // Messages state management
+  // Use HTTP streaming instead of WebSocket
   const {
     messages,
-    historyLoaded,
     setMessages,
-    setMessagesFromHistory,
-    resetMessages,
-    addMessage
-  } = useMessagesState();
-
-  // Session management
-  const { sessionId, resetSession } = useSessionId();
-
-  // Custom hooks để tổ chức logic
-  const { wsConnection, connectionStatus } = useWebSocket(session, setMessages, setIsSending);
-  const { attachedIncident, setAttachedIncident } = useAttachedIncident();
-  const { stopSession, isStopping } = useStopSession(sessionId, wsConnection, setIsSending, setMessages);
-  const { onSubmit } = useChatSubmit(
-    input,
-    setInput,
-    isSending,
-    setIsSending,
     connectionStatus,
-    wsConnection,
-    attachedIncident,
-    setMessages
-  );
+    isSending,
+    sendMessage,
+    stopStreaming,
+    sessionId,
+    resetSession,
+    pendingApproval,
+    approveTool,
+    denyTool,
+  } = useHttpStreamingChat();
+
+  const { attachedIncident, setAttachedIncident } = useAttachedIncident();
+
+  // Handle chat submit
+  const handleSubmit = useCallback(async (e) => {
+    e.preventDefault();
+
+    if (!input.trim() || isSending) {
+      return;
+    }
+
+    const message = input.trim();
+    setInput("");
+
+    // Include attached incident context if available
+    let fullMessage = message;
+    if (attachedIncident) {
+      fullMessage = `Context: Incident #${attachedIncident.id} - ${attachedIncident.title}\n\n${message}`;
+    }
+
+    await sendMessage(fullMessage);
+  }, [input, isSending, attachedIncident, sendMessage]);
 
   // Handle session reset
   const handleSessionReset = useCallback(() => {
-    // Reset messages state
-    resetMessages();
-
-    // Reset session ID
-    const newSessionId = resetSession();
-
-    // Show welcome message
-    setMessagesFromHistory([]);
-
-    console.log(`Session reset. New session: ${newSessionId}`);
-  }, [resetSession, resetMessages, setMessagesFromHistory]);
+    resetSession();
+    console.log('Session reset. New session will be created on next message.');
+  }, [resetSession]);
 
   // Handle input change
   const handleInputChange = useCallback((e) => {
@@ -77,16 +73,13 @@ export default function AIAgentPage() {
     setAttachedIncident(null);
   }, [setAttachedIncident]);
 
-  // Load chat history với session ID và auto-scroll
-  useChatHistory(setMessagesFromHistory, sessionId);
+  // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
 
   return (
     <div className="flex flex-col h-[calc(100vh-5rem)] bg-white dark:bg-gray-900">
       <div className="flex-shrink-0">
-        <ChatHeader
-          connectionStatus={connectionStatus}
-        />
+        <ChatHeader />
       </div>
 
       <MessagesList
@@ -99,7 +92,7 @@ export default function AIAgentPage() {
         <ChatInput
           value={input}
           onChange={handleInputChange}
-          onSubmit={onSubmit}
+          onSubmit={handleSubmit}
           isLoading={isSending}
           placeholder="Ask anything about incidents..."
           loadingText="Đang xử lý..."
@@ -108,13 +101,24 @@ export default function AIAgentPage() {
           statusColor={statusColor}
           severityColor={severityColor}
           showModeSelector={false}
-          onStop={stopSession}
+          onStop={stopStreaming}
           sessionId={sessionId}
           isStreaming={isSending}
           onSessionReset={handleSessionReset}
         />
       </div>
+
+      {/* Tool Approval Modal */}
+      {pendingApproval && (
+        <ToolApprovalModal
+          isOpen={!!pendingApproval}
+          onClose={() => {}}
+          toolName={pendingApproval.tool_name}
+          toolArgs={pendingApproval.tool_args}
+          onApprove={() => approveTool(pendingApproval.approval_id, 'Approved by user')}
+          onDeny={() => denyTool(pendingApproval.approval_id, 'Denied by user')}
+        />
+      )}
     </div>
   );
 }
-
