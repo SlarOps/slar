@@ -105,6 +105,7 @@ export default function AIAgentPage() {
           severityColor={severityColor}
           showModeSelector={false}
           onStop={stopStreaming}
+          isSending={isSending}
           sessionId={sessionId}
           onSessionReset={handleSessionReset}
         />

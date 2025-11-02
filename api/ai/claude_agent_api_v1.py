@@ -13,7 +13,6 @@ from claude_agent_sdk import (
     ToolUseBlock,
     ToolResultBlock,
     SystemMessage,
-    create_sdk_mcp_server
 )
 import json
 import asyncio
@@ -23,7 +22,7 @@ import logging
 from contextvars import ContextVar
 from typing import Dict, Optional
 
-from incident_tools import get_incidents_by_time, get_incident_by_id, get_incident_stats, set_auth_token
+from incident_tools import create_incident_tools_server, set_auth_token
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -199,12 +198,8 @@ async def agent_task(
             # Set the auth token for incident_tools to use
             set_auth_token(current_auth_token or "")
 
-            # Create MCP server
-            incident_tools_server = create_sdk_mcp_server(
-                name="incident_tools",
-                version="1.0.0",
-                tools=[get_incidents_by_time, get_incident_by_id, get_incident_stats]
-            )
+            # Create MCP server with all incident tools
+            incident_tools_server = create_incident_tools_server()
 
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,

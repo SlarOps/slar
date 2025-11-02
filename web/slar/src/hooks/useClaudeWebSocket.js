@@ -269,6 +269,22 @@ export function useClaudeWebSocket(authToken = null) {
               }]);
               break;
 
+            case 'interrupt_acknowledged':
+              console.log('Interrupt acknowledged:', data.session_id);
+              break;
+
+            case 'interrupted':
+              console.log('Agent interrupted:', data.session_id);
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                source: 'system',
+                content: 'Task interrupted by user',
+                type: 'interrupted',
+                timestamp: new Date().toISOString()
+              }]);
+              setIsSending(false);
+              break;
+
             case 'complete':
             case 'success':
               // Query completed
@@ -491,12 +507,34 @@ export function useClaudeWebSocket(authToken = null) {
     console.log('Session reset');
   }, []);
 
-  // Stop streaming (close and reconnect)
+  // Send interrupt request
+  const sendInterrupt = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not connected');
+      return;
+    }
+
+    if (!sessionId) {
+      console.error('No session ID available');
+      return;
+    }
+
+    try {
+      console.log('Sending interrupt request for session:', sessionId);
+      wsRef.current.send(JSON.stringify({
+        type: 'interrupt',
+        session_id: sessionId
+      }));
+    } catch (error) {
+      console.error('Error sending interrupt:', error);
+    }
+  }, [sessionId]);
+
+  // Stop streaming (using interrupt)
   const stopStreaming = useCallback(() => {
     if (isSending) {
-      // Close connection to stop streaming
-      disconnect();
-      setIsSending(false);
+      // Send interrupt request
+      sendInterrupt();
 
       // Mark last message as not streaming
       setMessages(prev => {
@@ -509,13 +547,8 @@ export function useClaudeWebSocket(authToken = null) {
         }
         return prev;
       });
-
-      // Reconnect after a short delay
-      setTimeout(() => {
-        connect();
-      }, 500);
     }
-  }, [isSending, disconnect, connect]);
+  }, [isSending, sendInterrupt]);
 
   // Auto-connect on mount (only once)
   useEffect(() => {
@@ -546,6 +579,7 @@ export function useClaudeWebSocket(authToken = null) {
     isSending,
     sendMessage,
     stopStreaming,
+    sendInterrupt,
     sessionId,
     resetSession,
     pendingApproval,

@@ -13,7 +13,8 @@ const ChatInput = ({
   showModeSelector = true,
   onStop = null,
   sessionId = null,
-  onSessionReset = null
+  onSessionReset = null,
+  isSending = false
 }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -135,13 +136,13 @@ const ChatInput = ({
                 className="flex-1 bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
               />
 
-              {/* Stop Button - Show when onStop handler is provided */}
-              {onStop && (
+              {/* Stop Button - Show when streaming/sending */}
+              {onStop && isSending && (
                 <button
                   type="button"
                   onClick={handleStop}
-                  className="p-2 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
-                  title="Stop"
+                  className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-200 dark:hover:bg-red-900/20 rounded-md transition-colors animate-pulse"
+                  title="Stop generating"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                     <rect x="6" y="6" width="12" height="12" rx="2"/>

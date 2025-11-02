@@ -8,7 +8,7 @@ import os
 import aiohttp
 from typing import Any, Optional
 from datetime import datetime
-from claude_agent_sdk import tool
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 
 # Configuration
@@ -425,19 +425,79 @@ async def get_incident_stats(args: dict[str, Any]) -> dict[str, Any]:
     return await _get_incident_stats_impl(args)
 
 
+async def _get_current_time_impl(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Get the current date and time in ISO 8601 format (UTC).
+    Useful for determining time ranges when querying incidents.
+
+    Returns:
+        Dictionary with current time and common time ranges
+    """
+    from datetime import datetime, timedelta
+
+    # Get current time in UTC
+    now = datetime.utcnow()
+
+    # Format response with common time ranges
+    result_text = f"🕐 **Current Time (UTC)**\n\n"
+    result_text += f"Current: {now.strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result_text += f"1 hour ago: {(now - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result_text += f"24 hours ago: {(now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result_text += f"7 days ago: {(now - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+
+    return {
+        "content": [{
+            "type": "text",
+            "text": result_text
+        }]
+    }
+
+
+@tool(
+    "get_current_time",
+    "Get the current date and time in ISO 8601 format (UTC). Use this to determine time ranges for querying incidents.",
+    {}
+)
+async def get_current_time(args: dict[str, Any]) -> dict[str, Any]:
+    """Wrapper for Claude Agent SDK"""
+    return await _get_current_time_impl(args)
+
+
 # Export all tools as a list for easy registration
 INCIDENT_TOOLS = [
     get_incidents_by_time,
     get_incident_by_id,
     get_incident_stats,
+    get_current_time,
 ]
+
+# Create MCP server for incident tools
+def create_incident_tools_server():
+    """
+    Create and return an MCP server with all incident management tools.
+
+    This centralizes tool management - when you add new tools to INCIDENT_TOOLS,
+    they will automatically be included in the MCP server.
+
+    Returns:
+        MCP server instance configured with all incident tools
+    """
+    return create_sdk_mcp_server(
+        name="incident_tools",
+        version="1.0.0",
+        tools=INCIDENT_TOOLS
+    )
+
 
 # Export implementation functions for direct testing
 __all__ = [
     'INCIDENT_TOOLS',
+    'create_incident_tools_server',
     '_get_incidents_by_time_impl',
     '_get_incident_by_id_impl',
     '_get_incident_stats_impl',
+    '_get_current_time_impl',
     'set_auth_token',
     'get_auth_token',
+    'get_current_time',
 ]

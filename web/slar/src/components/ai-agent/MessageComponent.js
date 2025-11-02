@@ -358,6 +358,21 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
       );
     }
 
+    // Interrupted message
+    if (message.type === 'interrupted') {
+      return (
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-3 my-2 text-orange-900 dark:text-orange-100">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10h6v4H9z" />
+            </svg>
+            <span className="text-sm font-medium">Task interrupted by user</span>
+          </div>
+        </div>
+      );
+    }
+
     // Error message
     if (message.type === 'error') {
       return (
