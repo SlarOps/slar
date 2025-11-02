@@ -13,7 +13,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || 'ws://localhost:8002/ws/chat';
 
-export function useClaudeWebSocket() {
+export function useClaudeWebSocket(authToken = null) {
   const [messages, setMessages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isSending, setIsSending] = useState(false);
@@ -27,6 +27,12 @@ export function useClaudeWebSocket() {
   const reconnectDelay = 3000;
   const streamingTimeoutRef = useRef(null);
   const streamingInactivityTimeout = 2000; // 2 seconds of inactivity marks message as complete
+  const authTokenRef = useRef(authToken); // Store token in ref for WebSocket access
+
+  // Update auth token ref when it changes
+  useEffect(() => {
+    authTokenRef.current = authToken;
+  }, [authToken]);
 
   // Load session ID from localStorage on mount
   useEffect(() => {
@@ -403,10 +409,11 @@ export function useClaudeWebSocket() {
       // Prepare WebSocket message (Claude Agent API v1 format)
       const wsMessage = {
         prompt: message,
-        session_id: sessionId || ""
+        session_id: sessionId || "",
+        auth_token: authTokenRef.current || ""
       };
 
-      console.log('Sending message:', wsMessage);
+      console.log('Sending message:', { ...wsMessage, auth_token: authTokenRef.current ? '***' : '' });
       wsRef.current.send(JSON.stringify(wsMessage));
 
     } catch (error) {

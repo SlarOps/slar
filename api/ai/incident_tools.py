@@ -15,6 +15,33 @@ from claude_agent_sdk import tool
 API_BASE_URL = os.getenv("SLAR_API_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("SLAR_API_TOKEN", "")
 
+# Dynamic token storage (set per WebSocket session)
+_dynamic_auth_token: Optional[str] = None
+
+
+def set_auth_token(token: str) -> None:
+    """
+    Set the authentication token to use for API requests.
+    This should be called at the start of each WebSocket session.
+
+    Args:
+        token: The JWT authentication token from the frontend
+    """
+    global _dynamic_auth_token
+    _dynamic_auth_token = token
+    print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
+
+
+def get_auth_token() -> str:
+    """
+    Get the current authentication token.
+    Prioritizes dynamic token over environment variable.
+
+    Returns:
+        The authentication token to use for API requests
+    """
+    return _dynamic_auth_token or API_TOKEN
+
 
 # Implementation functions (callable directly)
 async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
@@ -71,7 +98,7 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     # Make API request
     try:
         headers = {
-            "Authorization": f"Bearer {API_TOKEN}",
+            "Authorization": f"Bearer {get_auth_token()}",
             "Content-Type": "application/json"
         }
 
@@ -176,7 +203,7 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
 
     try:
         headers = {
-            "Authorization": f"Bearer {API_TOKEN}",
+            "Authorization": f"Bearer {get_auth_token()}",
             "Content-Type": "application/json"
         }
 
@@ -291,7 +318,7 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
 
     try:
         headers = {
-            "Authorization": f"Bearer {API_TOKEN}",
+            "Authorization": f"Bearer {get_auth_token()}",
             "Content-Type": "application/json"
         }
 
@@ -411,4 +438,6 @@ __all__ = [
     '_get_incidents_by_time_impl',
     '_get_incident_by_id_impl',
     '_get_incident_stats_impl',
+    'set_auth_token',
+    'get_auth_token',
 ]

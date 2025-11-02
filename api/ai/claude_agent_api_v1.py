@@ -18,8 +18,9 @@ from claude_agent_sdk import (
 import json
 import asyncio
 import time
+from contextvars import ContextVar
 
-from incident_tools import get_incidents_by_time, get_incident_by_id, get_incident_stats
+from incident_tools import get_incidents_by_time, get_incident_by_id, get_incident_stats, set_auth_token
 
 # Track tool usage for demonstration
 tool_usage_log = []
@@ -60,10 +61,13 @@ async def heartbeat_task(websocket: WebSocket, interval: int = 10):
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
-    
+
     # Start heartbeat task
     heartbeat = asyncio.create_task(heartbeat_task(websocket, interval=30))
-    
+
+    # Store auth token for this WebSocket connection
+    current_auth_token = None
+
     try:
         async def _my_permission_callback(
             tool_name: str,
@@ -114,14 +118,23 @@ async def websocket_chat(websocket: WebSocket):
 
         while True:
             data = await websocket.receive_json()
-            
+
             # Handle pong messages
             if data.get("type") == "pong":
                 print(f"📡 Received pong at {data.get('timestamp')}")
                 continue
-            
-            # Get session id from data valid uuid
+
+            # Get session id and auth token from data
             session_id = data.get("session_id", "")
+            auth_token = data.get("auth_token", "")
+
+            # Update current auth token
+            if auth_token:
+                current_auth_token = auth_token
+                print(f"🔑 Auth token received (length: {len(auth_token)})")
+
+            # Set the auth token for incident_tools to use
+            set_auth_token(current_auth_token or "")
 
             incident_tools_server = create_sdk_mcp_server(
                 name="incident_tools",

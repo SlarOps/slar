@@ -274,9 +274,9 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
 
             <div className="flex-1">
               {/* Title */}
-              <h4 className="text-base font-semibold text-yellow-900 dark:text-yellow-100 mb-2">
+              <h5 className="text-base font-semibold text-yellow-900 dark:text-yellow-100 mb-2">
                 Tool Execution Approval Required
-              </h4>
+              </h5>
 
               {/* Description */}
               {/* <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
@@ -284,7 +284,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
               </p> */}
 
               {/* Tool details */}
-              <div className="bg-white dark:bg-gray-900 rounded-md p-3 mb-4 space-y-2">
+              <div className="bg-white dark:bg-gray-900 rounded-md p-1 space-y-2">
                 <div>
                   <p className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 mt-0.5">
                     {toolName}

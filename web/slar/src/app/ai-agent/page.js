@@ -18,6 +18,9 @@ export default function AIAgentPage() {
   const [input, setInput] = useState("");
   const endRef = useRef(null);
 
+  // Extract auth token from session
+  const authToken = session?.access_token || null;
+
   // Use WebSocket connection with Claude Agent API
   const {
     messages,
@@ -31,7 +34,7 @@ export default function AIAgentPage() {
     pendingApproval,
     approveTool,
     denyTool,
-  } = useClaudeWebSocket();
+  } = useClaudeWebSocket(authToken);
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
