@@ -252,21 +252,6 @@ export default function IncidentDetailModal({
               {/* Ask AI Agent Button */}
               <Button
                 onClick={() => {
-                  // Store incident data in sessionStorage to pass to AI agent
-                  const incidentData = {
-                    id: incident.id,
-                    title: incident.title,
-                    description: incident.description,
-                    status: incident.status,
-                    severity: incident.severity,
-                    urgency: incident.urgency,
-                    service_name: incident.service_name,
-                    assigned_to_name: incident.assigned_to_name,
-                    created_at: incident.created_at,
-                    acknowledged_at: incident.acknowledged_at,
-                    resolved_at: incident.resolved_at
-                  };
-                  sessionStorage.setItem('attachedIncident', JSON.stringify(incidentData));
                   router.push('/ai-agent');
                 }}
                 className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center space-x-2"

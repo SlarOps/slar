@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react';
 import MessageComponent from './MessageComponent';
 
-const MessagesList = memo(({ messages, isSending, endRef }) => {
+const MessagesList = memo(({ messages, isSending, endRef, onRegenerate, onApprove, onDeny, pendingApprovalId }) => {
   // Tối ưu hóa: chỉ render một số lượng messages nhất định để tránh lag
   const MAX_VISIBLE_MESSAGES = 50;
   const visibleMessages = useMemo(() => {
@@ -24,12 +24,16 @@ const MessagesList = memo(({ messages, isSending, endRef }) => {
   }, [messages]);
 
   return (
-    <main className="flex-1 overflow-y-auto pb-4">
+    <main className="flex-1 pb-16">
       <div className="max-w-3xl mx-auto px-1 py-8">
         {visibleMessages.map((message, idx) => (
-          <MessageComponent 
-            key={`${message.role}-${idx}-${message.content?.slice(0, 50) || ''}`} 
-            message={message} 
+          <MessageComponent
+            key={`${message.role}-${idx}-${message.content?.slice(0, 50) || ''}`}
+            message={message}
+            onRegenerate={onRegenerate}
+            onApprove={onApprove}
+            onDeny={onDeny}
+            pendingApprovalId={pendingApprovalId}
           />
         ))}
 

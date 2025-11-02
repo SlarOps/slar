@@ -9,18 +9,16 @@ import {
   statusColor,
   severityColor,
   useAutoScroll,
-  useAttachedIncident,
 } from '../../components/ai-agent';
-import { ToolApprovalModal } from '../../components/ai-agent/ToolApprovalModal';
 import 'highlight.js/styles/github.css';
-import { useHttpStreamingChat } from '../../hooks/useHttpStreamingChat';
+import { useClaudeWebSocket } from '../../hooks/useClaudeWebSocket';
 
 export default function AIAgentPage() {
   const { session } = useAuth();
   const [input, setInput] = useState("");
   const endRef = useRef(null);
 
-  // Use HTTP streaming instead of WebSocket
+  // Use WebSocket connection with Claude Agent API
   const {
     messages,
     setMessages,
@@ -33,29 +31,21 @@ export default function AIAgentPage() {
     pendingApproval,
     approveTool,
     denyTool,
-  } = useHttpStreamingChat();
-
-  const { attachedIncident, setAttachedIncident } = useAttachedIncident();
+  } = useClaudeWebSocket();
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
 
-    if (!input.trim() || isSending) {
+    if (!input.trim()) {
       return;
     }
 
     const message = input.trim();
     setInput("");
 
-    // Include attached incident context if available
-    let fullMessage = message;
-    if (attachedIncident) {
-      fullMessage = `Context: Incident #${attachedIncident.id} - ${attachedIncident.title}\n\n${message}`;
-    }
-
-    await sendMessage(fullMessage);
-  }, [input, isSending, attachedIncident, sendMessage]);
+    await sendMessage(message);
+  }, [input, sendMessage]);
 
   // Handle session reset
   const handleSessionReset = useCallback(() => {
@@ -68,24 +58,38 @@ export default function AIAgentPage() {
     setInput(e.target.value);
   }, []);
 
-  // Handle remove attachment
-  const handleRemoveAttachment = useCallback(() => {
-    setAttachedIncident(null);
-  }, [setAttachedIncident]);
+  // Handle regenerate message
+  const handleRegenerate = useCallback((message) => {
+    // Find the original user message that led to this assistant response
+    const messageIndex = messages.findIndex(m => m === message);
+    if (messageIndex > 0) {
+      // Look backwards for the last user message
+      for (let i = messageIndex - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          sendMessage(messages[i].content);
+          break;
+        }
+      }
+    }
+  }, [messages, sendMessage]);
 
   // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-5rem)] bg-white dark:bg-gray-900">
-      <div className="flex-shrink-0">
+    <div className="flex flex-col h-[calc(100vh-10rem)] bg-white dark:bg-gray-900">
+      {/* <div className="flex-shrink-0">
         <ChatHeader />
-      </div>
+      </div> */}
 
       <MessagesList
         messages={messages}
         isSending={isSending}
         endRef={endRef}
+        onRegenerate={handleRegenerate}
+        onApprove={approveTool}
+        onDeny={denyTool}
+        pendingApprovalId={pendingApproval?.approval_id}
       />
 
       <div className="flex-shrink-0">
@@ -93,32 +97,17 @@ export default function AIAgentPage() {
           value={input}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
-          isLoading={isSending}
           placeholder="Ask anything about incidents..."
-          loadingText="Đang xử lý..."
-          attachedIncident={attachedIncident}
-          onRemoveAttachment={handleRemoveAttachment}
           statusColor={statusColor}
           severityColor={severityColor}
           showModeSelector={false}
           onStop={stopStreaming}
           sessionId={sessionId}
-          isStreaming={isSending}
           onSessionReset={handleSessionReset}
         />
       </div>
 
-      {/* Tool Approval Modal */}
-      {pendingApproval && (
-        <ToolApprovalModal
-          isOpen={!!pendingApproval}
-          onClose={() => {}}
-          toolName={pendingApproval.tool_name}
-          toolArgs={pendingApproval.tool_args}
-          onApprove={() => approveTool(pendingApproval.approval_id, 'Approved by user')}
-          onDeny={() => denyTool(pendingApproval.approval_id, 'Denied by user')}
-        />
-      )}
+      {/* Tool Approval is now inline in messages - no modal needed */}
     </div>
   );
 }

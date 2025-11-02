@@ -1,12 +1,12 @@
-# AI Agent - HTTP Streaming Implementation
+# AI Agent - WebSocket Implementation
 
-This is the updated AI Agent chat interface using **HTTP Streaming (Server-Sent Events)** instead of WebSocket, while keeping the same UI components and user experience.
+This is the AI Agent chat interface using **WebSocket** to connect to the Claude Agent API (`api/ai/claude_agent_api.py`), with support for real-time messaging, tool approval system, and session management.
 
 ## What Changed
 
 ### Network Layer
-- ❌ **Removed**: WebSocket connection (`useWebSocket` hook)
-- ✅ **Added**: HTTP Streaming with Server-Sent Events (`useHttpStreamingChat` hook)
+- ✅ **Added**: WebSocket connection with Claude Agent API (`useClaudeWebSocket` hook)
+- ✅ **Features**: Heartbeat (ping/pong), tool approval system, session management, auto-reconnection
 
 ### Same UI Components
 All existing UI components remain unchanged:
@@ -21,25 +21,29 @@ All existing UI components remain unchanged:
 
 ```
 Frontend (Next.js)
-    ↓ HTTP POST + SSE
+    ↓ WebSocket (ws://localhost:8002/ws/chat)
 Backend API (FastAPI - claude_agent_api.py)
     ↓
-Claude Agent SDK
+Claude Agent SDK (with tool approval)
 ```
 
 ## Key Files
 
 ### New/Modified Files
 
-1. **`hooks/useHttpStreamingChat.js`** (NEW)
-   - Replacement for `useWebSocket` hook
-   - Same interface, different implementation
-   - Uses HTTP streaming with SSE
-   - Auto-saves session ID to localStorage
+1. **`hooks/useClaudeWebSocket.js`** (NEW)
+   - WebSocket hook for Claude Agent API
+   - Handles connection, heartbeat, messages, and tool approvals
+   - Auto-reconnection with exponential backoff
+   - Session management with localStorage
 
 2. **`app/ai-agent/page.js`** (MODIFIED)
-   - Changed from `useWebSocket` to `useHttpStreamingChat`
-   - Same UI, same features, different transport
+   - Changed from `useHttpStreamingChat` to `useClaudeWebSocket`
+   - Same UI, same features, real-time WebSocket transport
+
+3. **`components/ai-agent/ToolApprovalModal.jsx`** (EXISTING)
+   - Modal for tool approval requests
+   - Works with interactive approval mode
 
 ### Unchanged Components
 
@@ -56,19 +60,41 @@ All these remain the same:
 
 Backend API at `api/ai/claude_agent_api.py` provides:
 
-- `POST /api/chat/stream` - Streaming chat with SSE (Used by this implementation)
+- `WS /ws/chat` - WebSocket endpoint for real-time chat (Used by this implementation)
+- `POST /api/chat` - Non-streaming chat endpoint
 - `GET /api/sessions` - List all sessions
 - `GET /api/sessions/{session_id}` - Get session info
 - `DELETE /api/sessions/{session_id}` - Delete session
 - `GET /api/health` - Health check
 
+### WebSocket Message Types
+
+**Client → Server:**
+- `prompt` - Send user message
+- `pong` - Heartbeat response
+- `approval_response` - Tool approval/denial
+
+**Server → Client:**
+- `connected` - Connection established
+- `ping` - Heartbeat ping
+- `session_init` - Session initialized
+- `processing` - Query started
+- `thinking` - Agent thinking
+- `text` - Text content (streaming)
+- `tool_use` - Tool execution
+- `tool_result` - Tool result
+- `approval_request` - Tool approval needed
+- `complete` - Query completed
+- `error` - Error occurred
+
 ## Features (All Preserved)
 
-✅ Same UI and UX as before
+✅ Real-time WebSocket communication
 ✅ Message streaming with markdown rendering
 ✅ Code syntax highlighting
-✅ Tool call display (ToolCallRequestEvent, ToolCallExecutionEvent)
-✅ Memory query display (MemoryQueryEvent)
+✅ Tool approval system (interactive, rule-based, hybrid)
+✅ Heartbeat (ping/pong) for connection health
+✅ Auto-reconnection on disconnect
 ✅ Incident cards display
 ✅ Attached incident context
 ✅ Session management (auto-save/resume)
@@ -78,7 +104,11 @@ Backend API at `api/ai/claude_agent_api.py` provides:
 ## Environment Variables
 
 ```bash
-NEXT_PUBLIC_AI_API_URL=http://localhost:8002
+# WebSocket URL for Claude Agent API
+NEXT_PUBLIC_AI_WS_URL=ws://localhost:8002/ws/chat
+
+# For production (wss://)
+NEXT_PUBLIC_AI_WS_URL=wss://your-domain.com/ws/chat
 ```
 
 ## Usage
@@ -110,16 +140,9 @@ open http://localhost:3000/ai-agent
 
 ### What Developers Need to Know
 
-The **only** change in `page.js` is:
+The change in `page.js`:
 
-**Before (WebSocket):**
-```javascript
-import { useWebSocket } from '../../components/ai-agent';
-
-const { wsConnection, connectionStatus } = useWebSocket(session, setMessages, setIsSending);
-```
-
-**After (HTTP Streaming):**
+**Before (HTTP Streaming):**
 ```javascript
 import { useHttpStreamingChat } from '../../hooks/useHttpStreamingChat';
 
@@ -132,26 +155,71 @@ const {
   stopStreaming,
   sessionId,
   resetSession,
+  pendingApproval,
+  approveTool,
+  denyTool,
 } = useHttpStreamingChat();
+```
+
+**After (WebSocket):**
+```javascript
+import { useClaudeWebSocket } from '../../hooks/useClaudeWebSocket';
+
+const {
+  messages,
+  setMessages,
+  connectionStatus,
+  isSending,
+  sendMessage,
+  stopStreaming,
+  sessionId,
+  resetSession,
+  pendingApproval,
+  approveTool,
+  denyTool,
+} = useClaudeWebSocket();
 ```
 
 Everything else remains the same!
 
 ### Hook Interface
 
-The `useHttpStreamingChat` hook provides the same interface as the old WebSocket hook:
+The `useClaudeWebSocket` hook provides:
 
 ```javascript
 {
-  messages,        // Array of message objects
-  setMessages,     // Update messages
-  connectionStatus,// 'connected' | 'disconnected' | 'error'
-  isSending,       // Boolean - is request in progress
-  sendMessage,     // Function to send message
-  stopStreaming,   // Function to abort streaming
-  sessionId,       // Current session ID (or null)
-  resetSession,    // Function to start new session
+  messages,         // Array of message objects
+  setMessages,      // Update messages
+  connectionStatus, // 'connecting' | 'connected' | 'disconnected' | 'error'
+  isSending,        // Boolean - is request in progress
+  sendMessage,      // Function to send message (with options)
+  stopStreaming,    // Function to stop streaming
+  sessionId,        // Current session ID (or null)
+  resetSession,     // Function to start new session
+  pendingApproval,  // Pending tool approval request (or null)
+  approveTool,      // Function to approve tool
+  denyTool,         // Function to deny tool
+  connect,          // Function to manually connect
+  disconnect,       // Function to manually disconnect
 }
+```
+
+### Send Message Options
+
+```javascript
+sendMessage(message, {
+  forkSession: false,          // Create new session branch
+  systemPrompt: "...",         // Custom system prompt
+  permissionMode: "acceptEdits", // "acceptEdits" | "approveOnly" | "denyEdits"
+  model: "sonnet",             // "sonnet" | "opus" | "haiku"
+  allowedTools: ["Read", "Write", "Bash"], // Allowed tools (null = all)
+  approvalMode: "hybrid",      // "none" | "interactive" | "rule_based" | "hybrid"
+  approvalConfig: {            // Approval configuration
+    timeout: 60,
+    auto_approve_safe: true,
+    always_deny_dangerous: true
+  }
+});
 ```
 
 ### Message Format
@@ -197,14 +265,15 @@ npm install
 npm run build
 ```
 
-## Benefits of HTTP Streaming
+## Benefits of WebSocket
 
-1. **Simpler**: No WebSocket connection management
-2. **Standard**: Uses standard HTTP + SSE (widely supported)
-3. **Reliable**: Better error handling and recovery
-4. **Debuggable**: Easy to debug with browser DevTools
-5. **Session-aware**: Built-in session management via API
-6. **Same UX**: No changes to user experience
+1. **Real-time**: Bidirectional communication for instant updates
+2. **Efficient**: Single persistent connection, less overhead
+3. **Interactive**: Tool approval system with user confirmation
+4. **Resilient**: Auto-reconnection with exponential backoff
+5. **Heartbeat**: Connection health monitoring with ping/pong
+6. **Stateful**: Session persistence across page reloads
+7. **Same UX**: No changes to user experience
 
 ## Advanced Features
 
@@ -215,6 +284,31 @@ Sessions are automatically managed:
 - **Auto-saved**: Session ID saved to localStorage
 - **Auto-resumed**: Continues previous session on reload
 - **Manual reset**: "New Session" button starts fresh
+- **Fork session**: Create new branch from existing session
+
+### Tool Approval System
+
+Three approval modes available:
+
+1. **None** (`approval_mode: "none"`)
+   - No approval required
+   - All tools execute immediately
+
+2. **Rule-based** (`approval_mode: "rule_based"`)
+   - Auto-approve safe tools (Read, Glob, Grep)
+   - Auto-deny dangerous tools (delete, destroy, etc.)
+   - Configurable allow/deny lists
+
+3. **Interactive** (`approval_mode: "interactive"`)
+   - Ask user for every tool execution
+   - Shows tool name and arguments
+   - User approves or denies via modal
+
+4. **Hybrid** (`approval_mode: "hybrid"`) - **Recommended**
+   - Auto-approve safe tools
+   - Auto-deny dangerous tools
+   - Ask user for everything else
+   - Best balance of security and UX
 
 ### Stop Streaming
 
@@ -223,25 +317,28 @@ Users can stop the AI response mid-stream:
 <button onClick={stopStreaming}>Stop</button>
 ```
 
-### Attached Incidents
+This closes the WebSocket connection and reconnects automatically.
 
-Incidents can be attached for context:
-```javascript
-const { attachedIncident, setAttachedIncident } = useAttachedIncident();
+### Heartbeat Monitoring
 
-// Incident context is automatically included in message
-```
+Connection health is monitored via ping/pong:
+- Server sends `ping` every 30 seconds
+- Client responds with `pong`
+- Timeout after 10 seconds triggers reconnection
 
 ## Future Enhancements
 
 Possible improvements (not yet implemented):
 - [ ] Session list sidebar (load previous sessions)
 - [ ] Export conversation history
-- [ ] Multi-model selection UI
-- [ ] Permission mode selection
-- [ ] Show tool approval requests
-- [ ] Session sharing
+- [ ] Multi-model selection UI (sonnet/opus/haiku)
+- [ ] Permission mode selector
+- [ ] Approval mode selector in UI
+- [ ] Tool execution history view
+- [ ] Session sharing/collaboration
 - [ ] Voice input support
+- [ ] Message editing/regeneration
+- [ ] Conversation branching/forking UI
 
 ## Questions?
 
