@@ -13,10 +13,13 @@ from claude_agent_sdk import (
     ToolUseBlock,
     ToolResultBlock,
     SystemMessage,
+    create_sdk_mcp_server
 )
 import json
 import asyncio
 import time
+
+from incident_tools import get_incidents_by_time, get_incident_by_id, get_incident_stats
 
 # Track tool usage for demonstration
 tool_usage_log = []
@@ -120,13 +123,20 @@ async def websocket_chat(websocket: WebSocket):
             # Get session id from data valid uuid
             session_id = data.get("session_id", "")
 
+            incident_tools_server = create_sdk_mcp_server(
+                name="incident_tools",
+                version="1.0.0",
+                tools=[get_incidents_by_time, get_incident_by_id, get_incident_stats]
+            )
+
             options = ClaudeAgentOptions(
                 can_use_tool=_my_permission_callback,
                 # Use default permission mode to ensure callbacks are invoked
                 permission_mode="default",
                 cwd=".",  # Set working directory
                 model="sonnet",
-                resume=session_id
+                resume=session_id,
+                mcp_servers={"incident_tools": incident_tools_server},
             )
 
             async with ClaudeSDKClient(options) as client:
