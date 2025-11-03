@@ -281,6 +281,7 @@ async def agent_task(
                 model="sonnet",
                 resume=session_id,
                 mcp_servers=mcp_servers,
+                setting_sources = ["project"]
             )
 
             async with ClaudeSDKClient(options) as client:
