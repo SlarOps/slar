@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "ctx7sk-d0f3db89-3d9c-4098-aa6b-7fe2c8779a6e"
+      }
+    }
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "updatedAt": "2025-11-03T07:27:44.399Z"
+  }
+}

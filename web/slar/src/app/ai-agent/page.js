@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useAuth } from '../../contexts/AuthContext';
 import { ChatInput } from '../../components/ui';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../../components/ai-agent';
 import 'highlight.js/styles/github.css';
 import { useClaudeWebSocket } from '../../hooks/useClaudeWebSocket';
+import { useSyncBucket } from '../../hooks/useSyncBucket';
 
 export default function AIAgentPage() {
   const { session } = useAuth();
@@ -21,7 +22,15 @@ export default function AIAgentPage() {
   // Extract auth token from session
   const authToken = session?.access_token || null;
 
-  // Use WebSocket connection with Claude Agent API
+  // Step 1: Sync bucket before connecting WebSocket
+  const {
+    syncStatus,
+    syncMessage,
+    syncBucket,
+    retrySync
+  } = useSyncBucket(authToken);
+
+  // Step 2: Use WebSocket connection (manual connect)
   const {
     messages,
     setMessages,
@@ -34,7 +43,8 @@ export default function AIAgentPage() {
     pendingApproval,
     approveTool,
     denyTool,
-  } = useClaudeWebSocket(authToken);
+    connect: connectWebSocket,
+  } = useClaudeWebSocket(authToken, { autoConnect: false });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
@@ -61,6 +71,25 @@ export default function AIAgentPage() {
     setInput(e.target.value);
   }, []);
 
+  // Sync-then-connect flow
+  useEffect(() => {
+    if (!authToken) {
+      console.log('No auth token, skipping sync');
+      return;
+    }
+
+    // Trigger sync on mount
+    syncBucket();
+  }, [authToken, syncBucket]);
+
+  // Connect WebSocket after successful sync
+  useEffect(() => {
+    if (syncStatus === 'ready') {
+      console.log('Sync complete, connecting WebSocket...');
+      connectWebSocket();
+    }
+  }, [syncStatus, connectWebSocket]);
+
   // Handle regenerate message
   const handleRegenerate = useCallback((message) => {
     // Find the original user message that led to this assistant response
@@ -80,38 +109,79 @@ export default function AIAgentPage() {
   useAutoScroll(messages, endRef);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-10rem)] bg-white dark:bg-gray-900">
-      {/* <div className="flex-shrink-0">
-        <ChatHeader />
-      </div> */}
+    <div className="flex flex-col h-[100dvh] sm:h-[calc(100vh-10rem)] bg-white dark:bg-gray-900">
+      {/* Loading State - Syncing Bucket */}
+      {syncStatus === 'syncing' && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="text-center space-y-4">
+            <div className="flex justify-center">
+              <svg className="animate-spin h-12 w-12 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-medium text-gray-900 dark:text-gray-100">{syncMessage}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">This may take a few seconds...</p>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <MessagesList
-        messages={messages}
-        isSending={isSending}
-        endRef={endRef}
-        onRegenerate={handleRegenerate}
-        onApprove={approveTool}
-        onDeny={denyTool}
-        pendingApprovalId={pendingApproval?.approval_id}
-      />
+      {/* Error State - Sync Failed */}
+      {syncStatus === 'error' && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="text-center space-y-4 max-w-md">
+            <div className="flex justify-center">
+              <svg className="h-12 w-12 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-medium text-gray-900 dark:text-gray-100">Connection Error</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{syncMessage}</p>
+            </div>
+            <button
+              onClick={retrySync}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors touch-manipulation"
+            >
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      )}
 
-      <div className="flex-shrink-0">
-        <ChatInput
-          value={input}
-          onChange={handleInputChange}
-          onSubmit={handleSubmit}
-          placeholder="Ask anything about incidents..."
-          statusColor={statusColor}
-          severityColor={severityColor}
-          showModeSelector={false}
-          onStop={stopStreaming}
-          isSending={isSending}
-          sessionId={sessionId}
-          onSessionReset={handleSessionReset}
-        />
-      </div>
+      {/* Ready State - Show Chat Interface */}
+      {(syncStatus === 'ready' || syncStatus === 'idle') && (
+        <>
+          <MessagesList
+            messages={messages}
+            isSending={isSending}
+            endRef={endRef}
+            onRegenerate={handleRegenerate}
+            onApprove={approveTool}
+            onDeny={denyTool}
+            pendingApprovalId={pendingApproval?.approval_id}
+          />
 
-      {/* Tool Approval is now inline in messages - no modal needed */}
+          <div className="flex-shrink-0">
+            <ChatInput
+              value={input}
+              onChange={handleInputChange}
+              onSubmit={handleSubmit}
+              placeholder="Ask anything about incidents..."
+              statusColor={statusColor}
+              severityColor={severityColor}
+              showModeSelector={false}
+              onStop={stopStreaming}
+              isSending={isSending}
+              sessionId={sessionId}
+              onSessionReset={handleSessionReset}
+              syncStatus={syncStatus}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

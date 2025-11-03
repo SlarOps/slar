@@ -112,10 +112,7 @@ function NavLinks({ onNavigate }) {
         Uptime
       </Link>
       <Link href="/integrations" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Integrations
-      </Link>
-      <Link href="/runbooks" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Runbooks
+        Agent Config
       </Link>
     </>
   );

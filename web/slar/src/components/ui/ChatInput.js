@@ -14,7 +14,8 @@ const ChatInput = ({
   onStop = null,
   sessionId = null,
   onSessionReset = null,
-  isSending = false
+  isSending = false,
+  syncStatus = 'idle'
 }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -29,8 +30,8 @@ const ChatInput = ({
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur">
-      <div className="px-4 py-4">
+    <div className="fixed inset-x-0 bottom-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur dark:border-gray-800 shadow-lg" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0px)' }}>
+      <div className="px-4 pb-3 sm:py-4">
         <div className="max-w-3xl mx-auto">
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
@@ -154,8 +155,12 @@ const ChatInput = ({
               <button
                 type="submit"
                 disabled={value.trim().length === 0}
-                className="p-2 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40"
-                title="Send"
+                className={`p-2 hover:opacity-80 disabled:opacity-40 transition-colors ${
+                  syncStatus === 'ready'
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-gray-400 dark:text-gray-500'
+                }`}
+                title={syncStatus === 'ready' ? 'Send' : 'Waiting for workspace...'}
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M22 2L11 13"/>
@@ -164,11 +169,6 @@ const ChatInput = ({
               </button>
             </div>
           </form>
-
-          {/* Footer Text */}
-          <p className="text-center text-xs text-gray-400 py-2">
-            {currentMode === 'agent' ? 'SLAR agent can make mistakes. Check important info.' : 'Simple chat mode - responses are generated locally.'}
-          </p>
         </div>
       </div>
     </div>

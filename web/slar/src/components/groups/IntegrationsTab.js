@@ -6,9 +6,11 @@ import { apiClient } from '../../lib/api';
 import { toast, ConfirmationModal } from '../ui';
 import IntegrationModal from '../integrations/IntegrationModal';
 import IntegrationDetailModal from '../integrations/IntegrationDetailModal';
-import { 
-  PlusIcon, 
-  Cog6ToothIcon, 
+import SkillUploadModal from '../SkillUploadModal';
+import { uploadSkillFile } from '../../lib/mcpStorage';
+import {
+  PlusIcon,
+  Cog6ToothIcon,
   TrashIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
@@ -19,14 +21,15 @@ import {
   LinkIcon,
   CloudIcon,
   BoltIcon,
-  CubeIcon
+  CubeIcon,
+  DocumentPlusIcon
 } from '@heroicons/react/24/outline';
 
 export default function IntegrationsTab({ groupId }) {
   const { session } = useAuth();
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Modal states
   const [showIntegrationModal, setShowIntegrationModal] = useState(false);
   const [integrationModalMode, setIntegrationModalMode] = useState('create');
@@ -35,6 +38,9 @@ export default function IntegrationsTab({ groupId }) {
   const [integrationToDelete, setIntegrationToDelete] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detailIntegration, setDetailIntegration] = useState(null);
+
+  // Skill upload modal state
+  const [showSkillUploadModal, setShowSkillUploadModal] = useState(false);
 
   useEffect(() => {
     loadIntegrations();
@@ -111,6 +117,51 @@ export default function IntegrationsTab({ groupId }) {
     await loadIntegrations();
   };
 
+  // Skill upload handlers
+  const handleOpenSkillUpload = () => {
+    setShowSkillUploadModal(true);
+  };
+
+  const handleSkillUploaded = async (file) => {
+    try {
+      if (!session?.user?.id) {
+        throw new Error('User ID not found');
+      }
+
+      // Upload skill file to Supabase Storage
+      const result = await uploadSkillFile(session.user.id, file);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to upload skill file');
+      }
+
+      toast.success('Skill file uploaded successfully!');
+
+      // Call backend API to sync skills to workspace
+      const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_AI_API_URL}/api/sync-skills`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          auth_token: session.access_token
+        })
+      });
+
+      const syncResult = await syncResponse.json();
+
+      if (syncResult.success) {
+        toast.success(`Skills synced: ${syncResult.synced_count} skill(s) extracted to workspace`);
+      } else {
+        toast.warning(`Skill uploaded but sync had issues: ${syncResult.message}`);
+      }
+
+    } catch (error) {
+      console.error('Error uploading skill:', error);
+      throw error;
+    }
+  };
+
   const getIntegrationTypeIcon = (type) => {
     const iconProps = "h-6 w-6";
     
@@ -174,6 +225,34 @@ export default function IntegrationsTab({ groupId }) {
 
   return (
     <div className="space-y-6">
+      {/* Agent Skills Section */}
+      <div className="border-b border-gray-200 dark:border-gray-700 pb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Agent Skills
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Upload custom skills (.skill or .zip) for your AI agent
+            </p>
+          </div>
+          <button
+            onClick={handleOpenSkillUpload}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 border border-transparent rounded-lg transition-colors"
+          >
+            <DocumentPlusIcon className="h-4 w-4" />
+            Upload Skill
+          </button>
+        </div>
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p className="text-sm text-blue-800 dark:text-blue-200">
+            Skills are custom commands and tools that extend your AI agent's capabilities.
+            Upload .skill files or .zip archives containing multiple skills.
+            They will be automatically extracted to your agent workspace and available in your next chat session.
+          </p>
+        </div>
+      </div>
+
       {/* Integrations Section */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -319,6 +398,13 @@ export default function IntegrationsTab({ groupId }) {
         message={`Are you sure you want to delete "${integrationToDelete?.name}"? This action cannot be undone and will remove all service mappings for this integration.`}
         confirmText="Delete Integration"
         confirmVariant="danger"
+      />
+
+      {/* Skill Upload Modal */}
+      <SkillUploadModal
+        isOpen={showSkillUploadModal}
+        onClose={() => setShowSkillUploadModal(false)}
+        onSkillUploaded={handleSkillUploaded}
       />
     </div>
   );

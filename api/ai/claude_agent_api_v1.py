@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from claude_agent_sdk import (
     AssistantMessage,
@@ -20,9 +20,16 @@ import time
 import uuid
 import logging
 from contextvars import ContextVar
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from incident_tools import create_incident_tools_server, set_auth_token
+from supabase_storage import (
+    get_user_mcp_servers,
+    extract_user_id_from_token,
+    get_user_workspace_path,
+    sync_user_skills,
+    sync_all_from_bucket
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +52,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# In-memory cache for user MCP configs
+# Simple dict cache - cleared on restart
+user_mcp_cache: Dict[str, Dict[str, Any]] = {}
 
 async def heartbeat_task(websocket: WebSocket, interval: int = 10):
     """Send periodic ping messages to keep the connection alive."""
@@ -112,6 +123,44 @@ async def message_router(
         logger.info("📭 Router signaled end of messages")
 
 
+async def websocket_sender(
+    websocket: WebSocket,
+    output_queue: asyncio.Queue
+):
+    """
+    Send messages from output queue to WebSocket.
+
+    This task handles all WebSocket sending, isolated from agent processing.
+    If WebSocket fails, only this task fails - agent continues processing.
+    """
+    try:
+        while True:
+            # Get message from output queue
+            message = await output_queue.get()
+
+            # Check for end signal
+            if message is None:
+                logger.info("📭 WebSocket sender: End of messages")
+                break
+
+            # Try to send, but don't crash if WebSocket closed
+            try:
+                await websocket.send_json(message)
+                logger.debug(f"📤 Sent message: {message.get('type')}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to send message (WebSocket closed?): {e}")
+                # Don't crash - message lost but agent continues
+                # Could implement retry or persistent queue here
+
+    except asyncio.CancelledError:
+        logger.info("🛑 WebSocket sender: Cancelled")
+        raise
+    except Exception as e:
+        logger.error(f"❌ WebSocket sender error: {e}", exc_info=True)
+    finally:
+        logger.info("🧹 WebSocket sender finished")
+
+
 async def interrupt_task(
     interrupt_queue: asyncio.Queue,
     stop_events: Dict[str, asyncio.Event],
@@ -158,8 +207,9 @@ async def interrupt_task(
 async def agent_task(
     agent_queue: asyncio.Queue,
     stop_events: Dict[str, asyncio.Event],
-    websocket: WebSocket,
-    permission_callback
+    output_queue: asyncio.Queue,
+    permission_callback,
+    websocket: WebSocket = None  # Optional, only for sync
 ):
     """Process agent messages and handle responses."""
     current_auth_token = None
@@ -195,19 +245,42 @@ async def agent_task(
                 current_auth_token = auth_token
                 logger.info(f"🔑 Auth token received (length: {len(auth_token)})")
 
+            # Note: Bucket sync is now handled by frontend via /api/sync-bucket
+            # before WebSocket connection to ensure skills are ready
+
             # Set the auth token for incident_tools to use
             set_auth_token(current_auth_token or "")
+
+            # Extract user_id from token
+            user_id = extract_user_id_from_token(current_auth_token or "")
+
+            # Get user workspace directory (isolated per user)
+            if user_id:
+                user_workspace = str(get_user_workspace_path(user_id))
+            else:
+                user_workspace = "."
+
+            logger.info(f"📁 User workspace: {user_workspace}")
 
             # Create MCP server with all incident tools
             incident_tools_server = create_incident_tools_server()
 
+            mcp_servers = {"incident_tools": incident_tools_server}
+
+            user_mcp_servers = await get_user_mcp_servers(current_auth_token or "")
+
+            if user_mcp_servers:
+                mcp_servers.update(user_mcp_servers)
+
+            logger.info(f"📁 User MCP servers: {mcp_servers}")            
+
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
-                cwd=".",
+                cwd=user_workspace,
                 model="sonnet",
                 resume=session_id,
-                mcp_servers={"incident_tools": incident_tools_server},
+                mcp_servers=mcp_servers,
             )
 
             async with ClaudeSDKClient(options) as client:
@@ -223,7 +296,7 @@ async def agent_task(
                         try:
                             await client.interrupt()
                             stop_events[session_id].clear()
-                            await websocket.send_json({
+                            await output_queue.put({
                                 "type": "interrupted",
                                 "session_id": session_id
                             })
@@ -237,17 +310,17 @@ async def agent_task(
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, ThinkingBlock):
-                                await websocket.send_json({
+                                await output_queue.put({
                                     "type": "thinking",
                                     "content": block.thinking
                                 })
                             elif isinstance(block, TextBlock):
-                                await websocket.send_json({
+                                await output_queue.put({
                                     "type": "text",
                                     "content": block.text
                                 })
                             elif isinstance(block, ToolResultBlock):
-                                await websocket.send_json({
+                                await output_queue.put({
                                     "type": "tool_result",
                                     "tool_use_id": block.tool_use_id,
                                     "content": block.content,
@@ -265,13 +338,13 @@ async def agent_task(
                                     stop_events[session_id] = asyncio.Event()
                                 stop_events[session_id].clear()
 
-                                await websocket.send_json({
+                                await output_queue.put({
                                     "type": "session_init",
                                     "session_id": session_id
                                 })
 
                     if isinstance(message, ResultMessage):
-                        await websocket.send_json({
+                        await output_queue.put({
                             "type": message.subtype,
                             "result": message.result
                         })
@@ -282,7 +355,7 @@ async def agent_task(
     except Exception as e:
         logger.error(f"❌ Agent task error: {e}", exc_info=True)
         try:
-            await websocket.send_json({
+            await output_queue.put({
                 "type": "error",
                 "error": str(e)
             })
@@ -297,6 +370,208 @@ async def agent_task(
         logger.info("🧹 Agent task finished")
 
 
+@app.post("/api/sync-bucket")
+async def sync_bucket(request: Request):
+    """
+    Sync all files (MCP config + skills) from bucket to workspace.
+
+    This endpoint should be called by frontend when user opens AI agent page,
+    BEFORE opening WebSocket connection.
+
+    Request body: {"auth_token": "Bearer ..."}
+
+    Returns:
+        {
+            "success": bool,
+            "skipped": bool,
+            "message": str,
+            "mcp_synced": bool,
+            "skills_synced": int
+        }
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token", "")
+
+        if not auth_token:
+            logger.warning("⚠️  No auth token provided for bucket sync")
+            return {
+                "success": False,
+                "skipped": False,
+                "message": "No auth token provided"
+            }
+
+        logger.info("🔄 Starting bucket sync...")
+
+        # Sync all from bucket (MCP config + skills)
+        sync_result = await sync_all_from_bucket(auth_token)
+
+        if sync_result["success"]:
+            if sync_result.get("skipped"):
+                logger.info("⏭️  Bucket sync skipped (unchanged)")
+            else:
+                logger.info(f"✅ Bucket synced: {sync_result['message']}")
+
+        return sync_result
+
+    except Exception as e:
+        logger.error(f"❌ Error syncing bucket: {e}", exc_info=True)
+        return {
+            "success": False,
+            "skipped": False,
+            "message": f"Error syncing bucket: {str(e)}"
+        }
+
+
+@app.post("/api/sync-mcp-config")
+async def sync_mcp_config(request: Request):
+    """
+    Event-driven sync endpoint - called by frontend after successful save.
+
+    This endpoint:
+    1. Extracts user_id from auth token
+    2. Downloads latest .mcp.json from Supabase Storage
+    3. Updates in-memory cache
+
+    Request body: {"auth_token": "Bearer ..."}
+
+    Returns:
+        {"success": bool, "message": str, "servers_count": int}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token", "")
+
+        if not auth_token:
+            logger.warning("⚠️  No auth token provided for sync")
+            return {
+                "success": False,
+                "message": "No auth token provided"
+            }
+
+        # Extract user_id
+        user_id = extract_user_id_from_token(auth_token)
+
+        if not user_id:
+            logger.warning("⚠️  Could not extract user_id from token")
+            return {
+                "success": False,
+                "message": "Invalid auth token"
+            }
+
+        logger.info(f"🔄 Syncing MCP config for user: {user_id}")
+
+        # Download fresh config from Supabase
+        user_mcp_servers = await get_user_mcp_servers(auth_token)
+
+        if user_mcp_servers:
+            # Update cache
+            user_mcp_cache[user_id] = user_mcp_servers
+            logger.info(f"✅ Config synced and cached for user: {user_id}")
+            logger.info(f"   Servers: {list(user_mcp_servers.keys())}")
+
+            return {
+                "success": True,
+                "message": "MCP config synced successfully",
+                "servers_count": len(user_mcp_servers),
+                "servers": list(user_mcp_servers.keys())
+            }
+        else:
+            logger.info(f"ℹ️  No MCP config found for user: {user_id}")
+            # Clear cache if no config found
+            if user_id in user_mcp_cache:
+                del user_mcp_cache[user_id]
+
+            return {
+                "success": True,
+                "message": "No MCP config found - cache cleared",
+                "servers_count": 0,
+                "servers": []
+            }
+
+    except Exception as e:
+        logger.error(f"❌ Error syncing MCP config: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error syncing config: {str(e)}"
+        }
+
+
+@app.post("/api/sync-skills")
+async def sync_skills(request: Request):
+    """
+    Event-driven sync endpoint - called by frontend after successful skill upload.
+
+    This endpoint:
+    1. Extracts user_id from auth token
+    2. Lists all skill files in Supabase Storage
+    3. Downloads each skill file
+    4. Extracts/copies to .claude/skills directory in user's workspace
+
+    Request body: {"auth_token": "Bearer ..."}
+
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "synced_count": int,
+            "failed_count": int,
+            "skills": ["skill1.skill", "skill2.skill"],
+            "errors": []
+        }
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token", "")
+
+        if not auth_token:
+            logger.warning("⚠️  No auth token provided for skill sync")
+            return {
+                "success": False,
+                "message": "No auth token provided",
+                "synced_count": 0,
+                "failed_count": 0,
+                "skills": [],
+                "errors": ["No auth token provided"]
+            }
+
+        logger.info(f"🔄 Starting skill sync...")
+
+        # Sync all skills to workspace
+        result = await sync_user_skills(auth_token)
+
+        if result["success"]:
+            logger.info(
+                f"✅ Skills synced successfully: "
+                f"{result['synced_count']} synced, {result['failed_count']} failed"
+            )
+        else:
+            logger.warning(
+                f"⚠️  Skill sync completed with errors: "
+                f"{result['synced_count']} synced, {result['failed_count']} failed"
+            )
+
+        return {
+            "success": result["success"],
+            "message": result.get("message", "Skill sync completed"),
+            "synced_count": result["synced_count"],
+            "failed_count": result["failed_count"],
+            "skills": result["skills"],
+            "errors": result.get("errors", [])
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error syncing skills: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error syncing skills: {str(e)}",
+            "synced_count": 0,
+            "failed_count": 0,
+            "skills": [],
+            "errors": [str(e)]
+        }
+
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
@@ -309,6 +584,9 @@ async def websocket_chat(websocket: WebSocket):
     # Shared stop events dictionary (per session) - using asyncio.Event for thread safety
     stop_events: Dict[str, asyncio.Event] = {}
 
+    # Create output queue for agent messages
+    output_queue = asyncio.Queue(maxsize=100)
+
     try:
         # Define permission callback that uses queues instead of direct WebSocket read
         async def _my_permission_callback(
@@ -320,7 +598,7 @@ async def websocket_chat(websocket: WebSocket):
             Control tool permissions based on tool type and input.
 
             IMPORTANT: This callback does NOT read from WebSocket directly.
-            Instead, it sends request and waits for response from queue.
+            Instead, it sends request via output_queue and waits for response from permission_response_queue.
             """
 
             # Log the tool request
@@ -336,8 +614,8 @@ async def websocket_chat(websocket: WebSocket):
             # Generate unique request ID
             request_id = str(uuid.uuid4())
 
-            # Send permission request with unique ID
-            await websocket.send_json({
+            # Send permission request with unique ID via output queue
+            await output_queue.put({
                 "type": "permission_request",
                 "request_id": request_id,
                 "tool_name": tool_name,
@@ -384,18 +662,25 @@ async def websocket_chat(websocket: WebSocket):
             name="router"
         )
 
+        # NEW: WebSocket sender task - decouples agent from WebSocket
+        sender = asyncio.create_task(
+            websocket_sender(websocket, output_queue),
+            name="sender"
+        )
+
         interrupt = asyncio.create_task(
             interrupt_task(interrupt_queue, stop_events, websocket),
             name="interrupt"
         )
 
+        # Pass output_queue instead of websocket, but keep websocket for sync
         agent = asyncio.create_task(
-            agent_task(agent_queue, stop_events, websocket, _my_permission_callback),
+            agent_task(agent_queue, stop_events, output_queue, _my_permission_callback, websocket),
             name="agent"
         )
 
         # Wait for ALL tasks to complete
-        tasks = [heartbeat, router, interrupt, agent]
+        tasks = [heartbeat, router, sender, interrupt, agent]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Check for errors
@@ -418,8 +703,14 @@ async def websocket_chat(websocket: WebSocket):
         # Cancel all tasks
         logger.info("🧹 Cleaning up tasks...")
 
+        # Signal end of messages to output queue
+        try:
+            await output_queue.put(None)
+        except Exception:
+            pass
+
         # Get all running tasks
-        all_tasks = [t for t in [heartbeat, router, interrupt, agent] if not t.done()]
+        all_tasks = [t for t in [heartbeat, router, sender, interrupt, agent] if not t.done()]
 
         for task in all_tasks:
             task.cancel()

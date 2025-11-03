@@ -119,7 +119,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
 
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
-      <p className="my-3 leading-relaxed" {...props} />
+      <p className="my-2 leading-relaxed" {...props} />
     ),
     ul: ({ node, ...props }) => (
       <ul className="my-2 list-disc" {...props} />
@@ -134,7 +134,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
       <a className="underline hover:no-underline" {...props} />
     ),
     pre: ({ node, ...props }) => (
-      <pre className="my-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto" {...props} />
+      <pre className="my-2 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto" {...props} />
     ),
     h1: ({ node, ...props }) => (
       <h1 className="text-lg font-semibold mt-3 mb-2" {...props} />
@@ -146,7 +146,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
       <blockquote className="border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3 text-gray-600 dark:text-gray-300" {...props} />
     ),
     table: ({ node, ...props }) => (
-      <table className="my-3 w-full border-collapse" {...props} />
+      <table className="my-2 w-full border-collapse" {...props} />
     ),
     th: ({ node, ...props }) => (
       <th className="border px-2 py-1 text-left bg-gray-50 dark:bg-gray-800" {...props} />
@@ -265,8 +265,8 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
       const isPending = message.approval_id === pendingApprovalId;
 
       return (
-        <div className="shadow-sm  rounded-lg p-3 my-2">
-          <div className="flex items-start gap-3">
+        <div className="border border-gray-500/20 rounded-lg p-3 my-2">
+          <div className="">
             {/* Warning icon */}
             <div className="flex-shrink-0 mt-1">
               
@@ -274,8 +274,8 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
 
             <div className="flex-1">
               {/* Title */}
-              <h5 className="text-base font-semibold text-yellow-900 dark:text-yellow-100 mb-2">
-                Tool Execution Approval Required
+              <h5 className="text-xs sm:text-sm font-semibold text-yellow-900 dark:text-yellow-100">
+                Approval Required
               </h5>
 
               {/* Description */}
@@ -284,46 +284,44 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
               </p> */}
 
               {/* Tool details */}
-              <div className="bg-white dark:bg-gray-900 rounded-md p-1 space-y-2">
+              <div className="bg-white dark:bg-gray-900 rounded-md p-2 sm:p-3 space-y-2">
                 <div>
-                  <p className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 mt-0.5">
+                  <div className="text-xs sm:text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 break-all">
                     {toolName}
-                  </p>
+                  </div>
                 </div>
 
                 {toolInput && Object.keys(toolInput).length > 0 && (
                   <div>
-                    <Markdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeHighlight]}
-                      components={markdownComponents}
-                    >
+                    <pre className="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded overflow-x-auto">
                       {JSON.stringify(toolInput, null, 2)}
-                    </Markdown>
+                    </pre>
                   </div>
                 )}
               </div>
 
               {/* Action buttons */}
               {isPending && onApprove && onDeny ? (
-                <div className="flex gap-3">
+                <div className="flex flex-row gap-2 mt-3">
                   <button
                     onClick={() => onDeny(message.approval_id)}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors touch-manipulation"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
-                    Deny
+                    <span className="hidden sm:inline">Deny</span>
+                    <span className="sm:hidden">Deny</span>
                   </button>
                   <button
                     onClick={() => onApprove(message.approval_id)}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-transparent rounded-lg hover:bg-blue-700 transition-colors shadow-sm touch-manipulation"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Approve & Execute
+                    <span className="hidden sm:inline">Approve & Execute</span>
+                    <span className="sm:hidden">Approve</span>
                   </button>
                 </div>
               ) : (
@@ -404,7 +402,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block" : "block"} rounded-3xl px-4 text-md leading-relaxed ${
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${
           message.role === "user"
             ? "bg-gray-100 text-gray-800"
             : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
@@ -413,18 +411,17 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
         {/* Thought display - expandable */}
         {message.role !== "user" && message.thought && (
           <div className="mb-2 pt-2">
-            <button
+            <div
               onClick={() => setIsThoughtExpanded(!isThoughtExpanded)}
               className="text-xs text-gray-500 dark:text-gray-400 italic hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
             >
-              <span>💭</span>
               <span>{isThoughtExpanded ? message.thought : `${message.thought.substring(0, 60)}...`}</span>
               {message.thought.length > 60 && (
                 <svg className={`w-3 h-3 transition-transform ${isThoughtExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               )}
-            </button>
+            </div>
           </div>
         )}
 
@@ -434,11 +431,11 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
 
       {/* Action buttons - only for assistant messages */}
       {message.role !== "user" && message.type !== 'permission_request' && (
-        <div className="mt-2 flex items-center gap-3 text-gray-400">
+        <div className="mt-2 flex items-center text-gray-400">
           <button
             onClick={handleCopy}
             title={copySuccess ? "Copied!" : "Copy"}
-            className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            className="p-2 sm:p-1 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-manipulation"
           >
             {copySuccess ? (
               <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -455,7 +452,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
             <button
               onClick={handleRegenerate}
               title="Regenerate"
-              className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              className="p-2 sm:p-1 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-manipulation"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 12a9 9 0 10-3.51 7.06"/>

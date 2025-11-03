@@ -13,7 +13,19 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || 'ws://localhost:8002/ws/chat';
 
-export function useClaudeWebSocket(authToken = null) {
+/**
+ * Claude WebSocket Hook Options
+ * @typedef {Object} WebSocketOptions
+ * @property {boolean} autoConnect - Whether to connect automatically on mount (default: false)
+ */
+
+/**
+ * @param {string|null} authToken - Authentication token
+ * @param {WebSocketOptions} options - Configuration options
+ */
+export function useClaudeWebSocket(authToken = null, options = {}) {
+  const { autoConnect = false } = options;
+
   const [messages, setMessages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isSending, setIsSending] = useState(false);
@@ -550,8 +562,14 @@ export function useClaudeWebSocket(authToken = null) {
     }
   }, [isSending, sendInterrupt]);
 
-  // Auto-connect on mount (only once)
+  // Auto-connect on mount (only once) - if enabled
   useEffect(() => {
+    // Skip if autoConnect is disabled
+    if (!autoConnect) {
+      console.log('[WS] Auto-connect disabled, call connect() manually');
+      return;
+    }
+
     // Check if already connected or connecting to prevent Strict Mode double-connection
     if (wsRef.current &&
         (wsRef.current.readyState === WebSocket.OPEN ||
@@ -560,6 +578,7 @@ export function useClaudeWebSocket(authToken = null) {
       return;
     }
 
+    console.log('[WS] Auto-connecting on mount');
     connect();
 
     return () => {
@@ -570,7 +589,7 @@ export function useClaudeWebSocket(authToken = null) {
       disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty array - only run on mount
+  }, [autoConnect]); // Re-run if autoConnect changes
 
   return {
     messages,
