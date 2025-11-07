@@ -1,0 +1,719 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import { toast } from '../ui';
+import {
+  MagnifyingGlassIcon,
+  ArrowDownTrayIcon,
+  CheckCircleIcon,
+  PlusIcon,
+  TrashIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  LinkIcon
+} from '@heroicons/react/24/outline';
+import {
+  fetchPluginsFromMarketplace,
+  downloadSkillFromMarketplace,
+  downloadEntireMarketplace,
+  parseGitHubUrl,
+  fetchMarketplaceMetadata,
+  installPluginFromMarketplace
+} from '../../lib/marketplaceGithub';
+import {
+  getInstalledPluginsFromDB,
+  loadMarketplaceFromDB,
+  loadAllMarketplacesFromDB
+} from '../../lib/workspaceManager';
+
+const DEFAULT_MARKETPLACES = [
+  {
+    url: 'https://github.com/anthropics/skills',
+    branch: 'main',
+    name: 'anthropic-agent-skills'  // From marketplace.json
+  }
+];
+
+export default function MarketplaceTab() {
+  const { session } = useAuth();
+  const [marketplaces, setMarketplaces] = useState([]);
+  const [marketplaceData, setMarketplaceData] = useState({});
+  const [installedPluginIds, setInstalledPluginIds] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedPlugins, setExpandedPlugins] = useState(new Set());
+  const [cachedMarketplaces, setCachedMarketplaces] = useState(new Set());
+
+  // Add marketplace form
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [addingRepo, setAddingRepo] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(null);
+
+  useEffect(() => {
+    loadMarketplaces();
+  }, [session]);
+
+  const loadMarketplaces = async () => {
+    setLoading(true);
+
+    try {
+      // Load saved marketplaces from localStorage
+      const savedMarketplaces = localStorage.getItem('marketplaces');
+      let userMarketplaces = savedMarketplaces
+        ? JSON.parse(savedMarketplaces)
+        : DEFAULT_MARKETPLACES;
+
+      // Migrate old marketplaces to add name field if missing
+      let needsUpdate = false;
+      userMarketplaces = userMarketplaces.map(m => {
+        if (!m.name && m.url) {
+          // Try to infer name from URL
+          const parsed = parseGitHubUrl(m.url);
+          if (parsed) {
+            // Check for known marketplaces
+            if (m.url.toLowerCase().includes('anthropics/skills') ||
+                parsed.owner === 'anthropics' && parsed.repo === 'skills') {
+              needsUpdate = true;
+              console.log('[MarketplaceTab] Migrating marketplace to add name: anthropic-agent-skills');
+              return { ...m, name: 'anthropic-agent-skills' };
+            }
+            // For unknown marketplaces, try to fetch the name from bucket
+            // We'll just use repo name as fallback
+            console.log(`[MarketplaceTab] No name for marketplace ${m.url}, needs manual fetch`);
+          }
+        }
+        return m;
+      });
+
+      if (needsUpdate) {
+        localStorage.setItem('marketplaces', JSON.stringify(userMarketplaces));
+        console.log('[MarketplaceTab] ✅ Migrated localStorage with name fields');
+      }
+
+      console.log('[MarketplaceTab] 📋 User marketplaces:', userMarketplaces);
+      console.log('[MarketplaceTab] 👤 Session user ID:', session?.user?.id);
+
+      setMarketplaces(userMarketplaces);
+
+      // Load installed plugins from PostgreSQL (instant!)
+      if (session?.user?.id) {
+        const installedResult = await getInstalledPluginsFromDB(session.user.id);
+        if (installedResult.success) {
+          // Convert plugins array to set of plugin IDs
+          const pluginIds = new Set();
+          installedResult.plugins.forEach((plugin) => {
+            // Create plugin key: pluginName@marketplaceName
+            const pluginKey = `${plugin.plugin_name}@${plugin.marketplace_name}`;
+            pluginIds.add(pluginKey);
+          });
+          setInstalledPluginIds(pluginIds);
+        }
+      }
+
+      // Load plugins from each marketplace
+      const data = {};
+      const cached = new Set();
+
+      for (const marketplace of userMarketplaces) {
+        const parsed = parseGitHubUrl(marketplace.url);
+        if (!parsed) continue;
+
+        console.log('[MarketplaceTab] 🔍 Processing marketplace:', marketplace);
+
+        // Try loading from PostgreSQL first (instant, no lag!)
+        if (session?.user?.id && marketplace.name) {
+          console.log(`[MarketplaceTab] 💾 Loading marketplace "${marketplace.name}" from PostgreSQL...`);
+          console.log(`[MarketplaceTab]    User ID: ${session.user.id}`);
+
+          const dbResult = await loadMarketplaceFromDB(session.user.id, marketplace.name);
+
+          console.log(`[MarketplaceTab] 📦 PostgreSQL result for "${marketplace.name}":`, dbResult);
+
+          if (dbResult.success && dbResult.marketplace) {
+            console.log(`[MarketplaceTab] ✅ Successfully loaded ${marketplace.name} from PostgreSQL (instant!)`);
+            console.log(`[MarketplaceTab]    Display name: ${dbResult.marketplace.display_name}`);
+            console.log(`[MarketplaceTab]    Plugins count: ${dbResult.marketplace.plugins?.length || 0}`);
+            cached.add(marketplace.url);
+
+            // Parse marketplace data - PostgreSQL stores in JSONB format
+            const plugins = [];
+            for (const plugin of (dbResult.marketplace.plugins || [])) {
+              const pluginData = {
+                id: `${parsed.owner}/${parsed.repo}/${plugin.name}`,
+                name: plugin.name,
+                description: plugin.description || 'No description available',
+                source: plugin.source || './',
+                strict: plugin.strict || false,
+                skills: plugin.skills || [],
+                repository: dbResult.marketplace.repository_url || `https://github.com/${parsed.owner}/${parsed.repo}`,
+                repositoryOwner: parsed.owner,
+                repositoryName: parsed.repo,
+                branch: dbResult.marketplace.branch || 'main',
+                marketplaceName: dbResult.marketplace.name,
+                marketplaceOwner: dbResult.marketplace.display_name,
+                version: dbResult.marketplace.version || '1.0.0'
+              };
+              plugins.push(pluginData);
+            }
+
+            data[marketplace.url] = {
+              marketplace: {
+                name: dbResult.marketplace.display_name || dbResult.marketplace.name,
+                description: dbResult.marketplace.description,
+                version: dbResult.marketplace.version,
+                owner: dbResult.marketplace.display_name,
+                repository: dbResult.marketplace.repository_url
+              },
+              plugins
+            };
+
+            continue; // Skip GitHub fetch
+          } else {
+            console.log(`[MarketplaceTab] ❌ Failed to load from PostgreSQL:`, dbResult.error || 'Unknown error');
+            console.log(`[MarketplaceTab]    Will fallback to GitHub API`);
+          }
+        } else {
+          console.log(`[MarketplaceTab] ⏭️  Skipping PostgreSQL check for ${marketplace.url}:`, {
+            hasSession: !!session?.user?.id,
+            hasName: !!marketplace.name,
+            marketplaceName: marketplace.name || '(missing)'
+          });
+        }
+
+        // Fallback to GitHub if not in PostgreSQL
+        console.log(`[MarketplaceTab] ⚠️ Fetching marketplace ${parsed.repo} from GitHub API...`);
+        console.warn('[MarketplaceTab] ⚠️ WARNING: GitHub API has rate limits (60 requests/hour). Use PostgreSQL caching instead.');
+        const result = await fetchPluginsFromMarketplace(
+          parsed.owner,
+          parsed.repo,
+          marketplace.branch || 'main'
+        );
+
+        if (result) {
+          data[marketplace.url] = result;
+        }
+      }
+
+      setMarketplaceData(data);
+      setCachedMarketplaces(cached);
+
+      if (Object.keys(data).length > 0) {
+        toast.success(`Loaded ${Object.keys(data).length} marketplace(s)`);
+      }
+    } catch (error) {
+      console.error('Failed to load marketplaces:', error);
+      toast.error('Failed to load marketplaces');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddMarketplace = async () => {
+    if (!session?.user?.id) {
+      toast.error('Please sign in to add marketplace');
+      return;
+    }
+
+    if (!newRepoUrl.trim()) {
+      toast.error('Please enter a GitHub repository URL');
+      return;
+    }
+
+    const parsed = parseGitHubUrl(newRepoUrl);
+    if (!parsed) {
+      toast.error('Invalid GitHub URL');
+      return;
+    }
+
+    setAddingRepo(true);
+    setDownloadProgress({ current: 1, total: 1, skillName: 'Fetching marketplace metadata...' });
+
+    try {
+      // Get auth token
+      const authToken = `Bearer ${session?.access_token || ''}`;
+      if (!authToken || authToken === 'Bearer ') {
+        throw new Error('No authentication token available');
+      }
+
+      // Infer marketplace name from URL
+      const inferredMarketplaceName = `${parsed.owner}-${parsed.repo}`;
+
+      // DOWNLOAD ENTIRE MARKETPLACE (ZIP + Metadata)
+      // Backend downloads ZIP from GitHub → Uploads to S3 → Saves metadata to PostgreSQL
+      // This ensures ZIP file exists for plugin installation
+      setDownloadProgress({ current: 1, total: 2, skillName: 'Downloading marketplace from GitHub...' });
+
+      const downloadResult = await downloadEntireMarketplace(
+        parsed.owner,
+        parsed.repo,
+        'main',
+        authToken,
+        inferredMarketplaceName,
+        (progress) => {
+          setDownloadProgress({
+            current: 1,
+            total: 2,
+            skillName: progress.skillName || 'Downloading...'
+          });
+        }
+      );
+
+      if (!downloadResult.success) {
+        throw new Error(downloadResult.error || 'Failed to download marketplace');
+      }
+
+      console.log('[MarketplaceTab] ✅ Marketplace downloaded:', downloadResult.marketplace);
+
+      const marketplaceName = downloadResult.marketplaceName || inferredMarketplaceName;
+
+      // Add to marketplaces list
+      const newMarketplace = {
+        url: newRepoUrl.trim(),
+        branch: 'main',
+        name: marketplaceName,
+        fetchedAt: new Date().toISOString()
+      };
+
+      const updatedMarketplaces = [...marketplaces, newMarketplace];
+      setMarketplaces(updatedMarketplaces);
+      localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
+
+      // Parse marketplace data for UI display
+      const plugins = [];
+      const marketplace = downloadResult.marketplace || {};
+
+      for (const plugin of (marketplace.plugins || [])) {
+        const pluginData = {
+          id: `${parsed.owner}/${parsed.repo}/${plugin.name}`,
+          name: plugin.name,
+          description: plugin.description || 'No description available',
+          source: plugin.source || './',
+          strict: plugin.strict || false,
+          skills: plugin.skills || [],
+          repository: `https://github.com/${parsed.owner}/${parsed.repo}`,
+          repositoryOwner: parsed.owner,
+          repositoryName: parsed.repo,
+          branch: 'main',
+          marketplaceName: marketplaceName,
+          marketplaceOwner: marketplace.owner?.name || marketplace.name || parsed.owner,
+          version: marketplace.metadata?.version || '1.0.0'
+        };
+        plugins.push(pluginData);
+      }
+
+      // Add marketplace data for UI display
+      setMarketplaceData({
+        ...marketplaceData,
+        [newMarketplace.url]: {
+          marketplace: {
+            name: marketplace.name || marketplaceName,
+            description: marketplace.metadata?.description || marketplace.description,
+            version: marketplace.metadata?.version || marketplace.version || '1.0.0',
+            owner: marketplace.owner?.name || marketplace.name || parsed.owner,
+            repository: `https://github.com/${parsed.owner}/${parsed.repo}`
+          },
+          plugins
+        }
+      });
+
+      // Mark as cached (loaded from storage)
+      setCachedMarketplaces(new Set([...cachedMarketplaces, newMarketplace.url]));
+
+      toast.success(`Marketplace added with ZIP: ${plugins.length} plugin(s) available`);
+      setNewRepoUrl('');
+      setShowAddForm(false);
+    } catch (error) {
+      console.error('[MarketplaceTab] Failed to add marketplace:', error);
+      toast.error(`Failed to add marketplace: ${error.message}`);
+    } finally {
+      setAddingRepo(false);
+      setDownloadProgress(null);
+    }
+  };
+
+  const handleRemoveMarketplace = (marketplaceUrl) => {
+    if (!confirm('Remove this marketplace? Installed skills will remain.')) {
+      return;
+    }
+
+    const updatedMarketplaces = marketplaces.filter(m => m.url !== marketplaceUrl);
+    setMarketplaces(updatedMarketplaces);
+    localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
+
+    // Remove marketplace data
+    const newData = { ...marketplaceData };
+    delete newData[marketplaceUrl];
+    setMarketplaceData(newData);
+
+    // Remove from cached list
+    const newCached = new Set(cachedMarketplaces);
+    newCached.delete(marketplaceUrl);
+    setCachedMarketplaces(newCached);
+
+    toast.success('Marketplace removed');
+  };
+
+  const handleRefreshMarketplaces = async () => {
+    await loadMarketplaces();
+    toast.success('Marketplaces refreshed');
+  };
+
+  const togglePlugin = (pluginId) => {
+    const newExpanded = new Set(expandedPlugins);
+    if (newExpanded.has(pluginId)) {
+      newExpanded.delete(pluginId);
+    } else {
+      newExpanded.add(pluginId);
+    }
+    setExpandedPlugins(newExpanded);
+  };
+
+  const handleInstallPlugin = async (plugin) => {
+    if (!session?.user?.id) {
+      toast.error('Please sign in to install plugins');
+      return;
+    }
+
+    let toastId;
+    try {
+      // Create plugin key: pluginName@marketplaceName
+      const pluginKey = `${plugin.name}@${plugin.marketplaceName}`;
+
+      toastId = toast.loading(`Installing ${plugin.name}...`);
+
+      // ZIP APPROACH (FAST & EFFICIENT):
+      // - Plugin files already exist in S3 (from marketplace ZIP)
+      // - This only marks the plugin as installed in PostgreSQL (instant!)
+      // - When user opens AI agent, sync_bucket will unzip only installed plugins
+      // - Installing a plugin gives access to ALL skills inside it
+
+      console.log('[MarketplaceTab] 📦 Installing plugin (instant DB update):', {
+        userId: session.user.id,
+        pluginName: plugin.name,
+        marketplaceName: plugin.marketplaceName,
+        version: plugin.version,
+        skillsCount: plugin.skills.length
+      });
+
+      // Get auth token
+      const authToken = `Bearer ${session?.access_token || ''}`;
+
+      // Call simplified install endpoint (only updates database)
+      const installResult = await installPluginFromMarketplace(
+        plugin.marketplaceName,
+        plugin.name,  // Plugin name (e.g., "document-skills", "example-skills")
+        plugin.version,
+        authToken
+      );
+
+      if (!installResult.success) {
+        throw new Error(installResult.error || 'Failed to install plugin');
+      }
+
+      console.log('[MarketplaceTab] ✅ Plugin installed (instant!):', installResult.plugin);
+
+      // Update UI
+      setInstalledPluginIds(new Set([...installedPluginIds, pluginKey]));
+      if (toastId) toast.dismiss(toastId);
+      toast.success(`${plugin.name} installed successfully! (${plugin.skills.length} skills included)`);
+    } catch (error) {
+      console.error('[MarketplaceTab] Install error:', error);
+      if (toastId) toast.dismiss(toastId);
+      toast.error(`Failed to install: ${error.message}`);
+    }
+  };
+
+  const filteredData = Object.entries(marketplaceData).reduce((acc, [url, data]) => {
+    if (!data || !data.plugins) return acc;
+
+    const filteredPlugins = data.plugins.filter(plugin => {
+      return plugin.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+             plugin.description.toLowerCase().includes(searchTerm.toLowerCase());
+    });
+
+    if (filteredPlugins.length > 0) {
+      acc[url] = {
+        ...data,
+        plugins: filteredPlugins
+      };
+    }
+
+    return acc;
+  }, {});
+
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-4 animate-pulse">
+            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2" />
+            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header with Search and Add Button */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 relative">
+          <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <input
+            type="search"
+            placeholder="Search plugins and skills..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+        >
+          <PlusIcon className="h-5 w-5" />
+          <span>Add Marketplace</span>
+        </button>
+      </div>
+
+      {/* Cache Status Info */}
+      {cachedMarketplaces.size > 0 && (
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-sm text-green-800 dark:text-green-200">
+                <strong>{cachedMarketplaces.size}</strong> marketplace(s) loaded from cache (no GitHub API usage)
+              </span>
+            </div>
+            <button
+              onClick={handleRefreshMarketplaces}
+              className="text-xs text-green-700 dark:text-green-300 hover:underline"
+            >
+              Refresh
+            </button>
+          </div>
+          <p className="text-xs text-green-700 dark:text-green-300 mt-1">
+            💡 Tip: Check browser console (F12) for detailed loading logs
+          </p>
+        </div>
+      )}
+
+      {/* Add Marketplace Form */}
+      {showAddForm && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
+            Add GitHub Marketplace
+          </h3>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newRepoUrl}
+              onChange={(e) => setNewRepoUrl(e.target.value)}
+              placeholder="https://github.com/owner/repo"
+              className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
+              disabled={addingRepo}
+            />
+            <button
+              onClick={handleAddMarketplace}
+              disabled={addingRepo}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm font-medium"
+            >
+              {addingRepo ? 'Adding...' : 'Add'}
+            </button>
+            <button
+              onClick={() => setShowAddForm(false)}
+              disabled={addingRepo}
+              className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+
+          {/* Download Progress */}
+          {downloadProgress && (
+            <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                  Fetching metadata from GitHub...
+                </span>
+                <span className="text-xs text-blue-700 dark:text-blue-300">
+                  {downloadProgress.current}/{downloadProgress.total}
+                </span>
+              </div>
+              <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2 mb-2">
+                <div
+                  className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all"
+                  style={{ width: `${downloadProgress.total > 0 ? (downloadProgress.current / downloadProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-blue-700 dark:text-blue-300">
+                {downloadProgress.skillName}
+              </p>
+            </div>
+          )}
+
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+            Repository must contain .claude-plugin/marketplace.json file. All skills will be downloaded to your workspace.
+          </p>
+        </div>
+      )}
+
+      {/* Marketplaces List */}
+      {Object.entries(filteredData).length > 0 ? (
+        <div className="space-y-4">
+          {Object.entries(filteredData).map(([marketplaceUrl, data]) => (
+            <div key={marketplaceUrl} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+              {/* Marketplace Header */}
+              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                        {data.marketplace?.name || 'Marketplace'}
+                      </h3>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        v{data.marketplace?.version || '1.0.0'}
+                      </span>
+                      {cachedMarketplaces.has(marketplaceUrl) && (
+                        <span className="px-2 py-0.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded">
+                          Cached
+                        </span>
+                      )}
+                    </div>
+                    {data.marketplace?.description && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                        {data.marketplace.description}
+                      </p>
+                    )}
+                    <a
+                      href={marketplaceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1"
+                    >
+                      <LinkIcon className="h-3 w-3" />
+                      {marketplaceUrl.replace('https://github.com/', '')}
+                    </a>
+                  </div>
+                  <button
+                    onClick={() => handleRemoveMarketplace(marketplaceUrl)}
+                    className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                    title="Remove marketplace"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Plugins List */}
+              <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                {data.plugins.map((plugin) => {
+                  const isExpanded = expandedPlugins.has(plugin.id);
+                  const pluginKey = `${plugin.name}@${plugin.marketplaceName}`;
+                  const isInstalled = installedPluginIds.has(pluginKey);
+
+                  return (
+                    <div key={plugin.id}>
+                      {/* Plugin Header */}
+                      <div className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                        <div className="flex items-start justify-between">
+                          <div
+                            className="flex-1 flex items-start gap-2 cursor-pointer"
+                            onClick={() => togglePlugin(plugin.id)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDownIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                            ) : (
+                              <ChevronRightIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                            )}
+                            <div>
+                              <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                                {plugin.name}
+                              </h4>
+                              <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+                                {plugin.description}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                                {plugin.skills.length} skill(s) included
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Install button at plugin level */}
+                          <div className="ml-4 flex-shrink-0">
+                            {isInstalled ? (
+                              <span className="px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded flex items-center gap-1.5">
+                                <CheckCircleIcon className="h-4 w-4" />
+                                Installed
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleInstallPlugin(plugin)}
+                                className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors flex items-center gap-1.5"
+                              >
+                                <ArrowDownTrayIcon className="h-4 w-4" />
+                                Install Plugin
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Skills List (Expanded) - Read-only, no install buttons */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 bg-gray-50 dark:bg-gray-900/30">
+                          <div className="space-y-2 ml-7">
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                              Skills included in this plugin:
+                            </p>
+                            {plugin.skills.map((skillPath) => {
+                              const skillName = skillPath.split('/').pop();
+                              // Clean ./ prefix for display
+                              const displayPath = skillPath.replace(/^\.\//, '');
+
+                              return (
+                                <div
+                                  key={skillPath}
+                                  className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+                                >
+                                  <div className="flex-1">
+                                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                      {skillName}
+                                    </p>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
+                                      {displayPath}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-medium text-gray-900 dark:text-white">
+            No plugins found
+          </h3>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {marketplaces.length === 0
+              ? 'Add a marketplace to get started'
+              : 'Try adjusting your search or add more marketplaces'}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

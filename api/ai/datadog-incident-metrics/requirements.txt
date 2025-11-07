@@ -1,0 +1,7 @@
+# Datadog Incident Metrics Skill - Python Dependencies
+
+# HTTP client for Datadog API requests
+requests>=2.31.0
+
+# Date and time parsing utilities
+python-dateutil>=2.8.2
