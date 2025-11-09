@@ -8,6 +8,30 @@
  * - Download plugin files on demand (lazy loading)
  */
 
+/**
+ * Decode JWT token to extract user_id (client-side, no verification)
+ *
+ * @param {string} authToken - JWT token (with or without "Bearer " prefix)
+ * @returns {string} user_id from token's 'sub' claim
+ * @throws {Error} if token is invalid or user_id not found
+ */
+function getUserIdFromToken(authToken) {
+  try {
+    const token = authToken.replace('Bearer ', '').trim();
+    // JWT format: header.payload.signature
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const userId = payload.sub; // user_id is in 'sub' claim
+
+    if (!userId) {
+      throw new Error('user_id (sub) not found in token payload');
+    }
+
+    return userId;
+  } catch (error) {
+    throw new Error(`Failed to decode JWT token: ${error.message}`);
+  }
+}
+
 const MARKETPLACE_REPOS = [
   {
     owner: 'anthropics',
@@ -426,13 +450,12 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
       );
 
-      // Get user_id from auth token
-      const { data: { user } } = await supabase.auth.getUser(authToken.replace('Bearer ', ''));
-      if (!user) throw new Error('Failed to get user from token');
+      // Decode JWT token to get user_id (client-side decode, no verification needed)
+      const userId = getUserIdFromToken(authToken);
 
       // Download marketplace.json from storage
       const { data: fileData, error: downloadError } = await supabase.storage
-        .from(user.id)
+        .from(userId)
         .download(marketplaceJsonPath);
 
       if (downloadError) throw downloadError;
