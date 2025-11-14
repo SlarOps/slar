@@ -445,11 +445,11 @@ export default function MarketplaceTab() {
 
   if (loading) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-2 sm:space-y-3">
         {[1, 2, 3].map(i => (
-          <div key={i} className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-4 animate-pulse">
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2" />
-            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+          <div key={i} className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-3 sm:p-4 animate-pulse">
+            <div className="h-3 sm:h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2" />
+            <div className="h-2 sm:h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
           </div>
         ))}
       </div>
@@ -457,41 +457,41 @@ export default function MarketplaceTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       {/* Header with Search and Add Button */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
         <div className="flex-1 relative">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <MagnifyingGlassIcon className="absolute left-2 sm:left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
           <input
             type="search"
             placeholder="Search plugins and skills..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 text-xs sm:text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+          className="flex items-center justify-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
         >
-          <PlusIcon className="h-5 w-5" />
+          <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
           <span>Add Marketplace</span>
         </button>
       </div>
 
       {/* Cache Status Info */}
       {cachedMarketplaces.size > 0 && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
-          <div className="flex items-center justify-between">
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-2 sm:p-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-sm text-green-800 dark:text-green-200">
+              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+              <span className="text-xs sm:text-sm text-green-800 dark:text-green-200">
                 <strong>{cachedMarketplaces.size}</strong> marketplace(s) loaded from cache (no GitHub API usage)
               </span>
             </div>
             <button
               onClick={handleRefreshMarketplaces}
-              className="text-xs text-green-700 dark:text-green-300 hover:underline"
+              className="text-xs text-green-700 dark:text-green-300 hover:underline text-left sm:text-right"
             >
               Refresh
             </button>
@@ -504,34 +504,36 @@ export default function MarketplaceTab() {
 
       {/* Add Marketplace Form */}
       {showAddForm && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
+          <h3 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white mb-2 sm:mb-3">
             Add GitHub Marketplace
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               value={newRepoUrl}
               onChange={(e) => setNewRepoUrl(e.target.value)}
               placeholder="https://github.com/owner/repo"
-              className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              className="flex-1 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
               onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
               disabled={addingRepo}
             />
-            <button
-              onClick={handleAddMarketplace}
-              disabled={addingRepo}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm font-medium"
-            >
-              {addingRepo ? 'Adding...' : 'Add'}
-            </button>
-            <button
-              onClick={() => setShowAddForm(false)}
-              disabled={addingRepo}
-              className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors text-sm"
-            >
-              Cancel
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAddMarketplace}
+                disabled={addingRepo}
+                className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-xs sm:text-sm font-medium"
+              >
+                {addingRepo ? 'Adding...' : 'Add'}
+              </button>
+              <button
+                onClick={() => setShowAddForm(false)}
+                disabled={addingRepo}
+                className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors text-xs sm:text-sm"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
 
           {/* Download Progress */}
@@ -565,22 +567,22 @@ export default function MarketplaceTab() {
 
       {/* Marketplaces List */}
       {Object.entries(filteredData).length > 0 ? (
-        <div className="space-y-4">
+        <div className="space-y-3 sm:space-y-4">
           {Object.entries(filteredData).map(([marketplaceUrl, data]) => (
             <div key={marketplaceUrl} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
               {/* Marketplace Header */}
-              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+              <div className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                      <h3 className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-white">
                         {data.marketplace?.name || 'Marketplace'}
                       </h3>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                      <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
                         v{data.marketplace?.version || '1.0.0'}
                       </span>
                       {cachedMarketplaces.has(marketplaceUrl) && (
-                        <span className="px-2 py-0.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded">
+                        <span className="px-1.5 sm:px-2 py-0.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded flex-shrink-0">
                           Cached
                         </span>
                       )}
@@ -594,15 +596,15 @@ export default function MarketplaceTab() {
                       href={marketplaceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1 break-all"
                     >
-                      <LinkIcon className="h-3 w-3" />
-                      {marketplaceUrl.replace('https://github.com/', '')}
+                      <LinkIcon className="h-3 w-3 flex-shrink-0" />
+                      <span className="truncate">{marketplaceUrl.replace('https://github.com/', '')}</span>
                     </a>
                   </div>
                   <button
                     onClick={() => handleRemoveMarketplace(marketplaceUrl)}
-                    className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                    className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors flex-shrink-0"
                     title="Remove marketplace"
                   >
                     <TrashIcon className="h-4 w-4" />
@@ -620,19 +622,19 @@ export default function MarketplaceTab() {
                   return (
                     <div key={plugin.id}>
                       {/* Plugin Header */}
-                      <div className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                        <div className="flex items-start justify-between">
+                      <div className="p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                        <div className="flex flex-col gap-3">
                           <div
                             className="flex-1 flex items-start gap-2 cursor-pointer"
                             onClick={() => togglePlugin(plugin.id)}
                           >
                             {isExpanded ? (
-                              <ChevronDownIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                              <ChevronDownIcon className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 flex-shrink-0 mt-0.5" />
                             ) : (
-                              <ChevronRightIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                              <ChevronRightIcon className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 flex-shrink-0 mt-0.5" />
                             )}
-                            <div>
-                              <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
                                 {plugin.name}
                               </h4>
                               <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
@@ -645,18 +647,18 @@ export default function MarketplaceTab() {
                           </div>
 
                           {/* Install button at plugin level */}
-                          <div className="ml-4 flex-shrink-0">
+                          <div className="pl-6 sm:pl-7">
                             {isInstalled ? (
-                              <span className="px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded flex items-center gap-1.5">
-                                <CheckCircleIcon className="h-4 w-4" />
+                              <span className="inline-flex px-2 sm:px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded items-center gap-1.5">
+                                <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4" />
                                 Installed
                               </span>
                             ) : (
                               <button
                                 onClick={() => handleInstallPlugin(plugin)}
-                                className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors flex items-center gap-1.5"
+                                className="inline-flex px-2 sm:px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors items-center gap-1.5"
                               >
-                                <ArrowDownTrayIcon className="h-4 w-4" />
+                                <ArrowDownTrayIcon className="h-3 w-3 sm:h-4 sm:w-4" />
                                 Install Plugin
                               </button>
                             )}
@@ -666,8 +668,8 @@ export default function MarketplaceTab() {
 
                       {/* Skills List (Expanded) - Read-only, no install buttons */}
                       {isExpanded && (
-                        <div className="px-4 pb-4 bg-gray-50 dark:bg-gray-900/30">
-                          <div className="space-y-2 ml-7">
+                        <div className="px-3 sm:px-4 pb-3 sm:pb-4 bg-gray-50 dark:bg-gray-900/30">
+                          <div className="space-y-2 ml-6 sm:ml-7">
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                               Skills included in this plugin:
                             </p>
@@ -679,13 +681,13 @@ export default function MarketplaceTab() {
                               return (
                                 <div
                                   key={skillPath}
-                                  className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+                                  className="flex items-center justify-between p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
                                 >
-                                  <div className="flex-1">
-                                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white truncate">
                                       {skillName}
                                     </p>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5 truncate">
                                       {displayPath}
                                     </p>
                                   </div>
@@ -703,8 +705,8 @@ export default function MarketplaceTab() {
           ))}
         </div>
       ) : (
-        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <h3 className="text-sm font-medium text-gray-900 dark:text-white">
+        <div className="text-center py-8 sm:py-12 px-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <h3 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
             No plugins found
           </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">

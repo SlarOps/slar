@@ -11,7 +11,9 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 
-const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || 'ws://localhost:8002/ws/chat';
+const HOST = window.location.host;
+const PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOST}/ws/chat`;
 
 /**
  * Claude WebSocket Hook Options

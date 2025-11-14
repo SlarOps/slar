@@ -16,7 +16,7 @@
 
 import { useState, useCallback } from 'react';
 
-const DEFAULT_AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+const DEFAULT_AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
 
 export function useSyncBucket(authToken) {
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'ready' | 'error'

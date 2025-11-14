@@ -199,15 +199,15 @@ export default function GroupDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="h-6 w-6 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-48 animate-pulse"></div>
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="h-5 w-5 sm:h-6 sm:w-6 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+          <div className="h-6 sm:h-8 bg-gray-200 dark:bg-gray-700 rounded w-32 sm:w-48 animate-pulse"></div>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
           <div className="animate-pulse space-y-4">
-            <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+            <div className="h-5 sm:h-6 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full sm:w-1/2"></div>
             <div className="h-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
           </div>
         </div>
@@ -217,36 +217,36 @@ export default function GroupDetailPage() {
 
   if (error) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Link 
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Link
             href="/groups"
             className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Group Details</h1>
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white">Group Details</h1>
         </div>
-        
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6 text-center">
           <div className="text-red-600 dark:text-red-400 mb-2">
             <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             Error loading group
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+          <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">{error}</p>
           <button
             onClick={() => router.back()}
-            className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            className="px-4 py-2 text-xs sm:text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
           >
             Go Back
           </button>
         </div>
       </div>
-          );
+    );
   }
 
   const tabs = [
@@ -353,64 +353,62 @@ export default function GroupDetailPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link 
-            href="/groups"
-            className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{group.name}</h1>
-            <p className="text-gray-600 dark:text-gray-400">Group Details</p>
-          </div>
+      <div className="flex items-center gap-2 sm:gap-3">
+        <Link
+          href="/groups"
+          className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white flex-shrink-0"
+        >
+          <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{group.name}</h1>
+          <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">Group Details</p>
         </div>
       </div>
 
       {/* Group Information */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
         <div className="flex items-start justify-between mb-4">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full border ${getTypeColor(group.type)}`}>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-3 flex-wrap">
+              <span className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full border ${getTypeColor(group.type)}`}>
                 {group.type}
               </span>
-              <div className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
-                group.is_active 
+              <div className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full ${
+                group.is_active
                   ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
                   : 'text-gray-600 bg-gray-100 dark:bg-gray-900/30'
               }`}>
                 {group.is_active ? 'Active' : 'Inactive'}
               </div>
               {group.visibility && (
-                <div className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full border ${getVisibilityColor(group.visibility)}`}>
+                <div className={`inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full border ${getVisibilityColor(group.visibility)}`}>
                   {getVisibilityIcon(group.visibility)}
-                  {group.visibility}
+                  <span className="hidden sm:inline">{group.visibility}</span>
                 </div>
               )}
             </div>
-            
+
             {group.description && (
-              <p className="text-gray-600 dark:text-gray-400 mb-4">{group.description}</p>
+              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mb-4">{group.description}</p>
             )}
 
             <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-              <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                 <span>Created {formatDateTime(group.created_at)}</span>
-                <span>•</span>
+                <span className="hidden sm:inline">•</span>
                 <span>Updated {formatDateTime(group.updated_at)}</span>
-                <span>•</span>
-                <span>by {group.created_by}</span>
+                <span className="hidden sm:inline">•</span>
+                <span className="truncate">by {group.created_by}</span>
               </div>
               {group.type === 'escalation' && (
-                <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                   <span>Method: {group.escalation_method?.replace('_', ' ')}</span>
-                  <span>•</span>
+                  <span className="hidden sm:inline">•</span>
                   <span>Timeout: {Math.floor(group.escalation_timeout / 60)}min</span>
                 </div>
               )}
@@ -421,26 +419,26 @@ export default function GroupDetailPage() {
 
       {/* Tab Navigation */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-        <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
+        <div className="border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+          <nav className="-mb-px flex space-x-4 sm:space-x-8 px-3 sm:px-6 min-w-max" aria-label="Tabs">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm inline-flex items-center gap-2 ${
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 dark:text-blue-400 dark:border-blue-400'
                     : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
                 }`}
               >
-                {tab.icon}
-                {tab.name}
+                <span className="flex-shrink-0">{tab.icon}</span>
+                <span className="hidden xs:inline">{tab.name}</span>
               </button>
             ))}
           </nav>
         </div>
 
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {renderTabContent()}
         </div>
       </div>

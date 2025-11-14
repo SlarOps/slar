@@ -1,0 +1,110 @@
+{{- if and .Values.components.ai .Values.components.ai.rbac.enabled -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "slar.fullname" . }}-ai-reader
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai
+rules:
+# Read access to all core resources
+- apiGroups: [""]
+  resources:
+    - pods
+    - pods/log
+    - pods/status
+    - services
+    - endpoints
+    - persistentvolumeclaims
+    - persistentvolumes
+    - nodes
+    - namespaces
+    - configmaps
+    - secrets
+    - events
+    - resourcequotas
+    - limitranges
+    - serviceaccounts
+  verbs: ["get", "list", "watch"]
+
+# Read access to apps resources
+- apiGroups: ["apps"]
+  resources:
+    - deployments
+    - deployments/status
+    - daemonsets
+    - statefulsets
+    - replicasets
+  verbs: ["get", "list", "watch"]
+
+# Scale permissions for apps resources
+- apiGroups: ["apps"]
+  resources:
+    - deployments/scale
+    - statefulsets/scale
+    - replicasets/scale
+  verbs: ["get", "update", "patch"]
+
+# Read access to batch resources
+- apiGroups: ["batch"]
+  resources:
+    - jobs
+    - cronjobs
+  verbs: ["get", "list", "watch"]
+
+# Read access to networking
+- apiGroups: ["networking.k8s.io"]
+  resources:
+    - ingresses
+    - networkpolicies
+  verbs: ["get", "list", "watch"]
+
+# Read access to RBAC
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources:
+    - roles
+    - rolebindings
+    - clusterroles
+    - clusterrolebindings
+  verbs: ["get", "list", "watch"]
+
+# Read access to autoscaling
+- apiGroups: ["autoscaling"]
+  resources:
+    - horizontalpodautoscalers
+  verbs: ["get", "list", "watch"]
+
+# Scale via autoscaling API
+- apiGroups: ["autoscaling"]
+  resources:
+    - horizontalpodautoscalers
+  verbs: ["get", "update", "patch"]
+
+# Read access to metrics
+- apiGroups: ["metrics.k8s.io"]
+  resources:
+    - pods
+    - nodes
+  verbs: ["get", "list"]
+
+# Read access to storage
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - storageclasses
+  verbs: ["get", "list", "watch"]
+
+# Read access to policy
+- apiGroups: ["policy"]
+  resources:
+    - poddisruptionbudgets
+  verbs: ["get", "list", "watch"]
+
+# Read access to custom resources (optional)
+{{- if .Values.components.ai.rbac.customResources }}
+{{- range .Values.components.ai.rbac.customResources }}
+- apiGroups: {{ .apiGroups | toJson }}
+  resources: {{ .resources | toJson }}
+  verbs: ["get", "list", "watch"]
+{{- end }}
+{{- end }}
+{{- end }}

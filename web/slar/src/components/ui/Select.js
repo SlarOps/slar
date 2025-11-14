@@ -5,7 +5,7 @@ import { ChevronDownIcon } from '@heroicons/react/20/solid';
 
 /**
  * Reusable Select Component using Headless UI Menu
- * 
+ *
  * @param {Object} props - Component props
  * @param {string} props.label - Select label
  * @param {string|number} props.value - Selected value
@@ -20,6 +20,7 @@ import { ChevronDownIcon } from '@heroicons/react/20/solid';
  * @param {boolean} props.clearable - Whether to show clear option
  * @param {string} props.clearText - Text for clear option
  * @param {React.ReactNode} props.leftIcon - Icon to display on the left
+ * @param {string} props.anchor - Dropdown anchor position (default: "bottom start")
  */
 export default function Select({
   label,
@@ -35,6 +36,7 @@ export default function Select({
   clearable = false,
   clearText = 'Clear selection',
   leftIcon,
+  anchor = 'bottom start',
   ...props
 }) {
   const selectedOption = options.find(option => option.value === value);
@@ -78,7 +80,7 @@ export default function Select({
           
           <MenuItems
             transition
-            anchor="bottom start"
+            anchor={anchor}
             className="w-64 origin-top-left rounded-lg bg-white/90 dark:bg-gray-700/90 backdrop-blur-sm shadow-lg p-1 transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0 z-50"
           >
             {/* Clear selection option */}

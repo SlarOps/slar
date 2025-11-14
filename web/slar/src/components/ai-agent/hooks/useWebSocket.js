@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
 export const useWebSocket = (session, setMessages, setIsSending) => {
   const [wsConnection, setWsConnection] = useState(null);
@@ -14,10 +15,10 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
     const connectWebSocket = () => {
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
 
-      // Generate or get session ID for reconnection support
+      // Generate or get session ID for reconnection support (UUID v4 format for Claude CLI compatibility)
       let currentSessionId = localStorage.getItem('claude_session_id');
       if (!currentSessionId) {
-        currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        currentSessionId = uuidv4();
         localStorage.setItem('claude_session_id', currentSessionId);
       }
 
@@ -30,7 +31,7 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
         wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
       } else {
         // Default to localhost:8002
-        wsUrl = `${scheme}://localhost:8002/ws/chat`;
+        wsUrl = `/ws/chat`;
       }
 
       console.log("Connecting to Claude Agent API:", wsUrl);

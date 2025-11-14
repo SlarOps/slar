@@ -5,32 +5,39 @@ services:
     container_name: slar-ai
     build:
       context: ../../api/ai
-    image: ghcr.io/slarops/slar-ai:latest
+      platforms:
+        - linux/amd64
+    image: ghcr.io/slarops/slar-ai:1.0.1
+    platform: linux/amd64
     expose:
       - "8002"
     ports:
       - "8002:8002"
     environment:
       - PORT=8002
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-your-openai-api-key}
+      - HOST=0.0.0.0
       - API_BASE_URL=http://api:8080
-      - DATA_STORE=/data
-      - TOKENIZERS_PARALLELISM=false
-      - CONTEXT7_API_KEY=${CONTEXT7_API_KEY:-}
-      - ENABLE_KUBERNETES=false
-      - ENABLE_CODE_EXECUTOR=false
-    volumes:
-      - slar-ai-data:/data
-      - slar-ai-cache:/root/.cache
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
     restart: unless-stopped
     networks:
       - slar-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
 
   api:
     container_name: slar-api
     build:
       context: ../../api
-    image: ghcr.io/slarops/slar-api:latest
+      platforms:
+        - linux/amd64
+    image: ghcr.io/slarops/slar-api:1.0.1
+    platform: linux/amd64
     expose:
       - "8080"
     ports:
@@ -45,12 +52,21 @@ services:
     restart: unless-stopped
     networks:
       - slar-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
 
   slack-worker:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
-    image: ghcr.io/slarops/slar-slack-worker:latest
+      platforms:
+        - linux/amd64
+    image: ghcr.io/slarops/slar-slack-worker:1.0.1
+    platform: linux/amd64
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
@@ -69,18 +85,34 @@ services:
     container_name: slar-web
     build:
       context: ../../web/slar
-    image: ghcr.io/slarops/slar-web:latest
+      dockerfile: Dockerfile.simple
+      # Note: Requires building Next.js locally first
+      # Run: cd ../../web/slar && npm run build
+    image: ghcr.io/slarops/slar-web:1.0.1
     expose:
       - "3000"
+    ports:
+      - "3000:3000"
     environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:8000}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-your-supabase-anon-key}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - api
     restart: unless-stopped
     networks:
       - slar-network
-  
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
   kong:
     container_name: kong
     image: kong:2.8.1
@@ -113,11 +145,3 @@ services:
 networks:
   slar-network:
     driver: bridge
-
-volumes:
-  slar-ai-data:
-    driver: local
-  slar-ai-cache:
-    driver: local
-
-

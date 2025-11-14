@@ -1,0 +1,43 @@
+{{- $releaseName := default .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- if .Values.gloo.enabled }}
+---
+apiVersion: gloo.solo.io/v1
+kind: Upstream
+metadata:
+  annotations:
+    cloud.google.com/neg: '{"ingress":true}'
+  name: {{ $releaseName }}
+spec:
+  kube:
+    serviceName: {{ .Values.gloo.serviceName }}
+    serviceNamespace: {{ .Release.Namespace }}
+    servicePort: {{ .Values.gloo.servicePort }}
+  useHttp2: {{ .Values.gloo.useHttp2 }}
+---
+apiVersion: gateway.solo.io/v1
+kind: VirtualService
+metadata:
+  name: {{ $releaseName }}
+  labels: {{ .Values.gloo.gatewayLabels | toYaml | nindent 4 }}
+spec:
+  sslConfig:
+    secretRef:
+      name: {{ .Values.gloo.sslConfig.secretName }}
+      namespace: {{ .Values.gloo.sslConfig.namespace }}
+    sniDomains: {{ .Values.gloo.domains | toYaml | nindent 4 }}
+    oneWayTls: false
+  virtualHost:
+    domains: {{ .Values.gloo.domains | toYaml | nindent 4 }}
+    routes:
+      - matchers:
+          - prefix: {{ .Values.gloo.routePrefix }}
+        options:
+          autoHostRewrite: true
+          timeout: '60s'
+        routeAction:
+          single:
+            upstream:
+              name: {{ $releaseName }}
+              namespace: {{ .Release.Namespace }}
+{{- end }}
+

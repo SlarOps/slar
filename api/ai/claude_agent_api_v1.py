@@ -1,5 +1,11 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import json
+import logging
+import time
+import uuid
+from asyncio import Lock
+from typing import Any, Dict
+
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -7,30 +13,22 @@ from claude_agent_sdk import (
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
-    TextBlock,
-    ToolPermissionContext,
-    ThinkingBlock,
-    ToolUseBlock,
-    ToolResultBlock,
     SystemMessage,
+    TextBlock,
+    ThinkingBlock,
+    ToolPermissionContext,
+    ToolResultBlock,
 )
-import json
-import asyncio
-import time
-import uuid
-import logging
-from contextvars import ContextVar
-from typing import Dict, Optional, Any
-from asyncio import Lock
-
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from incident_tools import create_incident_tools_server, set_auth_token
 from supabase_storage import (
-    get_user_mcp_servers,
     extract_user_id_from_token,
+    get_user_mcp_servers,
     get_user_workspace_path,
-    sync_user_skills,
+    load_user_plugins,
     sync_all_from_bucket,
-    load_user_plugins
+    sync_user_skills,
 )
 
 # Configure logging
@@ -43,7 +41,7 @@ tool_usage_log = []
 app = FastAPI(
     title="Claude Agent API",
     description="WebSocket API for Claude Agent SDK with session management",
-    version="2.0.0"
+    version="2.0.0",
 )
 
 # CORS middleware
@@ -63,17 +61,15 @@ user_mcp_cache: Dict[str, Dict[str, Any]] = {}
 # Key: user_id, Value: asyncio.Lock
 user_plugin_locks: Dict[str, Lock] = {}
 
+
 async def heartbeat_task(websocket: WebSocket, interval: int = 10):
     """Send periodic ping messages to keep the connection alive."""
     try:
         while True:
             await asyncio.sleep(interval)
             try:
-                await websocket.send_json({
-                    "type": "ping",
-                    "timestamp": time.time()
-                })
-                print(f"📡 Sent heartbeat ping")
+                await websocket.send_json({"type": "ping", "timestamp": time.time()})
+                print("📡 Sent heartbeat ping")
             except Exception as e:
                 print(f"❌ Heartbeat failed: {e}")
                 break
@@ -81,11 +77,12 @@ async def heartbeat_task(websocket: WebSocket, interval: int = 10):
         print("🛑 Heartbeat task cancelled")
         raise
 
+
 async def message_router(
     websocket: WebSocket,
     agent_queue: asyncio.Queue,
     interrupt_queue: asyncio.Queue,
-    permission_response_queue: asyncio.Queue
+    permission_response_queue: asyncio.Queue,
 ):
     """
     Route incoming WebSocket messages to appropriate queues.
@@ -106,14 +103,16 @@ async def message_router(
             msg_type = data.get("type")
 
             if msg_type == "interrupt":
-                logger.info(f"📬 Routing interrupt message to interrupt_queue")
+                logger.info("📬 Routing interrupt message to interrupt_queue")
                 await interrupt_queue.put(data)
             elif msg_type == "permission_response" or data.get("allow") is not None:
                 # Permission approval/denial from user
-                logger.info(f"📬 Routing permission response to permission_response_queue")
+                logger.info(
+                    "📬 Routing permission response to permission_response_queue"
+                )
                 await permission_response_queue.put(data)
             else:
-                logger.info(f"📬 Routing agent message to agent_queue")
+                logger.info("📬 Routing agent message to agent_queue")
                 await agent_queue.put(data)
 
     except WebSocketDisconnect:
@@ -129,10 +128,7 @@ async def message_router(
         logger.info("📭 Router signaled end of messages")
 
 
-async def websocket_sender(
-    websocket: WebSocket,
-    output_queue: asyncio.Queue
-):
+async def websocket_sender(websocket: WebSocket, output_queue: asyncio.Queue):
     """
     Send messages from output queue to WebSocket.
 
@@ -170,7 +166,7 @@ async def websocket_sender(
 async def interrupt_task(
     interrupt_queue: asyncio.Queue,
     stop_events: Dict[str, asyncio.Event],
-    websocket: WebSocket
+    websocket: WebSocket,
 ):
     """Handle interrupt requests from the interrupt queue."""
     try:
@@ -186,7 +182,9 @@ async def interrupt_task(
             if data.get("type") == "interrupt":
                 session_id = data.get("session_id")
                 if session_id:
-                    logger.info(f"🛑 Interrupt task: Setting stop event for session: {session_id}")
+                    logger.info(
+                        f"🛑 Interrupt task: Setting stop event for session: {session_id}"
+                    )
 
                     # Ensure event exists
                     if session_id not in stop_events:
@@ -195,10 +193,9 @@ async def interrupt_task(
                     # Set the event
                     stop_events[session_id].set()
 
-                    await websocket.send_json({
-                        "type": "interrupt_acknowledged",
-                        "session_id": session_id
-                    })
+                    await websocket.send_json(
+                        {"type": "interrupt_acknowledged", "session_id": session_id}
+                    )
 
     except asyncio.CancelledError:
         logger.info("🛑 Interrupt task: Cancelled")
@@ -215,7 +212,7 @@ async def agent_task(
     stop_events: Dict[str, asyncio.Event],
     output_queue: asyncio.Queue,
     permission_callback,
-    websocket: WebSocket = None  # Optional, only for sync
+    websocket: WebSocket = None,  # Optional, only for sync
 ):
     """Process agent messages and handle responses."""
     current_auth_token = None
@@ -297,7 +294,7 @@ async def agent_task(
                 resume=session_id,
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
-                setting_sources = ["project"]
+                setting_sources=["project"],
             )
 
             async with ClaudeSDKClient(options) as client:
@@ -309,20 +306,23 @@ async def agent_task(
                 async for message in client.receive_response():
                     # Check for interrupt (stop event)
 
-
                     logger.info(f"Message: {message}")
 
-
-                    if session_id and stop_events.get(session_id) and stop_events[session_id].is_set():
-                        logger.info(f"🛑 Agent task: Stop event detected for session: {session_id}")
+                    if (
+                        session_id
+                        and stop_events.get(session_id)
+                        and stop_events[session_id].is_set()
+                    ):
+                        logger.info(
+                            f"🛑 Agent task: Stop event detected for session: {session_id}"
+                        )
                         try:
                             await client.interrupt()
                             stop_events[session_id].clear()
-                            await output_queue.put({
-                                "type": "interrupted",
-                                "session_id": session_id
-                            })
-                            logger.info(f"✅ Agent interrupted successfully")
+                            await output_queue.put(
+                                {"type": "interrupted", "session_id": session_id}
+                            )
+                            logger.info("✅ Agent interrupted successfully")
                             break
                         except Exception as e:
                             logger.error(f"❌ Error interrupting: {e}", exc_info=True)
@@ -332,22 +332,22 @@ async def agent_task(
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, ThinkingBlock):
-                                await output_queue.put({
-                                    "type": "thinking",
-                                    "content": block.thinking
-                                })
+                                await output_queue.put(
+                                    {"type": "thinking", "content": block.thinking}
+                                )
                             elif isinstance(block, TextBlock):
-                                await output_queue.put({
-                                    "type": "text",
-                                    "content": block.text
-                                })
+                                await output_queue.put(
+                                    {"type": "text", "content": block.text}
+                                )
                             elif isinstance(block, ToolResultBlock):
-                                await output_queue.put({
-                                    "type": "tool_result",
-                                    "tool_use_id": block.tool_use_id,
-                                    "content": block.content,
-                                    "is_error": block.is_error
-                                })
+                                await output_queue.put(
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": block.tool_use_id,
+                                        "content": block.content,
+                                        "is_error": block.is_error,
+                                    }
+                                )
 
                     if isinstance(message, SystemMessage):
                         if isinstance(message.data, dict):
@@ -360,16 +360,14 @@ async def agent_task(
                                     stop_events[session_id] = asyncio.Event()
                                 stop_events[session_id].clear()
 
-                                await output_queue.put({
-                                    "type": "session_init",
-                                    "session_id": session_id
-                                })
+                                await output_queue.put(
+                                    {"type": "session_init", "session_id": session_id}
+                                )
 
                     if isinstance(message, ResultMessage):
-                        await output_queue.put({
-                            "type": message.subtype,
-                            "result": message.result
-                        })
+                        await output_queue.put(
+                            {"type": message.subtype, "result": message.result}
+                        )
 
     except asyncio.CancelledError:
         logger.info("🤖 Agent task: Cancelled")
@@ -377,10 +375,7 @@ async def agent_task(
     except Exception as e:
         logger.error(f"❌ Agent task error: {e}", exc_info=True)
         try:
-            await output_queue.put({
-                "type": "error",
-                "error": str(e)
-            })
+            await output_queue.put({"type": "error", "error": str(e)})
         except Exception:
             pass
         raise  # Propagate error
@@ -416,7 +411,7 @@ async def sync_bucket(request: Request):
         }
     """
     try:
-        from supabase_storage import unzip_installed_plugins, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, unzip_installed_plugins
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
@@ -426,7 +421,7 @@ async def sync_bucket(request: Request):
             return {
                 "success": False,
                 "skipped": False,
-                "message": "No auth token provided"
+                "message": "No auth token provided",
             }
 
         logger.info("🔄 Starting bucket sync...")
@@ -463,8 +458,8 @@ async def sync_bucket(request: Request):
                     "success": True,
                     "skipped": sync_result.get("skipped", False),
                     "message": message,
-                    "files_synced": sync_result.get('files_synced', 0),
-                    "plugins_unzipped": unzip_result['unzipped_count']
+                    "files_synced": sync_result.get("files_synced", 0),
+                    "plugins_unzipped": unzip_result["unzipped_count"],
                 }
             else:
                 logger.warning(f"⚠️  Failed to unzip plugins: {unzip_result['message']}")
@@ -480,8 +475,8 @@ async def sync_bucket(request: Request):
                     "success": True,
                     "skipped": sync_result.get("skipped", False),
                     "message": error_message,
-                    "files_synced": sync_result.get('files_synced', 0),
-                    "plugins_unzipped": 0
+                    "files_synced": sync_result.get("files_synced", 0),
+                    "plugins_unzipped": 0,
                 }
         else:
             logger.warning("⚠️  Could not extract user_id from token for plugin unzip")
@@ -493,7 +488,7 @@ async def sync_bucket(request: Request):
         return {
             "success": False,
             "skipped": False,
-            "message": f"Error syncing bucket: {str(e)}"
+            "message": f"Error syncing bucket: {str(e)}",
         }
 
 
@@ -518,20 +513,14 @@ async def sync_mcp_config(request: Request):
 
         if not auth_token:
             logger.warning("⚠️  No auth token provided for sync")
-            return {
-                "success": False,
-                "message": "No auth token provided"
-            }
+            return {"success": False, "message": "No auth token provided"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
 
         if not user_id:
             logger.warning("⚠️  Could not extract user_id from token")
-            return {
-                "success": False,
-                "message": "Invalid auth token"
-            }
+            return {"success": False, "message": "Invalid auth token"}
 
         logger.info(f"🔄 Syncing MCP config for user: {user_id}")
 
@@ -548,7 +537,7 @@ async def sync_mcp_config(request: Request):
                 "success": True,
                 "message": "MCP config synced successfully",
                 "servers_count": len(user_mcp_servers),
-                "servers": list(user_mcp_servers.keys())
+                "servers": list(user_mcp_servers.keys()),
             }
         else:
             logger.info(f"ℹ️  No MCP config found for user: {user_id}")
@@ -560,15 +549,12 @@ async def sync_mcp_config(request: Request):
                 "success": True,
                 "message": "No MCP config found - cache cleared",
                 "servers_count": 0,
-                "servers": []
+                "servers": [],
             }
 
     except Exception as e:
         logger.error(f"❌ Error syncing MCP config: {e}", exc_info=True)
-        return {
-            "success": False,
-            "message": f"Error syncing config: {str(e)}"
-        }
+        return {"success": False, "message": f"Error syncing config: {str(e)}"}
 
 
 @app.get("/api/mcp-servers")
@@ -595,40 +581,36 @@ async def get_mcp_servers(request: Request):
         }
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        auth_token = request.query_params.get("auth_token") or request.headers.get(
+            "authorization", ""
+        )
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Query from PostgreSQL
         supabase = get_supabase_client()
-        result = supabase.table("user_mcp_servers").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        result = (
+            supabase.table("user_mcp_servers")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
 
-        return {
-            "success": True,
-            "servers": result.data or []
-        }
+        return {"success": True, "servers": result.data or []}
 
     except Exception as e:
         logger.error(f"❌ Error getting MCP servers: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/mcp-servers")
@@ -664,25 +646,27 @@ async def create_mcp_server(request: Request):
         {"success": bool, "server": {...}}
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
         server_name = body.get("server_name")
-        server_type = body.get("server_type", "stdio")  # Default to stdio for backward compatibility
+        server_type = body.get(
+            "server_type", "stdio"
+        )  # Default to stdio for backward compatibility
 
         # Basic validation
         if not auth_token or not server_name:
             return {
                 "success": False,
-                "error": "Missing required fields: auth_token, server_name"
+                "error": "Missing required fields: auth_token, server_name",
             }
 
         # Validate server_type
         if server_type not in ["stdio", "sse", "http"]:
             return {
                 "success": False,
-                "error": f"Invalid server_type: {server_type}. Must be 'stdio', 'sse', or 'http'"
+                "error": f"Invalid server_type: {server_type}. Must be 'stdio', 'sse', or 'http'",
             }
 
         # Validate based on server_type
@@ -691,23 +675,20 @@ async def create_mcp_server(request: Request):
             if not command:
                 return {
                     "success": False,
-                    "error": "Missing required field for stdio server: command"
+                    "error": "Missing required field for stdio server: command",
                 }
         else:  # sse or http
             url = body.get("url")
             if not url:
                 return {
                     "success": False,
-                    "error": f"Missing required field for {server_type} server: url"
+                    "error": f"Missing required field for {server_type} server: url",
                 }
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Build server record based on type
         supabase = get_supabase_client()
@@ -715,7 +696,7 @@ async def create_mcp_server(request: Request):
             "user_id": user_id,
             "server_name": server_name,
             "server_type": server_type,
-            "status": "active"
+            "status": "active",
         }
 
         # Add type-specific fields
@@ -728,24 +709,24 @@ async def create_mcp_server(request: Request):
             server_record["headers"] = body.get("headers", {})
 
         # Upsert to PostgreSQL
-        result = supabase.table("user_mcp_servers").upsert(
-            server_record,
-            on_conflict="user_id,server_name"
-        ).execute()
+        result = (
+            supabase.table("user_mcp_servers")
+            .upsert(server_record, on_conflict="user_id,server_name")
+            .execute()
+        )
 
-        logger.info(f"✅ Saved MCP server ({server_type}): {server_name} for user {user_id}")
+        logger.info(
+            f"✅ Saved MCP server ({server_type}): {server_name} for user {user_id}"
+        )
 
         return {
             "success": True,
-            "server": result.data[0] if result.data else server_record
+            "server": result.data[0] if result.data else server_record,
         }
 
     except Exception as e:
         logger.error(f"❌ Error creating MCP server: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.delete("/api/mcp-servers/{server_name}")
@@ -763,42 +744,37 @@ async def delete_mcp_server(server_name: str, request: Request):
         {"success": bool, "message": str}
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        auth_token = request.query_params.get("auth_token") or request.headers.get(
+            "authorization", ""
+        )
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Delete from PostgreSQL
         supabase = get_supabase_client()
-        supabase.table("user_mcp_servers").delete().eq("user_id", user_id).eq("server_name", server_name).execute()
+        supabase.table("user_mcp_servers").delete().eq("user_id", user_id).eq(
+            "server_name", server_name
+        ).execute()
 
         logger.info(f"✅ Deleted MCP server: {server_name} for user {user_id}")
 
         return {
             "success": True,
-            "message": f"Server {server_name} deleted successfully"
+            "message": f"Server {server_name} deleted successfully",
         }
 
     except Exception as e:
         logger.error(f"❌ Error deleting MCP server: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/api/memory")
@@ -817,58 +793,49 @@ async def get_memory(request: Request):
         }
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        auth_token = request.query_params.get("auth_token") or request.headers.get(
+            "authorization", ""
+        )
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Query from PostgreSQL
         supabase = get_supabase_client()
-        result = supabase.table("claude_memory").select("*").eq("user_id", user_id).single().execute()
+        result = (
+            supabase.table("claude_memory")
+            .select("*")
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
 
         if result.data:
             return {
                 "success": True,
                 "content": result.data.get("content", ""),
-                "updated_at": result.data.get("updated_at")
+                "updated_at": result.data.get("updated_at"),
             }
         else:
             # No memory yet, return empty
-            return {
-                "success": True,
-                "content": "",
-                "updated_at": None
-            }
+            return {"success": True, "content": "", "updated_at": None}
 
     except Exception as e:
         # User doesn't have memory yet - this is normal
         if "PGRST116" in str(e) or "not found" in str(e).lower():
-            logger.info(f"ℹ️  No memory found for user (first time)")
-            return {
-                "success": True,
-                "content": "",
-                "updated_at": None
-            }
+            logger.info("ℹ️  No memory found for user (first time)")
+            return {"success": True, "content": "", "updated_at": None}
 
         logger.error(f"❌ Error getting memory: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/memory")
@@ -890,52 +857,41 @@ async def update_memory(request: Request):
         }
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
         content = body.get("content", "")
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Upsert to PostgreSQL (instant, no S3 lag!)
         supabase = get_supabase_client()
-        memory_record = {
-            "user_id": user_id,
-            "content": content
-        }
+        memory_record = {"user_id": user_id, "content": content}
 
-        result = supabase.table("claude_memory").upsert(
-            memory_record,
-            on_conflict="user_id"
-        ).execute()
+        result = (
+            supabase.table("claude_memory")
+            .upsert(memory_record, on_conflict="user_id")
+            .execute()
+        )
 
         logger.info(f"✅ Memory updated for user {user_id} ({len(content)} chars)")
 
         return {
             "success": True,
             "content": result.data[0].get("content") if result.data else content,
-            "updated_at": result.data[0].get("updated_at") if result.data else None
+            "updated_at": result.data[0].get("updated_at") if result.data else None,
         }
 
     except Exception as e:
         logger.error(f"❌ Error updating memory: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.delete("/api/memory")
@@ -950,24 +906,20 @@ async def delete_memory(request: Request):
         {"success": bool, "message": str}
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        auth_token = request.query_params.get("auth_token") or request.headers.get(
+            "authorization", ""
+        )
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Delete from PostgreSQL
         supabase = get_supabase_client()
@@ -975,17 +927,11 @@ async def delete_memory(request: Request):
 
         logger.info(f"✅ Memory deleted for user {user_id}")
 
-        return {
-            "success": True,
-            "message": "Memory deleted successfully"
-        }
+        return {"success": True, "message": "Memory deleted successfully"}
 
     except Exception as e:
         logger.error(f"❌ Error deleting memory: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/sync-skills")
@@ -1023,10 +969,10 @@ async def sync_skills(request: Request):
                 "synced_count": 0,
                 "failed_count": 0,
                 "skills": [],
-                "errors": ["No auth token provided"]
+                "errors": ["No auth token provided"],
             }
 
-        logger.info(f"🔄 Starting skill sync...")
+        logger.info("🔄 Starting skill sync...")
 
         # Sync all skills to workspace
         result = await sync_user_skills(auth_token)
@@ -1048,7 +994,7 @@ async def sync_skills(request: Request):
             "synced_count": result["synced_count"],
             "failed_count": result["failed_count"],
             "skills": result["skills"],
-            "errors": result.get("errors", [])
+            "errors": result.get("errors", []),
         }
 
     except Exception as e:
@@ -1059,7 +1005,7 @@ async def sync_skills(request: Request):
             "synced_count": 0,
             "failed_count": 0,
             "skills": [],
-            "errors": [str(e)]
+            "errors": [str(e)],
         }
 
 
@@ -1093,7 +1039,7 @@ async def install_plugin_from_marketplace(request: Request):
         }
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
@@ -1107,16 +1053,14 @@ async def install_plugin_from_marketplace(request: Request):
         if not all([marketplace_name, plugin_name]):
             return {
                 "success": False,
-                "error": "Missing required fields: marketplace_name, plugin_name"
+                "error": "Missing required fields: marketplace_name, plugin_name",
             }
 
         # Extract user_id
         user_id = extract_user_id_from_token(auth_token)
-        logger.info(f"📦 User {user_id}: Installing plugin {plugin_name} from {marketplace_name}")
-
-        from supabase_storage import get_user_workspace_path
-        import json
-        from pathlib import Path
+        logger.info(
+            f"📦 User {user_id}: Installing plugin {plugin_name} from {marketplace_name}"
+        )
 
         # Get plugin source path from PostgreSQL marketplace metadata
         # (marketplace.json might not be unzipped yet from bucket)
@@ -1127,19 +1071,27 @@ async def install_plugin_from_marketplace(request: Request):
         def get_marketplace_metadata_sync():
             """Get marketplace metadata from PostgreSQL"""
             try:
-                result = supabase.table("marketplaces").select("*").eq("user_id", user_id).eq("name", marketplace_name).execute()
+                result = (
+                    supabase.table("marketplaces")
+                    .select("*")
+                    .eq("user_id", user_id)
+                    .eq("name", marketplace_name)
+                    .execute()
+                )
                 if result.data and len(result.data) > 0:
                     return result.data[0]
             except Exception as e:
                 logger.error(f"Failed to fetch marketplace from PostgreSQL: {e}")
             return None
 
-        marketplace_record = await asyncio.get_event_loop().run_in_executor(None, get_marketplace_metadata_sync)
+        marketplace_record = await asyncio.get_event_loop().run_in_executor(
+            None, get_marketplace_metadata_sync
+        )
 
         if not marketplace_record:
             return {
                 "success": False,
-                "error": f"Marketplace '{marketplace_name}' not found in database"
+                "error": f"Marketplace '{marketplace_name}' not found in database",
             }
 
         # Verify ZIP file exists (should be uploaded when marketplace was added)
@@ -1147,7 +1099,7 @@ async def install_plugin_from_marketplace(request: Request):
             logger.warning(f"⚠️  No ZIP file for marketplace '{marketplace_name}'")
             return {
                 "success": False,
-                "error": f"Marketplace ZIP not found. Please re-add the marketplace to download plugin files."
+                "error": "Marketplace ZIP not found. Please re-add the marketplace to download plugin files.",
             }
 
         if marketplace_record and marketplace_record.get("plugins"):
@@ -1156,7 +1108,9 @@ async def install_plugin_from_marketplace(request: Request):
                 if plugin_def.get("name") == plugin_name:
                     # Install path = marketplace + plugin.source
                     source_path = plugin_def.get("source", "./")
-                    logger.info(f"✅ Found plugin '{plugin_name}' in PostgreSQL with source: {source_path}")
+                    logger.info(
+                        f"✅ Found plugin '{plugin_name}' in PostgreSQL with source: {source_path}"
+                    )
 
                     # Clean source path: "./plugins/code-documentation" → "plugins/code-documentation"
                     source_path_clean = source_path.replace("./", "")
@@ -1165,14 +1119,20 @@ async def install_plugin_from_marketplace(request: Request):
                         install_path = f".claude/plugins/marketplaces/{marketplace_name}/{source_path_clean}"
                     else:
                         # Source is "./" means plugin root
-                        install_path = f".claude/plugins/marketplaces/{marketplace_name}"
+                        install_path = (
+                            f".claude/plugins/marketplaces/{marketplace_name}"
+                        )
 
                     logger.info(f"📁 Calculated install path: {install_path}")
                     break
             else:
-                logger.warning(f"⚠️  Plugin '{plugin_name}' not found in marketplace metadata")
+                logger.warning(
+                    f"⚠️  Plugin '{plugin_name}' not found in marketplace metadata"
+                )
         else:
-            logger.warning(f"⚠️  No marketplace metadata found in PostgreSQL for '{marketplace_name}'")
+            logger.warning(
+                f"⚠️  No marketplace metadata found in PostgreSQL for '{marketplace_name}'"
+            )
 
         # Update database with correct install_path
         def add_to_db_sync():
@@ -1183,31 +1143,33 @@ async def install_plugin_from_marketplace(request: Request):
                 "version": version,
                 "install_path": install_path,
                 "status": "active",
-                "is_local": False
+                "is_local": False,
             }
 
-            result = supabase.table("installed_plugins").upsert(
-                plugin_record,
-                on_conflict="user_id,plugin_name,marketplace_name"
-            ).execute()
+            result = (
+                supabase.table("installed_plugins")
+                .upsert(
+                    plugin_record, on_conflict="user_id,plugin_name,marketplace_name"
+                )
+                .execute()
+            )
 
             return result.data[0] if result.data else plugin_record
 
-        plugin_record = await asyncio.get_event_loop().run_in_executor(None, add_to_db_sync)
-        logger.info(f"✅ Plugin marked as installed in PostgreSQL")
+        plugin_record = await asyncio.get_event_loop().run_in_executor(
+            None, add_to_db_sync
+        )
+        logger.info("✅ Plugin marked as installed in PostgreSQL")
 
         return {
             "success": True,
             "message": f"Plugin '{plugin_name}' installed successfully",
-            "plugin": plugin_record
+            "plugin": plugin_record,
         }
 
     except Exception as e:
         logger.error(f"❌ Error installing plugin: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/plugins/install")
@@ -1241,32 +1203,27 @@ async def install_plugin(request: Request):
         }
     """
     try:
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
         from datetime import datetime
+
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
         plugin = body.get("plugin", {})
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         if not plugin or not plugin.get("name") or not plugin.get("marketplaceName"):
             return {
                 "success": False,
-                "error": "Missing required plugin fields: name, marketplaceName"
+                "error": "Missing required plugin fields: name, marketplaceName",
             }
 
         # Extract user_id from token
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
-            return {
-                "success": False,
-                "error": "Invalid auth token"
-            }
+            return {"success": False, "error": "Invalid auth token"}
 
         # Get or create lock for this user
         if user_id not in user_plugin_locks:
@@ -1274,7 +1231,9 @@ async def install_plugin(request: Request):
 
         user_lock = user_plugin_locks[user_id]
 
-        logger.info(f"🔒 Acquiring lock for user {user_id} to install plugin: {plugin['name']}")
+        logger.info(
+            f"🔒 Acquiring lock for user {user_id} to install plugin: {plugin['name']}"
+        )
 
         # Acquire lock (serialize access)
         async with user_lock:
@@ -1304,11 +1263,19 @@ async def install_plugin(request: Request):
                 # Update existing
                 plugins[plugin_key] = {
                     **plugins[plugin_key],
-                    "version": plugin.get("version", plugins[plugin_key].get("version", "unknown")),
+                    "version": plugin.get(
+                        "version", plugins[plugin_key].get("version", "unknown")
+                    ),
                     "lastUpdated": now,
-                    "installPath": plugin.get("installPath", plugins[plugin_key].get("installPath", "")),
-                    "gitCommitSha": plugin.get("gitCommitSha", plugins[plugin_key].get("gitCommitSha")),
-                    "isLocal": plugin.get("isLocal", plugins[plugin_key].get("isLocal", False))
+                    "installPath": plugin.get(
+                        "installPath", plugins[plugin_key].get("installPath", "")
+                    ),
+                    "gitCommitSha": plugin.get(
+                        "gitCommitSha", plugins[plugin_key].get("gitCommitSha")
+                    ),
+                    "isLocal": plugin.get(
+                        "isLocal", plugins[plugin_key].get("isLocal", False)
+                    ),
                 }
             else:
                 logger.info(f"📦 Adding new plugin: {plugin_key}")
@@ -1317,25 +1284,25 @@ async def install_plugin(request: Request):
                     "version": plugin.get("version", "unknown"),
                     "installedAt": now,
                     "lastUpdated": now,
-                    "installPath": plugin.get("installPath", f".claude/plugins/marketplaces/{plugin['marketplaceName']}/{plugin['name']}"),
-                    "isLocal": plugin.get("isLocal", False)
+                    "installPath": plugin.get(
+                        "installPath",
+                        f".claude/plugins/marketplaces/{plugin['marketplaceName']}/{plugin['name']}",
+                    ),
+                    "isLocal": plugin.get("isLocal", False),
                 }
 
                 if plugin.get("gitCommitSha"):
                     plugins[plugin_key]["gitCommitSha"] = plugin["gitCommitSha"]
 
             # Write back to storage
-            updated_data = {
-                "version": 1,
-                "plugins": plugins
-            }
+            updated_data = {"version": 1, "plugins": plugins}
 
-            json_blob = json.dumps(updated_data, indent=2).encode('utf-8')
+            json_blob = json.dumps(updated_data, indent=2).encode("utf-8")
 
             supabase.storage.from_(user_id).upload(
                 path=plugins_json_path,
                 file=json_blob,
-                file_options={"content-type": "application/json", "upsert": "true"}
+                file_options={"content-type": "application/json", "upsert": "true"},
             )
 
             logger.info(f"✅ Plugin installed successfully: {plugin_key}")
@@ -1345,15 +1312,12 @@ async def install_plugin(request: Request):
         return {
             "success": True,
             "message": f"Plugin {plugin['name']} installed successfully",
-            "pluginKey": plugin_key
+            "pluginKey": plugin_key,
         }
 
     except Exception as e:
         logger.error(f"❌ Error installing plugin: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/marketplace/fetch-metadata")
@@ -1390,9 +1354,10 @@ async def fetch_marketplace_metadata(request: Request):
         }
     """
     try:
-        import httpx
         import json
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+
+        import httpx
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
@@ -1402,60 +1367,60 @@ async def fetch_marketplace_metadata(request: Request):
         marketplace_name = body.get("marketplace_name") or f"{owner}-{repo}"
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         if not owner or not repo:
-            return {
-                "success": False,
-                "error": "Missing required fields: owner, repo"
-            }
+            return {"success": False, "error": "Missing required fields: owner, repo"}
 
         # Extract user_id from token
         try:
             user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"📦 User {user_id}: Fetching metadata for {owner}/{repo}@{branch}")
+            logger.info(
+                f"📦 User {user_id}: Fetching metadata for {owner}/{repo}@{branch}"
+            )
         except Exception as e:
-            return {
-                "success": False,
-                "error": f"Invalid auth token: {str(e)}"
-            }
+            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
         # Fetch marketplace.json from GitHub API (lightweight!)
         marketplace_json_url = f"https://api.github.com/repos/{owner}/{repo}/contents/.claude-plugin/marketplace.json?ref={branch}"
         repository_url = f"https://github.com/{owner}/{repo}"
 
-        logger.info(f"🌐 Fetching marketplace.json from GitHub API: {marketplace_json_url}")
+        logger.info(
+            f"🌐 Fetching marketplace.json from GitHub API: {marketplace_json_url}"
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 marketplace_json_url,
                 headers={
                     "Accept": "application/vnd.github.v3+json",
-                    "User-Agent": "SLAR-Marketplace-Client"
-                }
+                    "User-Agent": "SLAR-Marketplace-Client",
+                },
             )
 
             if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"Failed to fetch marketplace.json: HTTP {response.status_code}"
+                    "error": f"Failed to fetch marketplace.json: HTTP {response.status_code}",
                 }
 
             # GitHub API returns base64 encoded content
             github_response = response.json()
             import base64
-            marketplace_json_content = base64.b64decode(github_response["content"]).decode("utf-8")
+
+            marketplace_json_content = base64.b64decode(
+                github_response["content"]
+            ).decode("utf-8")
             marketplace_metadata = json.loads(marketplace_json_content)
 
-        logger.info(f"✅ Fetched marketplace.json ({len(marketplace_json_content)} bytes)")
+        logger.info(
+            f"✅ Fetched marketplace.json ({len(marketplace_json_content)} bytes)"
+        )
         logger.info(f"   Marketplace: {marketplace_metadata.get('name')}")
         logger.info(f"   Plugins: {len(marketplace_metadata.get('plugins', []))}")
 
         # Save marketplace metadata to PostgreSQL (instant, no lag!)
-        logger.info(f"💾 Saving marketplace metadata to PostgreSQL...")
+        logger.info("💾 Saving marketplace metadata to PostgreSQL...")
 
         def save_to_db_sync():
             """Save marketplace to PostgreSQL via Supabase PostgREST"""
@@ -1472,33 +1437,33 @@ async def fetch_marketplace_metadata(request: Request):
                 "zip_path": None,  # No ZIP file
                 "zip_size": 0,
                 "status": "active",
-                "last_synced_at": "now()"
+                "last_synced_at": "now()",
             }
 
             # Upsert to PostgreSQL
-            result = supabase.table("marketplaces").upsert(
-                marketplace_record,
-                on_conflict="user_id,name"
-            ).execute()
+            result = (
+                supabase.table("marketplaces")
+                .upsert(marketplace_record, on_conflict="user_id,name")
+                .execute()
+            )
 
             return result.data[0] if result.data else marketplace_record
 
-        db_record = await asyncio.get_event_loop().run_in_executor(None, save_to_db_sync)
-        logger.info(f"✅ Marketplace metadata saved to PostgreSQL")
+        db_record = await asyncio.get_event_loop().run_in_executor(
+            None, save_to_db_sync
+        )
+        logger.info("✅ Marketplace metadata saved to PostgreSQL")
 
         # Return marketplace data immediately (no lag!)
         return {
             "success": True,
             "message": f"Marketplace '{marketplace_name}' metadata fetched successfully",
-            "marketplace": db_record
+            "marketplace": db_record,
         }
 
     except Exception as e:
         logger.error(f"❌ Error fetching marketplace metadata: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/marketplace/download-repo-zip")
@@ -1539,11 +1504,12 @@ async def download_repo_zip(request: Request):
         }
     """
     try:
-        import httpx
-        import zipfile
         import io
         import json
-        from supabase_storage import get_supabase_client, extract_user_id_from_token
+        import zipfile
+
+        import httpx
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
         auth_token = body.get("auth_token", "")
@@ -1553,26 +1519,17 @@ async def download_repo_zip(request: Request):
         marketplace_name = body.get("marketplace_name") or repo
 
         if not auth_token:
-            return {
-                "success": False,
-                "error": "Missing auth_token"
-            }
+            return {"success": False, "error": "Missing auth_token"}
 
         if not owner or not repo:
-            return {
-                "success": False,
-                "error": "Missing required fields: owner, repo"
-            }
+            return {"success": False, "error": "Missing required fields: owner, repo"}
 
         # Extract user_id from token
         try:
             user_id = extract_user_id_from_token(auth_token)
             logger.info(f"📦 User {user_id}: Downloading {owner}/{repo}@{branch}")
         except Exception as e:
-            return {
-                "success": False,
-                "error": f"Invalid auth token: {str(e)}"
-            }
+            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
         # Download ZIP from GitHub
         zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
@@ -1585,7 +1542,7 @@ async def download_repo_zip(request: Request):
             if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"Failed to download ZIP: HTTP {response.status_code}"
+                    "error": f"Failed to download ZIP: HTTP {response.status_code}",
                 }
 
             zip_data = response.content
@@ -1600,33 +1557,35 @@ async def download_repo_zip(request: Request):
                 # Find marketplace.json in ZIP (usually in .claude-plugin/marketplace.json)
                 marketplace_json_path = None
                 for file_info in zip_ref.filelist:
-                    if file_info.filename.endswith('.claude-plugin/marketplace.json'):
+                    if file_info.filename.endswith(".claude-plugin/marketplace.json"):
                         marketplace_json_path = file_info.filename
                         break
 
                 if marketplace_json_path:
                     marketplace_json_content = zip_ref.read(marketplace_json_path)
                     marketplace_metadata = json.loads(marketplace_json_content)
-                    logger.info(f"✅ Parsed marketplace.json from ZIP")
+                    logger.info("✅ Parsed marketplace.json from ZIP")
                 else:
-                    logger.warning(f"⚠️  No marketplace.json found in ZIP")
+                    logger.warning("⚠️  No marketplace.json found in ZIP")
                     # Use default metadata
                     marketplace_metadata = {
                         "name": marketplace_name,
                         "version": "unknown",
-                        "plugins": []
+                        "plugins": [],
                     }
         except Exception as e:
             logger.error(f"❌ Failed to parse marketplace.json from ZIP: {e}")
             marketplace_metadata = {
                 "name": marketplace_name,
                 "version": "unknown",
-                "plugins": []
+                "plugins": [],
             }
 
         # Upload ZIP to S3 storage (background, non-blocking)
         supabase = get_supabase_client()
-        storage_path = f".claude/plugins/marketplaces/{marketplace_name}/{repo}-{branch}.zip"
+        storage_path = (
+            f".claude/plugins/marketplaces/{marketplace_name}/{repo}-{branch}.zip"
+        )
 
         logger.info(f"⬆️  Uploading ZIP to storage: {storage_path}")
 
@@ -1635,14 +1594,14 @@ async def download_repo_zip(request: Request):
             supabase.storage.from_(user_id).upload(
                 path=storage_path,
                 file=zip_data,
-                file_options={"content-type": "application/zip", "upsert": "true"}
+                file_options={"content-type": "application/zip", "upsert": "true"},
             )
 
         await asyncio.get_event_loop().run_in_executor(None, upload_zip_sync)
-        logger.info(f"✅ ZIP uploaded to storage")
+        logger.info("✅ ZIP uploaded to storage")
 
         # Save marketplace metadata to PostgreSQL (instant, no lag!)
-        logger.info(f"💾 Saving marketplace metadata to PostgreSQL...")
+        logger.info("💾 Saving marketplace metadata to PostgreSQL...")
 
         def save_to_db_sync():
             """Save marketplace to PostgreSQL via Supabase PostgREST"""
@@ -1658,33 +1617,33 @@ async def download_repo_zip(request: Request):
                 "zip_path": storage_path,
                 "zip_size": zip_size,
                 "status": "active",
-                "last_synced_at": "now()"
+                "last_synced_at": "now()",
             }
 
             # Upsert to PostgreSQL
-            result = supabase.table("marketplaces").upsert(
-                marketplace_record,
-                on_conflict="user_id,name"
-            ).execute()
+            result = (
+                supabase.table("marketplaces")
+                .upsert(marketplace_record, on_conflict="user_id,name")
+                .execute()
+            )
 
             return result.data[0] if result.data else marketplace_record
 
-        db_record = await asyncio.get_event_loop().run_in_executor(None, save_to_db_sync)
-        logger.info(f"✅ Marketplace metadata saved to PostgreSQL")
+        db_record = await asyncio.get_event_loop().run_in_executor(
+            None, save_to_db_sync
+        )
+        logger.info("✅ Marketplace metadata saved to PostgreSQL")
 
         # Return marketplace data immediately (no lag!)
         return {
             "success": True,
             "message": f"Marketplace '{marketplace_name}' downloaded and saved to database",
-            "marketplace": db_record  # Return data immediately for frontend
+            "marketplace": db_record,  # Return data immediately for frontend
         }
 
     except Exception as e:
         logger.error(f"❌ Error downloading/uploading repository: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.websocket("/ws/chat")
@@ -1705,9 +1664,7 @@ async def websocket_chat(websocket: WebSocket):
     try:
         # Define permission callback that uses queues instead of direct WebSocket read
         async def _my_permission_callback(
-            tool_name: str,
-            input_data: dict,
-            context: ToolPermissionContext
+            tool_name: str, input_data: dict, context: ToolPermissionContext
         ) -> PermissionResultAllow | PermissionResultDeny:
             """
             Control tool permissions based on tool type and input.
@@ -1717,11 +1674,13 @@ async def websocket_chat(websocket: WebSocket):
             """
 
             # Log the tool request
-            tool_usage_log.append({
-                "tool": tool_name,
-                "input": input_data,
-                "suggestions": context.suggestions
-            })
+            tool_usage_log.append(
+                {
+                    "tool": tool_name,
+                    "input": input_data,
+                    "suggestions": context.suggestions,
+                }
+            )
 
             logger.info(f"\n🔧 Tool Permission Request: {tool_name}")
             logger.debug(f"   Input: {json.dumps(input_data, indent=2)}")
@@ -1730,15 +1689,19 @@ async def websocket_chat(websocket: WebSocket):
             request_id = str(uuid.uuid4())
 
             # Send permission request with unique ID via output queue
-            await output_queue.put({
-                "type": "permission_request",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "input_data": input_data,
-                "suggestions": context.suggestions
-            })
+            await output_queue.put(
+                {
+                    "type": "permission_request",
+                    "request_id": request_id,
+                    "tool_name": tool_name,
+                    "input_data": input_data,
+                    "suggestions": context.suggestions,
+                }
+            )
 
-            logger.info(f"   ❓ Waiting for user approval (request_id: {request_id})...")
+            logger.info(
+                f"   ❓ Waiting for user approval (request_id: {request_id})..."
+            )
 
             # Wait for response from queue (not directly from WebSocket!)
             while True:
@@ -1750,7 +1713,10 @@ async def websocket_chat(websocket: WebSocket):
                     return PermissionResultDeny(message="Connection closed")
 
                 # Match request ID if present
-                if response.get("request_id") and response.get("request_id") != request_id:
+                if (
+                    response.get("request_id")
+                    and response.get("request_id") != request_id
+                ):
                     # Not our response, put it back for other callbacks
                     await permission_response_queue.put(response)
                     await asyncio.sleep(0.01)  # Yield to event loop
@@ -1758,40 +1724,43 @@ async def websocket_chat(websocket: WebSocket):
 
                 # Process response
                 if response.get("allow") in ("y", "yes"):
-                    logger.info(f"✅ Tool approved by user")
+                    logger.info("✅ Tool approved by user")
                     return PermissionResultAllow()
                 else:
-                    logger.info(f"❌ Tool denied by user")
-                    return PermissionResultDeny(
-                        message="User denied permission"
-                    )
+                    logger.info("❌ Tool denied by user")
+                    return PermissionResultDeny(message="User denied permission")
 
         # Start all tasks
         heartbeat = asyncio.create_task(
-            heartbeat_task(websocket, interval=30),
-            name="heartbeat"
+            heartbeat_task(websocket, interval=30), name="heartbeat"
         )
 
         router = asyncio.create_task(
-            message_router(websocket, agent_queue, interrupt_queue, permission_response_queue),
-            name="router"
+            message_router(
+                websocket, agent_queue, interrupt_queue, permission_response_queue
+            ),
+            name="router",
         )
 
         # NEW: WebSocket sender task - decouples agent from WebSocket
         sender = asyncio.create_task(
-            websocket_sender(websocket, output_queue),
-            name="sender"
+            websocket_sender(websocket, output_queue), name="sender"
         )
 
         interrupt = asyncio.create_task(
-            interrupt_task(interrupt_queue, stop_events, websocket),
-            name="interrupt"
+            interrupt_task(interrupt_queue, stop_events, websocket), name="interrupt"
         )
 
         # Pass output_queue instead of websocket, but keep websocket for sync
         agent = asyncio.create_task(
-            agent_task(agent_queue, stop_events, output_queue, _my_permission_callback, websocket),
-            name="agent"
+            agent_task(
+                agent_queue,
+                stop_events,
+                output_queue,
+                _my_permission_callback,
+                websocket,
+            ),
+            name="agent",
         )
 
         # Wait for ALL tasks to complete
@@ -1801,17 +1770,16 @@ async def websocket_chat(websocket: WebSocket):
         # Check for errors
         for i, (task, result) in enumerate(zip(tasks, results)):
             if isinstance(result, Exception):
-                logger.error(f"Task {task.get_name()} failed: {result}", exc_info=result)
-    
+                logger.error(
+                    f"Task {task.get_name()} failed: {result}", exc_info=result
+                )
+
     except WebSocketDisconnect:
         logger.info("🔌 WebSocket disconnected")
     except Exception as e:
         logger.error(f"❌ Error in websocket_chat: {e}", exc_info=True)
         try:
-            await websocket.send_json({
-                "type": "error",
-                "error": str(e)
-            })
+            await websocket.send_json({"type": "error", "error": str(e)})
         except Exception:
             pass
     finally:
@@ -1825,14 +1793,18 @@ async def websocket_chat(websocket: WebSocket):
             pass
 
         # Get all running tasks
-        all_tasks = [t for t in [heartbeat, router, sender, interrupt, agent] if not t.done()]
+        all_tasks = [
+            t for t in [heartbeat, router, sender, interrupt, agent] if not t.done()
+        ]
 
         for task in all_tasks:
             task.cancel()
 
         # Wait for all tasks to finish with timeout
         if all_tasks:
-            done, pending = await asyncio.wait(all_tasks, timeout=5.0, return_when=asyncio.ALL_COMPLETED)
+            done, pending = await asyncio.wait(
+                all_tasks, timeout=5.0, return_when=asyncio.ALL_COMPLETED
+            )
 
             if pending:
                 logger.warning(f"⚠️ {len(pending)} tasks did not finish within timeout")
@@ -1847,8 +1819,9 @@ async def websocket_chat(websocket: WebSocket):
 
 
 if __name__ == "__main__":
-    import uvicorn
     import os
+
+    import uvicorn
 
     # Disable auto-reload in production to prevent sync issues
     # Auto-reload can cause server restarts during file operations (like sync)
@@ -1856,8 +1829,5 @@ if __name__ == "__main__":
     reload_enabled = os.getenv("DEV_MODE", "false").lower() == "true"
 
     uvicorn.run(
-        "claude_agent_api_v1:app",
-        host="0.0.0.0",
-        port=8002,
-        reload=reload_enabled
+        "claude_agent_api_v1:app", host="0.0.0.0", port=8002, reload=reload_enabled
     )

@@ -17,7 +17,10 @@ import { useSyncBucket } from '../../hooks/useSyncBucket';
 export default function AIAgentPage() {
   const { session } = useAuth();
   const [input, setInput] = useState("");
+  const [isNavVisible, setIsNavVisible] = useState(true);
   const endRef = useRef(null);
+  const messageAreaRef = useRef(null);
+  const lastClickTime = useRef(0);
 
   // Extract auth token from session
   const authToken = session?.access_token || null;
@@ -108,8 +111,68 @@ export default function AIAgentPage() {
   // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
 
+  // Toggle navigation visibility
+  const toggleNav = useCallback(() => {
+    setIsNavVisible(prev => !prev);
+  }, []);
+
+  // Notify MobileNav when nav visibility changes
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('toggleNavVisibility', {
+      detail: { visible: isNavVisible }
+    }));
+  }, [isNavVisible]);
+
+  // Keyboard shortcut: Cmd/Ctrl + B to toggle nav
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Cmd+B (Mac) or Ctrl+B (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        toggleNav();
+      }
+      // Esc to show nav (exit fullscreen)
+      if (e.key === 'Escape' && !isNavVisible) {
+        toggleNav();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleNav, isNavVisible]);
+
+  // Double click to toggle nav
+  const handleMessageAreaClick = useCallback((e) => {
+    // Ignore clicks on interactive elements
+    if (
+      e.target.tagName === 'BUTTON' ||
+      e.target.tagName === 'A' ||
+      e.target.tagName === 'INPUT' ||
+      e.target.tagName === 'TEXTAREA' ||
+      e.target.closest('button') ||
+      e.target.closest('a') ||
+      e.target.closest('input') ||
+      e.target.closest('textarea') ||
+      e.target.closest('pre') || // Code blocks
+      window.getSelection()?.toString() // Text selection
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const timeSinceLastClick = now - lastClickTime.current;
+
+    // Double click detection (within 300ms)
+    if (timeSinceLastClick < 300) {
+      toggleNav();
+      lastClickTime.current = 0; // Reset
+    } else {
+      lastClickTime.current = now;
+    }
+  }, [toggleNav]);
+
   return (
-    <div className="flex flex-col h-[100dvh] sm:h-[calc(100vh-10rem)] bg-white dark:bg-gray-900">
+    <div className="flex flex-col h-screen bg-white dark:bg-gray-900 -mx-1 -my-20">
       {/* Loading State - Syncing Bucket */}
       {syncStatus === 'syncing' && (
         <div className="flex-1 flex items-center justify-center px-4">
@@ -154,32 +217,65 @@ export default function AIAgentPage() {
       {/* Ready State - Show Chat Interface */}
       {(syncStatus === 'ready' || syncStatus === 'idle') && (
         <>
-          <MessagesList
-            messages={messages}
-            isSending={isSending}
-            endRef={endRef}
-            onRegenerate={handleRegenerate}
-            onApprove={approveTool}
-            onDeny={denyTool}
-            pendingApprovalId={pendingApproval?.approval_id}
-          />
+          {/* Toggle Navigation Button */}
+          <button
+            onClick={toggleNav}
+            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${
+              isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
+            }`}
+            title={`${isNavVisible ? 'Hide' : 'Show'} navigation (⌘B)`}
+            aria-label="Toggle navigation"
+          >
+            {isNavVisible ? (
+              // Collapse icon
+              <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              // Expand icon
+              <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
 
-          <div className="flex-shrink-0">
-            <ChatInput
-              value={input}
-              onChange={handleInputChange}
-              onSubmit={handleSubmit}
-              placeholder="Ask anything about incidents..."
-              statusColor={statusColor}
-              severityColor={severityColor}
-              showModeSelector={false}
-              onStop={stopStreaming}
+          {/* Hint for double-click (show once) */}
+          {isNavVisible && messages.length === 0 && (
+            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-sm rounded-lg shadow-sm border border-blue-200 dark:border-blue-800 pointer-events-none animate-fade-in">
+              💡 Tip: Double-click or press ⌘B to toggle fullscreen
+            </div>
+          )}
+
+          <div
+            ref={messageAreaRef}
+            onClick={handleMessageAreaClick}
+            className="flex-1 relative"
+          >
+            <MessagesList
+              messages={messages}
               isSending={isSending}
-              sessionId={sessionId}
-              onSessionReset={handleSessionReset}
-              syncStatus={syncStatus}
+              endRef={endRef}
+              onRegenerate={handleRegenerate}
+              onApprove={approveTool}
+              onDeny={denyTool}
+              pendingApprovalId={pendingApproval?.approval_id}
             />
           </div>
+
+          <ChatInput
+            value={input}
+            onChange={handleInputChange}
+            onSubmit={handleSubmit}
+            placeholder="Ask anything about incidents..."
+            statusColor={statusColor}
+            severityColor={severityColor}
+            showModeSelector={false}
+            onStop={stopStreaming}
+            isSending={isSending}
+            sessionId={sessionId}
+            onSessionReset={handleSessionReset}
+            syncStatus={syncStatus}
+          />
         </>
       )}
     </div>

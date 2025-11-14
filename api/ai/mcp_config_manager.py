@@ -8,15 +8,17 @@ This module manages MCP server configurations with:
 4. Automatic reload on configuration changes
 """
 
-import os
-import json
 import asyncio
+import json
 import logging
-from typing import Dict, Optional, Any
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from supabase import create_client, Client
+from typing import Any, Dict, Optional
+
 import jwt
+
+from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +175,9 @@ class MCPConfigManager:
             logger.error(f"❌ Failed to download MCP config for user {user_id}: {e}")
             return None
 
-    async def get_mcp_servers(self, user_id: str, use_cache: bool = True) -> Dict[str, Any]:
+    async def get_mcp_servers(
+        self, user_id: str, use_cache: bool = True
+    ) -> Dict[str, Any]:
         """
         Get MCP servers for user from local workspace file.
 
@@ -202,7 +206,7 @@ class MCPConfigManager:
             return {}
 
         try:
-            with open(mcp_file, 'r', encoding='utf-8') as f:
+            with open(mcp_file, "r", encoding="utf-8") as f:
                 config = json.load(f)
 
             # Cache it
@@ -212,7 +216,9 @@ class MCPConfigManager:
             self._active_users.add(user_id)
 
             mcp_servers = config.get("mcpServers", {})
-            logger.debug(f"✅ Loaded {len(mcp_servers)} MCP servers from local file: {mcp_file}")
+            logger.debug(
+                f"✅ Loaded {len(mcp_servers)} MCP servers from local file: {mcp_file}"
+            )
             return mcp_servers
 
         except Exception as e:
@@ -248,7 +254,9 @@ class MCPConfigManager:
                     logger.debug("No active users to sync")
                     continue
 
-                logger.info(f"🔄 Syncing configs for {len(self._active_users)} active users")
+                logger.info(
+                    f"🔄 Syncing configs for {len(self._active_users)} active users"
+                )
 
                 # Sync each active user
                 for user_id in list(self._active_users):
@@ -311,7 +319,9 @@ def get_manager() -> MCPConfigManager:
     return _manager
 
 
-async def get_user_mcp_servers(auth_token: str, use_cache: bool = True) -> Dict[str, Any]:
+async def get_user_mcp_servers(
+    auth_token: str, use_cache: bool = True
+) -> Dict[str, Any]:
     """
     Convenience function to get user's MCP servers.
 
