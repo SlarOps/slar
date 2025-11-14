@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 MCP_FILE_NAME = ".mcp.json"
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 SYNC_INTERVAL = int(os.getenv("MCP_SYNC_INTERVAL", "60"))  # Default: 60 seconds
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
 
@@ -108,20 +109,46 @@ class MCPConfigManager:
             self._initialized = True
 
     def extract_user_id(self, auth_token: str) -> Optional[str]:
-        """Extract user ID from JWT token."""
+        """
+        Extract and VERIFY user ID from JWT token.
+
+        SECURITY: Properly verifies JWT signature to prevent token forgery.
+        """
         if not auth_token:
+            return None
+
+        if not SUPABASE_JWT_SECRET:
+            logger.error("🚨 SUPABASE_JWT_SECRET not set - cannot verify tokens!")
             return None
 
         try:
             token = auth_token.replace("Bearer ", "").strip()
-            decoded = jwt.decode(token, options={"verify_signature": False})
-            user_id = decoded.get("sub")
 
+            # SECURITY: Verify JWT signature
+            decoded = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                }
+            )
+
+            user_id = decoded.get("sub")
             if user_id:
-                logger.debug(f"✅ Extracted user_id: {user_id}")
+                logger.debug(f"✅ Verified token for user_id: {user_id}")
             return user_id
+
+        except jwt.ExpiredSignatureError:
+            logger.warning("⚠️ Token has expired")
+            return None
+        except jwt.InvalidSignatureError:
+            logger.warning("🚨 Invalid token signature - possible forgery attempt!")
+            return None
         except Exception as e:
-            logger.error(f"❌ Failed to extract user_id: {e}")
+            logger.warning(f"⚠️ Failed to verify token: {type(e).__name__}")
             return None
 
     def get_user_workspace(self, user_id: str) -> str:

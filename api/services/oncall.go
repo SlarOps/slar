@@ -335,6 +335,13 @@ func (s *OnCallService) GetUpcomingSchedules(groupID string, days int) ([]db.Shi
 		days = 7 // Default to 7 days
 	}
 
+	// SECURITY: Validate days is positive integer to prevent SQL injection
+	if days < 0 || days > 365 {
+		return nil, fmt.Errorf("invalid days parameter: must be between 0 and 365")
+	}
+
+	// SECURITY: Use parameterized query with explicit interval construction
+	// PostgreSQL interval can be constructed safely using make_interval()
 	query := `
 		SELECT os.id, os.group_id, os.user_id, os.shift_type, os.start_time, os.end_time,
 		       os.is_active, os.is_recurring, os.rotation_days, os.created_at, os.updated_at,
@@ -343,13 +350,13 @@ func (s *OnCallService) GetUpcomingSchedules(groupID string, days int) ([]db.Shi
 		       u.name as user_name, u.email as user_email, u.team as user_team
 		FROM shifts os
 		JOIN users u ON os.user_id = u.id
-		WHERE os.group_id = $1 
-		  AND os.is_active = true 
-		  AND os.start_time BETWEEN NOW() AND (NOW() + INTERVAL '%d days')
+		WHERE os.group_id = $1
+		  AND os.is_active = true
+		  AND os.start_time BETWEEN NOW() AND (NOW() + make_interval(days => $2))
 		ORDER BY os.start_time ASC
 	`
 
-	rows, err := s.PG.Query(fmt.Sprintf(query, days), groupID)
+	rows, err := s.PG.Query(query, groupID, days)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query upcoming schedules: %w", err)
 	}

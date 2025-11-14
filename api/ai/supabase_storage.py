@@ -28,6 +28,7 @@ CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in both bucket and wo
 # Supabase configuration from environment
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 
 # Workspace configuration
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
@@ -147,41 +148,66 @@ def load_config_from_file(user_id: str) -> Optional[Dict[str, Any]]:
 
 def extract_user_id_from_token(auth_token: str) -> Optional[str]:
     """
-    Extract user ID from Supabase JWT token.
+    Extract and VERIFY user ID from Supabase JWT token.
+
+    SECURITY: This function now properly verifies JWT signature to prevent
+    token forgery attacks. Tokens must be signed with SUPABASE_JWT_SECRET.
 
     Args:
         auth_token: JWT token from Supabase Auth
 
     Returns:
-        User ID (UUID string) or None if extraction fails
+        User ID (UUID string) or None if verification fails
+
+    Raises:
+        None - Returns None on any error to prevent information disclosure
     """
     if not auth_token:
-        logger.warning("No auth token provided")
+        logger.warning("⚠️ No auth token provided")
+        return None
+
+    if not SUPABASE_JWT_SECRET:
+        logger.error("🚨 SUPABASE_JWT_SECRET not set - cannot verify tokens!")
         return None
 
     try:
         # Remove 'Bearer ' prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # Decode JWT without verification (we trust Supabase's validation)
-        # In production, you might want to verify the signature
-        decoded = jwt.decode(token, options={"verify_signature": False})
+        # SECURITY: Verify JWT signature with Supabase JWT secret
+        # This prevents token forgery attacks
+        decoded = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={
+                "verify_signature": True,  # CRITICAL: Must verify signature
+                "verify_exp": True,        # Verify expiration
+                "verify_iat": True,        # Verify issued at
+            }
+        )
 
         # Extract user ID from 'sub' claim
         user_id = decoded.get("sub")
 
         if user_id:
-            logger.info(f"✅ Extracted user_id: {user_id}")
+            logger.debug(f"✅ Verified token for user_id: {user_id}")
             return user_id
         else:
-            logger.warning("Token does not contain 'sub' claim")
+            logger.warning("⚠️ Token does not contain 'sub' claim")
             return None
 
+    except jwt.ExpiredSignatureError:
+        logger.warning("⚠️ Token has expired")
+        return None
+    except jwt.InvalidSignatureError:
+        logger.warning("🚨 Invalid token signature - possible forgery attempt!")
+        return None
     except jwt.DecodeError as e:
-        logger.error(f"❌ Failed to decode JWT token: {e}")
+        logger.warning(f"⚠️ Failed to decode JWT token: {type(e).__name__}")
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected error extracting user_id: {e}")
+        logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}")
         return None
 
 

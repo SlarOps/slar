@@ -1,9 +1,12 @@
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from asyncio import Lock
+from collections import defaultdict
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from claude_agent_sdk import (
@@ -21,6 +24,7 @@ from claude_agent_sdk import (
 )
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from incident_tools import create_incident_tools_server, set_auth_token
 from supabase_storage import (
     extract_user_id_from_token,
@@ -38,20 +42,143 @@ logger = logging.getLogger(__name__)
 # Track tool usage for demonstration
 tool_usage_log = []
 
+
+def sanitize_error_message(error: Exception, context: str = "") -> str:
+    """
+    Sanitize error messages to prevent information disclosure.
+
+    Returns a generic error message while logging full details.
+
+    Args:
+        error: The exception to sanitize
+        context: Context string for logging (e.g., "syncing bucket", "creating session")
+
+    Returns:
+        Generic error message safe to return to client
+    """
+    # Log full error details for debugging
+    logger.error(f"❌ Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
+
+    # Return generic message based on error type
+    if isinstance(error, (ConnectionError, TimeoutError)):
+        return "Service temporarily unavailable. Please try again."
+    elif isinstance(error, PermissionError):
+        return "Access denied. Please check your permissions."
+    elif isinstance(error, ValueError):
+        return "Invalid input provided. Please check your request."
+    elif "auth" in str(error).lower() or "token" in str(error).lower():
+        return "Authentication failed. Please verify your credentials."
+    elif "database" in str(error).lower() or "postgres" in str(error).lower():
+        return "Database error. Please contact support if this persists."
+    else:
+        return "An internal error occurred. Please contact support if this persists."
+
+
+# ==========================================
+# Rate Limiting
+# ==========================================
+
+# Rate limiter storage: {user_id: [(timestamp, count), ...]}
+rate_limit_storage = defaultdict(list)
+rate_limit_lock = Lock()
+
+# Get rate limit from environment (default: 60 requests per minute)
+RATE_LIMIT_REQUESTS = int(os.getenv("AI_RATE_LIMIT", "60"))
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+async def check_rate_limit(user_id: str) -> bool:
+    """
+    Check if user has exceeded rate limit.
+
+    Args:
+        user_id: User identifier
+
+    Returns:
+        True if within rate limit, False if exceeded
+    """
+    async with rate_limit_lock:
+        now = datetime.now()
+        window_start = now - timedelta(seconds=RATE_LIMIT_WINDOW)
+
+        # Clean up old entries
+        rate_limit_storage[user_id] = [
+            timestamp for timestamp in rate_limit_storage[user_id]
+            if timestamp > window_start
+        ]
+
+        # Check if exceeded
+        if len(rate_limit_storage[user_id]) >= RATE_LIMIT_REQUESTS:
+            logger.warning(
+                f"⚠️ Rate limit exceeded for user {user_id}: "
+                f"{len(rate_limit_storage[user_id])} requests in {RATE_LIMIT_WINDOW}s"
+            )
+            return False
+
+        # Add current request
+        rate_limit_storage[user_id].append(now)
+        return True
+
+
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Rate limiting middleware for all API endpoints.
+
+    Limits requests per user based on AI_RATE_LIMIT environment variable.
+    """
+    # Skip rate limiting for health check
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    # Extract user_id from token
+    auth_token = (
+        request.query_params.get("auth_token")
+        or request.headers.get("authorization", "")
+    )
+
+    if auth_token:
+        user_id = extract_user_id_from_token(auth_token)
+        if user_id:
+            # Check rate limit
+            if not await check_rate_limit(user_id):
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "success": False,
+                        "error": "Rate limit exceeded. Please try again later.",
+                        "retry_after": RATE_LIMIT_WINDOW,
+                    },
+                )
+
+    return await call_next(request)
+
 app = FastAPI(
     title="Claude Agent API",
     description="WebSocket API for Claude Agent SDK with session management",
     version="2.0.0",
 )
 
-# CORS middleware
+# CORS middleware - Configure allowed origins from environment
+# For development: use specific localhost domains
+# For production: MUST use specific domains only (never use "*")
+ALLOWED_ORIGINS = os.getenv(
+    "AI_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:8000"
+).split(",")
+
+logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Apply rate limiting middleware
+app.middleware("http")(rate_limit_middleware)
+logger.info(f"✅ Rate limiting enabled: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -373,9 +500,11 @@ async def agent_task(
         logger.info("🤖 Agent task: Cancelled")
         raise
     except Exception as e:
-        logger.error(f"❌ Agent task error: {e}", exc_info=True)
         try:
-            await output_queue.put({"type": "error", "error": str(e)})
+            await output_queue.put({
+                "type": "error",
+                "error": sanitize_error_message(e, "in agent task")
+            })
         except Exception:
             pass
         raise  # Propagate error
@@ -484,11 +613,10 @@ async def sync_bucket(request: Request):
         return sync_result
 
     except Exception as e:
-        logger.error(f"❌ Error syncing bucket: {e}", exc_info=True)
         return {
             "success": False,
             "skipped": False,
-            "message": f"Error syncing bucket: {str(e)}",
+            "message": sanitize_error_message(e, "syncing bucket"),
         }
 
 
@@ -553,8 +681,10 @@ async def sync_mcp_config(request: Request):
             }
 
     except Exception as e:
-        logger.error(f"❌ Error syncing MCP config: {e}", exc_info=True)
-        return {"success": False, "message": f"Error syncing config: {str(e)}"}
+        return {
+            "success": False,
+            "message": sanitize_error_message(e, "syncing MCP config")
+        }
 
 
 @app.get("/api/mcp-servers")
@@ -609,8 +739,10 @@ async def get_mcp_servers(request: Request):
         return {"success": True, "servers": result.data or []}
 
     except Exception as e:
-        logger.error(f"❌ Error getting MCP servers: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "getting MCP servers")
+        }
 
 
 @app.post("/api/mcp-servers")
@@ -725,8 +857,10 @@ async def create_mcp_server(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error creating MCP server: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "creating MCP server")
+        }
 
 
 @app.delete("/api/mcp-servers/{server_name}")
@@ -773,8 +907,10 @@ async def delete_mcp_server(server_name: str, request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error deleting MCP server: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "deleting MCP server")
+        }
 
 
 @app.get("/api/memory")
@@ -834,8 +970,10 @@ async def get_memory(request: Request):
             logger.info("ℹ️  No memory found for user (first time)")
             return {"success": True, "content": "", "updated_at": None}
 
-        logger.error(f"❌ Error getting memory: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "getting memory")
+        }
 
 
 @app.post("/api/memory")
@@ -890,8 +1028,10 @@ async def update_memory(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error updating memory: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "updating memory")
+        }
 
 
 @app.delete("/api/memory")
@@ -930,8 +1070,10 @@ async def delete_memory(request: Request):
         return {"success": True, "message": "Memory deleted successfully"}
 
     except Exception as e:
-        logger.error(f"❌ Error deleting memory: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "deleting memory")
+        }
 
 
 @app.post("/api/sync-skills")
@@ -998,14 +1140,14 @@ async def sync_skills(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error syncing skills: {e}", exc_info=True)
+        error_message = sanitize_error_message(e, "syncing skills")
         return {
             "success": False,
-            "message": f"Error syncing skills: {str(e)}",
+            "message": error_message,
             "synced_count": 0,
             "failed_count": 0,
             "skills": [],
-            "errors": [str(e)],
+            "errors": [error_message],
         }
 
 
@@ -1168,8 +1310,10 @@ async def install_plugin_from_marketplace(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error installing plugin: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "installing plugin from marketplace")
+        }
 
 
 @app.post("/api/plugins/install")
@@ -1316,8 +1460,10 @@ async def install_plugin(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error installing plugin: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "installing plugin")
+        }
 
 
 @app.post("/api/marketplace/fetch-metadata")
@@ -1462,8 +1608,10 @@ async def fetch_marketplace_metadata(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error fetching marketplace metadata: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "fetching marketplace metadata")
+        }
 
 
 @app.post("/api/marketplace/download-repo-zip")
@@ -1642,13 +1790,57 @@ async def download_repo_zip(request: Request):
         }
 
     except Exception as e:
-        logger.error(f"❌ Error downloading/uploading repository: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "downloading repository")
+        }
+
+
+async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
+    """
+    Verify WebSocket authentication before accepting connection.
+
+    Returns:
+        tuple: (is_valid, user_id or error_message)
+    """
+    # Get token from query parameters
+    token = websocket.query_params.get("token")
+
+    if not token:
+        logger.warning("⚠️  WebSocket connection attempt without token")
+        return False, "Missing authentication token"
+
+    try:
+        # Verify JWT token
+        user_id = extract_user_id_from_token(token)
+        if not user_id:
+            logger.warning("⚠️  WebSocket connection attempt with invalid token")
+            return False, "Invalid authentication token"
+
+        logger.info(f"✅ WebSocket authenticated for user: {user_id}")
+        return True, user_id
+
+    except Exception as e:
+        logger.error(f"❌ WebSocket auth error: {e}")
+        return False, "Authentication failed"
 
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
+    # Authenticate BEFORE accepting connection (prevents DoS)
+    is_valid, result = await verify_websocket_auth(websocket)
+
+    if not is_valid:
+        # Reject connection with error code
+        await websocket.close(code=4001, reason=result)
+        return
+
+    # Now safe to accept
     await websocket.accept()
+
+    # Store user_id for session
+    authenticated_user_id = result
+    logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
 
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)
@@ -1777,9 +1969,11 @@ async def websocket_chat(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("🔌 WebSocket disconnected")
     except Exception as e:
-        logger.error(f"❌ Error in websocket_chat: {e}", exc_info=True)
         try:
-            await websocket.send_json({"type": "error", "error": str(e)})
+            await websocket.send_json({
+                "type": "error",
+                "error": sanitize_error_message(e, "in WebSocket connection")
+            })
         except Exception:
             pass
     finally:

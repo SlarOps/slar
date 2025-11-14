@@ -1,178 +1,60 @@
-# SLAR - Smart Live Alert & Response
+# CLAUDE.md
 
-An open-source on-call management platform with AI-powered incident response and intelligent alerting.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Structure
+## Common Development Commands
 
-```
-slar-oss/
-├── api/              # Backend services
-│   ├── cmd/          # Go application entry points
-│   ├── handlers/     # HTTP request handlers (Go)
-│   ├── services/     # Business logic (Go)
-│   ├── models/       # Data models (Go)
-│   ├── ai/           # AI agent system (Python)
-│   └── workers/      # Background workers (Go + Python)
-├── web/slar/         # Frontend (Next.js)
-├── deploy/           # Deployment configurations
-│   ├── docker/       # Docker Compose setup
-│   └── helm/         # Kubernetes Helm charts
-└── supabase/         # Database migrations and config
-```
-
-## Technology Stack
-
-### Backend (Go)
-- **Framework**: Gin web framework
-- **Database**: PostgreSQL (via Supabase)
-- **Queue**: PGMQ (PostgreSQL Message Queue)
-- **Auth**: JWT with Supabase
-- **Integrations**: Slack, Firebase, Redis
-
-### AI Agent System (Python)
-- **Framework**: AutoGen (multi-agent framework)
-- **API**: FastAPI
-- **LLM**: OpenAI GPT-4o
-- **RAG**: ChromaDB for document retrieval
-- **MCP**: Model Context Protocol for tool integration
-- **Features**: Tool approval system, session management, runbook retrieval
-
-### Frontend (Next.js)
-- **Framework**: Next.js 15.5
-- **UI**: Tailwind CSS, Headless UI, Heroicons
-- **Auth**: Supabase Auth
-- **Real-time**: WebSocket for AI agent communication
-- **Terminal**: xterm.js for interactive terminal
-
-### Workers
-- **Go Worker**: Escalation and notification worker
-- **Python Worker**: Slack message worker with Bolt SDK
-
-## Development Principles
-
-1. **DRY Principle**: Don't Repeat Yourself - reuse code through modules and utilities
-2. **Test-First**: Write tests before implementing features
-3. **Modular Architecture**: Clear separation of concerns between services
-4. **Type Safety**: Use type hints in Python, strong typing in Go
-
-## Quick Start
-
-### Prerequisites
-
-```bash
-# Required
-- Go 1.24.4+
-- Python 3.11+
-- Node.js 18+
-- Docker & Docker Compose
-- Supabase account
-
-# Optional
-- Kubernetes cluster (for Helm deployment)
-- Slack workspace (for notifications)
-```
-
-### Environment Setup
-
-1. **Create `.env` file at repository root**:
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
-2. **Supabase Setup**:
-```bash
-# Install Supabase CLI
-brew install supabase/tap/supabase
-
-# Link to your project
-supabase link
-
-# Push database migrations
-cd supabase && supabase db push
-```
-
-### Running with Docker Compose (Recommended)
-
-```bash
-# Build and start all services
-docker compose -f deploy/docker/docker-compose.yaml up -d
-
-# View logs
-docker compose -f deploy/docker/docker-compose.yaml logs -f
-
-# Access application
-open http://localhost:8000
-```
-
-### Running Services Individually
-
-#### Backend (Go)
+### Backend (Go API)
 ```bash
 cd api
 
-# Install dependencies
-go mod download
-
-# Run backend server
-go run cmd/main.go
-
-# Or with hot reload
+# Run with hot reload (recommended)
 air
+
+# Run directly without hot reload
+go run cmd/server/main.go
 
 # Run tests
 go test ./...
+
+# Run tests for specific package
+go test ./services -v
+
+# Format code
+go fmt ./...
+
+# Run linter
+go vet ./...
+
+# Run worker separately
+go run cmd/worker/main.go
 ```
 
-#### AI Agent (Python)
+### AI Agent (Python/FastAPI)
 ```bash
 cd api/ai
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Activate virtual environment
+source venv/bin/activate  # or: source env/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Set environment variables
-export OPENAI_API_KEY="your_key_here"
-
-# Run AI agent server
-python main.py
-
-# Or with uvicorn
-uvicorn main:app --host 0.0.0.0 --port 8002 --reload
-
-# Run tests
-cd api/ai
-pytest tests/
-
-# Test approval system
-python test_approval_simple.py
+# Run AI agent service
+python claude_agent_api_v1.py
+# Runs on http://localhost:8002
 ```
 
-#### Workers
-```bash
-# Go worker (escalation)
-cd api/workers
-go run worker.go
-
-# Python worker (Slack)
-cd api/workers
-pip install -r requirements.txt
-python slack_worker.py
-```
-
-#### Frontend (Next.js)
+### Frontend (Next.js)
 ```bash
 cd web/slar
 
 # Install dependencies
 npm install
 
-# Run development server
+# Run dev server
 npm run dev
+# Runs on http://localhost:3000
 
 # Build for production
 npm run build
@@ -181,419 +63,227 @@ npm run build
 npm start
 ```
 
-## Key Features & Components
-
-### 1. AI Agent System (api/ai/)
-
-**Architecture**: Multi-agent system using AutoGen framework with tool approval security
-
-**Key Components**:
-- `core/sre_agent.py` - Main AssistantAgent with tool approval system
-- `core/agent.py` - SLARAgentManager for agent orchestration
-- `core/session.py` - Session management with auto-save
-- `core/tools.py` - MCP tool integration
-
-**Tool Approval System**: Security pattern for controlling AI tool execution
-- **Human-in-the-loop**: Manual approval for each tool call
-- **Rule-based**: Automatic approval/denial based on predefined rules
-- **LLM-based**: AI-powered safety review before execution
-
-**Testing the Approval System**:
+### Database (Supabase)
 ```bash
-cd api/ai
+# Link to Supabase project
+supabase link
 
-# Quick test (2 minutes)
-python test_approval_simple.py
+# Push migrations
+cd supabase && supabase db push
 
-# Comprehensive test suite (5-10 minutes)
-python test_approval_agent.py
+# Generate TypeScript types
+supabase gen types typescript --local > web/slar/src/types/supabase.ts
 ```
 
-**Usage Example**:
-```python
-from core.sre_agent import AssistantAgent, create_rule_based_approval_func
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-
-model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
-
-agent = AssistantAgent(
-    name="sre_assistant",
-    model_client=model_client,
-    tools=[get_server_status, restart_service],
-    approval_func=create_rule_based_approval_func(
-        allow_read_only=True,      # Auto-approve: get_*, list_*, check_*
-        deny_destructive=True,     # Auto-deny: delete_*, destroy_*
-        deny_production=True,      # Auto-deny: operations on "production"
-    ),
-    auto_approve_tools=["get_metrics"],
-    always_deny_tools=["delete_database"],
-)
-
-result = await agent.run(task="Check server status")
-```
-
-**API Endpoints**:
-- `POST /sessions` - Create new session
-- `WS /ws/{session_id}` - WebSocket for real-time chat
-- `POST /runbook/index` - Index GitHub repository for RAG
-- `POST /runbook/retrieve` - Retrieve relevant runbooks
-- `GET /health` - Health check
-
-**Environment Variables**:
-```bash
-OPENAI_API_KEY=sk-...                    # Required
-OPENAI_MODEL=gpt-4o                       # Default: gpt-4o
-PORT=8002                                 # Default: 8002
-ENABLE_CODE_EXECUTOR=false                # Enable code execution
-CHROMA_COLLECTION_NAME=autogen_docs       # RAG collection
-```
-
-### 2. Backend API (api/)
-
-**Go Backend**: RESTful API with Gin framework
-
-**Key Handlers**:
-- `handlers/incident.go` - Incident management
-- `handlers/webhook.go` - Webhook integrations (Datadog, Prometheus)
-- `handlers/user.go` - User management
-- `handlers/optimized_scheduler.go` - Schedule optimization
-- `handlers/notification.go` - Notification handling
-
-**Database**: PostgreSQL via Supabase with PGMQ for message queuing
-
-**API Structure**:
-```bash
-# Run backend
-cd api
-go run cmd/main.go
-
-# Test
-go test ./...
-
-# Build
-go build -o bin/slar cmd/main.go
-```
-
-### 3. Workers (api/workers/)
-
-**Go Worker** (`worker.go`): Handles escalation and notifications from PGMQ
-
-**Python Slack Worker** (`slack_worker.py`): Processes Slack messages and interactions
-
-```bash
-# Run workers
-cd api/workers
-
-# Go worker
-go run worker.go
-
-# Python Slack worker
-python slack_worker.py
-```
-
-### 4. Frontend (web/slar/)
-
-**Next.js Application**: Modern React-based UI
-
-**Key Features**:
-- Schedule management with timeline visualization (vis-timeline)
-- Team and user management
-- Incident dashboard
-- AI chat interface with WebSocket
-- Interactive terminal (xterm.js)
-
-```bash
-cd web/slar
-npm run dev  # http://localhost:3000
-```
-
-## Deployment
-
-### Docker Compose (Local/Development)
-
+### Docker Compose
 ```bash
 # Start all services
 docker compose -f deploy/docker/docker-compose.yaml up -d
 
-# Access
-Frontend: http://localhost:8000
-Backend API: http://localhost:8000/api
-AI Agent: http://localhost:8002
+# View logs
+docker compose -f deploy/docker/docker-compose.yaml logs -f
+
+# Rebuild and restart specific service
+docker compose -f deploy/docker/docker-compose.yaml up -d --build ai
+
+# Stop all services
+docker compose -f deploy/docker/docker-compose.yaml down
 ```
 
-### Kubernetes (Production)
+## Architecture Overview
 
-```bash
-# Create secrets
-kubectl create secret generic slar-secrets \
-  --from-literal=openai-api-key=xxx \
-  --from-literal=database-url=xxx \
-  --from-literal=supabase-anon-key=xxx \
-  --from-literal=slack-bot-token=xxx
+SLAR is a multi-service on-call management platform with AI-powered incident response. It consists of four main components:
 
-# Install Helm chart
-cd deploy/helm/slar
-helm install slar . -f values.yaml
+### 1. Go API Server (`api/`)
+- **Entry Point**: `api/cmd/server/main.go`
+- **Framework**: Gin (HTTP router)
+- **Purpose**: Core REST API, business logic, and webhook handling
+- **Key Services** (`api/services/`):
+  - `scheduler_service.go` - On-call schedule computation
+  - `routing.go` - Alert routing and escalation logic
+  - `incident.go` - Incident lifecycle management
+  - `slack_service.go` - Slack integration
+  - `supabase_auth.go` - JWT verification and auth
+- **Database**: PostgreSQL via Supabase (uses `database/sql` with `lib/pq` driver)
+- **Runs on**: Port 8080
 
-# Uninstall
-helm uninstall slar
-```
+### 2. AI Agent Service (`api/ai/`)
+- **Entry Point**: `api/ai/claude_agent_api_v1.py`
+- **Framework**: FastAPI with Claude Agent SDK
+- **Purpose**: AI-powered incident analysis and response using Anthropic Claude
+- **Key Features**:
+  - WebSocket-based chat interface for real-time interaction
+  - MCP (Model Context Protocol) server integration for tools
+  - Supabase storage for conversation persistence
+  - Tool approval system for security
+- **Key Files**:
+  - `claude_agent_api_v1.py` - Main FastAPI server with WebSocket endpoints
+  - `mcp_config_manager.py` - MCP server configuration and management
+  - `supabase_storage.py` - Conversation and session storage
+  - `incident_tools.py` - Tools for incident management
+- **Runs on**: Port 8002
 
-## Testing
+### 3. Frontend (`web/slar/`)
+- **Framework**: Next.js 15 with App Router
+- **UI Library**: Tailwind CSS + Headless UI
+- **Auth**: Supabase Auth
+- **Structure**:
+  - `src/app/` - Next.js App Router pages
+  - `src/components/` - React components (organized by feature)
+  - `src/services/` - API client functions
+  - `src/hooks/` - Custom React hooks
+  - `src/lib/` - Utility functions and Supabase client
+- **Key Pages**:
+  - `/dashboard` - On-call schedule visualization with timeline
+  - `/incidents` - Incident management
+  - `/claude-agent` or `/ai-agent` - AI agent chat interface with xterm.js terminal
+  - `/integrations` - Integration management (Slack, Alertmanager, Datadog)
+- **Runs on**: Port 3000 (dev), Port 8000 (production via Kong)
 
-### Backend Tests
-```bash
-cd api
-go test ./... -v
-go test ./handlers/... -cover
-```
+### 4. Workers
+- **Go Worker** (`api/cmd/worker/main.go`): Escalation processing (PGMQ consumer)
+- **Slack Worker** (`api/workers/slack_worker.py`): Slack notification queue consumer (Python)
 
-### AI Agent Tests
-```bash
-cd api/ai
-
-# Unit tests
-pytest tests/ -v
-
-# Test with coverage
-pytest --cov=. tests/
-
-# Approval system tests
-python test_approval_simple.py
-python test_approval_agent.py
-```
-
-### Integration Testing
-```bash
-# Ensure all services are running
-docker compose -f deploy/docker/docker-compose.yaml up -d
-
-# Run integration tests
-# (Add integration test commands here)
-```
-
-## Common Tasks
-
-### Adding a New AI Tool
-
-1. **Define the tool function** in `api/ai/utils/slar_tools.py`:
-```python
-def restart_service(service_name: str) -> str:
-    """Restart a service."""
-    # Implementation
-    return f"Service {service_name} restarted"
-```
-
-2. **Add to agent** in `api/ai/core/agent.py`:
-```python
-tools = [restart_service, get_status, ...]
-```
-
-3. **Configure approval** (if needed):
-```python
-agent = AssistantAgent(
-    tools=tools,
-    approval_func=create_rule_based_approval_func(
-        deny_destructive=True
-    ),
-)
-```
-
-4. **Test the tool**:
-```bash
-cd api/ai
-python -c "from utils.slar_tools import restart_service; print(restart_service('nginx'))"
-```
-
-### Adding a New API Endpoint
-
-1. **Create handler** in `api/handlers/`:
-```go
-func HandleNewFeature(c *gin.Context) {
-    // Implementation
-    c.JSON(200, gin.H{"status": "ok"})
-}
-```
-
-2. **Register route** in `api/router/`:
-```go
-router.POST("/api/new-feature", handlers.HandleNewFeature)
-```
-
-3. **Add tests** in `api/handlers/`:
-```go
-func TestHandleNewFeature(t *testing.T) {
-    // Test implementation
-}
-```
-
-### Database Migrations
-
-```bash
-# Create new migration
-cd supabase
-supabase migration new migration_name
-
-# Edit migration file
-# supabase/migrations/YYYYMMDDHHMMSS_migration_name.sql
-
-# Apply migrations
-supabase db push
-
-# Reset database (caution!)
-supabase db reset
-```
-
-## Architecture Notes
+## Key Architecture Patterns
 
 ### Service Communication
+- **Frontend → Go API**: Direct HTTP/HTTPS requests to `/api/*` endpoints
+- **Frontend → AI Agent**: WebSocket connection for chat at `/ws/chat`
+- **Go API → AI Agent**: HTTP requests to AI service endpoints
+- **Workers → Database**: PGMQ (PostgreSQL Message Queue) for async tasks
 
-```
-Frontend (Next.js)
-    ↓ HTTP/WebSocket
-Backend API (Go) ← → Supabase (PostgreSQL)
-    ↓ PGMQ
-Workers (Go/Python)
-    ↓ Slack SDK
-Slack
+### Database Pattern
+- **PostgreSQL** as primary database via Supabase
+- **PGMQ** extension for message queue (used by escalation worker)
+- **Migrations** in `supabase/migrations/` - use Supabase CLI to apply
+- No ORM - uses raw SQL with `database/sql` package in Go
 
-Frontend (Next.js)
-    ↓ WebSocket
-AI Agent (Python/FastAPI)
-    ↓ OpenAI API
-GPT-4o
-```
+### Authentication Flow
+1. Supabase Auth handles user authentication
+2. Frontend gets JWT token from Supabase
+3. JWT sent in `Authorization: Bearer <token>` header to Go API
+4. Go API verifies JWT signature using `SUPABASE_JWT_SECRET` in `services/supabase_auth.go`
+5. User ID extracted from JWT claims for authorization
 
-### AI Agent Flow
+### AI Agent Integration
+- **MCP Servers**: AI agent can dynamically load MCP servers for tool integration
+- **Workspaces**: Each user session has isolated workspace in `api/ai/workspaces/{session_id}/`
+- **Tool Approval**: Security mechanism requiring user approval for certain AI actions
+- **Storage**: Conversations stored in Supabase `slar_claude_conversations` table
 
-```
-User → WebSocket → SessionManager → SLARAgentManager
-                                           ↓
-                                    AssistantAgent (with approval)
-                                           ↓
-                                    Tool Approval Check:
-                                    1. Deny list (immediate block)
-                                    2. Auto-approve list (skip approval)
-                                    3. Approval function (decide)
-                                           ↓
-                                    Tool Execution
-                                           ↓
-                                    Response → User
-```
+### Alert Routing
+1. Webhook received (Alertmanager, Datadog, etc.) at `handlers/webhook.go`
+2. Alert normalized to internal format
+3. Routing rules evaluated in `services/routing.go`
+4. On-call schedule consulted (`services/scheduler_service.go`)
+5. Notifications sent via Slack/FCM/Email
+6. Escalation policies triggered if unacknowledged
 
-### Security Layers
+## Environment Configuration
 
-1. **Authentication**: Supabase JWT validation
-2. **Authorization**: Role-based access control
-3. **Tool Approval**: AI action approval before execution
-4. **Rate Limiting**: API rate limits (configured in backend)
-5. **CORS**: Configured origins in both backend and AI agent
+Critical environment variables (see `.env.example`):
 
-## Troubleshooting
+**Database & Supabase**:
+- `DATABASE_URL` - PostgreSQL connection string (required)
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET` (required)
 
-### Backend Issues
+**AI Agent**:
+- `OPENAI_API_KEY` - Anthropic API key (required for AI features)
+- `AI_PORT` - AI service port (default: 8002)
+- `AI_RATE_LIMIT` - Rate limit per minute (default: 60)
 
-**Error: Database connection failed**
-```bash
-# Check Supabase connection
-echo $DATABASE_URL
-# Verify migrations are applied
-cd supabase && supabase db push
-```
+**Integration Tokens**:
+- `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`
+- `FCM_CREDENTIALS_PATH` (optional for Firebase push)
 
-**Error: Port already in use**
-```bash
-# Find process using port
-lsof -i :8000
-# Kill process
-kill -9 <PID>
-```
+## Testing Notes
 
-### AI Agent Issues
+### Go Tests
+- Tests use `_test.go` suffix convention
+- Mock database connections where possible
+- Example: `api/handlers/webhook_prometheus_test.go`
 
-**Error: OpenAI API key not set**
-```bash
-export OPENAI_API_KEY="sk-..."
-```
+### Integration Testing
+- Use Docker Compose for full stack testing
+- Ensure Supabase is accessible for E2E tests
+- AI agent requires valid Anthropic API key
 
-**Error: ChromaDB persistence error**
-```bash
-# Clear ChromaDB cache
-rm -rf api/ai/.chromadb_autogen
-```
+## Important Implementation Details
 
-**Error: Module import failures**
-```bash
-# Ensure you're in correct directory
-cd api/ai
-# Check Python path
-python -c "import sys; print(sys.path)"
-```
+### Scheduler System
+- Two implementations exist:
+  - `scheduler_service.go` - Original scheduler
+  - `optimized_scheduler_service.go` - Performance-optimized version
+- Handles complex on-call rotations with overrides
+- Computes "who's on-call" for any given time
 
-**Error: Tool approval not working**
-```bash
-# Test approval system
-cd api/ai
-python test_approval_simple.py
-```
+### PGMQ Queue Names
+- `escalation_queue` - Escalation tasks processed by Go worker
+- `slack_notification_queue` - Slack messages processed by Python worker
 
-### Worker Issues
+### Hot Reload Development
+- **Go API**: Use `air` for hot reload (configured in `api/.air.toml`)
+- **Next.js**: Built-in hot reload with `npm run dev`
+- **Python AI**: Manual restart required (or use `uvicorn --reload`)
 
-**Error: PGMQ queue not found**
-```bash
-# Check PGMQ setup in database
-# Ensure migrations created PGMQ tables
-```
+### Time Handling
+- All times stored in UTC in database
+- Frontend converts to local timezone for display
+- Set timezone in DB connection: `SET TIME ZONE 'UTC'`
 
-**Error: Slack token invalid**
-```bash
-# Verify Slack tokens
-echo $SLACK_BOT_TOKEN
-echo $SLACK_APP_TOKEN
-```
+## Security Considerations
 
-### Frontend Issues
+- JWT verification is critical - see `services/supabase_auth.go`
+- AI tool approval system prevents unauthorized actions
+- Rate limiting implemented on AI agent endpoints
+- CORS configured per environment (`ALLOWED_ORIGINS`, `AI_ALLOWED_ORIGINS`)
+- Never commit `.env` files with real credentials
+- SQL injection protection via parameterized queries
 
-**Error: Cannot connect to backend**
-```bash
-# Check backend is running
-curl http://localhost:8000/api/health
+## Deployment
 
-# Check CORS configuration
-# Update NEXT_PUBLIC_API_URL in .env
-```
+### Docker Images
+- Built for `linux/amd64` platform
+- Three main images: `slar-api`, `slar-ai`, `slar-slack-worker`
+- Frontend served via Next.js standalone build + Kong gateway
 
-## Resources
+### Kubernetes
+- Helm charts in `deploy/helm/slar/`
+- Secrets required: API keys, DB credentials, JWT secrets
+- See `deploy/helm/slar/README.md` for details
 
-- **Repository**: https://github.com/slarops/slar
-- **Issues**: https://github.com/slarops/slar/issues
-- **Documentation**: See `/docs` and `/api/ai/README.md`
-- **AutoGen Docs**: https://microsoft.github.io/autogen/
-- **Supabase Docs**: https://supabase.com/docs
+## Dependencies
 
-## Contributing
+### Go Modules
+- Managed with `go mod` - see `api/go.mod`
+- Key deps: Gin, JWT, Firebase Admin SDK, Redis client
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/new-feature`
-3. Follow coding standards:
-   - **Go**: Follow Go conventions, run `go fmt`
-   - **Python**: Follow PEP 8, use type hints
-   - **TypeScript**: Use ESLint and Prettier
-4. Write tests (test-first approach)
-5. Commit changes: `git commit -m "feat: add new feature"`
-6. Push to branch: `git push origin feature/new-feature`
-7. Submit pull request with clear description
+### Python Packages
+- Managed with `pip` - see `api/ai/requirements.txt`
+- Key deps: FastAPI, Claude Agent SDK, MCP, Supabase client
 
-### Commit Convention
+### Node Packages
+- Managed with `npm` - see `web/slar/package.json`
+- Key deps: Next.js 15, React 19, Supabase client, xterm.js
 
-Follow conventional commits:
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `test:` - Test changes
-- `refactor:` - Code refactoring
-- `chore:` - Maintenance tasks
+## Troubleshooting Common Issues
 
-## License
+### "Database connection refused"
+- Verify `DATABASE_URL` in `.env`
+- Check Supabase project is accessible
+- Ensure PGMQ extension is installed
 
-Apache 2.0 License - see [LICENSE](LICENSE) file for details.
+### "AI agent WebSocket connection failed"
+- Confirm AI service is running on port 8002
+- Check CORS settings (`AI_ALLOWED_ORIGINS`)
+- Verify Anthropic API key is valid
+
+### "JWT verification failed"
+- Ensure `SUPABASE_JWT_SECRET` matches Supabase project
+- Check token hasn't expired
+- Verify Authorization header format: `Bearer <token>`
+
+### "Hot reload not working (Go)"
+- Check `air` is installed: `go install github.com/cosmtrek/air@latest`
+- Verify `.air.toml` configuration in `api/` directory
+- Check `tmp/` directory permissions
