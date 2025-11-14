@@ -337,6 +337,13 @@ class APIClient {
     return this.request(`/groups/${groupId}/schedulers/${schedulerId}`);
   }
 
+  async updateSchedulerWithShifts(groupId, schedulerId, data) {
+    return this.request(`/groups/${groupId}/schedulers/${schedulerId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
   async deleteScheduler(groupId, schedulerId) {
     return this.request(`/groups/${groupId}/schedulers/${schedulerId}`, {
       method: 'DELETE'
@@ -502,48 +509,6 @@ class APIClient {
     return this.request('/users');
   }
 
-  // API Key endpoints
-  async getAPIKeys() {
-    return this.request('/api-keys');
-  }
-
-  async getAPIKey(keyId) {
-    return this.request(`/api-keys/${keyId}`);
-  }
-
-  async createAPIKey(keyData) {
-    return this.request('/api-keys', {
-      method: 'POST',
-      body: JSON.stringify(keyData)
-    });
-  }
-
-  async updateAPIKey(keyId, keyData) {
-    return this.request(`/api-keys/${keyId}`, {
-      method: 'PUT',
-      body: JSON.stringify(keyData)
-    });
-  }
-
-  async deleteAPIKey(keyId) {
-    return this.request(`/api-keys/${keyId}`, {
-      method: 'DELETE'
-    });
-  }
-
-  async regenerateAPIKey(keyId) {
-    return this.request(`/api-keys/${keyId}/regenerate`, {
-      method: 'POST'
-    });
-  }
-
-  async getAPIKeyStats() {
-    return this.request('/api-keys/stats');
-  }
-
-  async getAPIKeyUsageLogs(keyId) {
-    return this.request(`/api-keys/${keyId}/usage`);
-  }
 
   // Schedule endpoints
   async getGroupSchedules(groupId) {
@@ -932,42 +897,6 @@ class APIClient {
     }, this.aiBaseURL);
   }
 
-  // ===========================
-  // RUNBOOK APIs (port 8002)
-  // ===========================
-
-  // Get runbook statistics
-  async getRunbookStats() {
-    return this.request('/runbook/stats', {}, this.aiBaseURL);
-  }
-
-  // List indexed runbook documents
-  async listRunbookDocuments() {
-    return this.request('/runbook/list-documents', {}, this.aiBaseURL);
-  }
-
-  // Index runbooks from GitHub
-  async indexRunbooksFromGithub(githubUrl, userId) {
-    return this.request('/runbook/index-github', {
-      method: 'POST',
-      body: JSON.stringify({
-        github_url: githubUrl,
-        user_id: userId
-      })
-    }, this.aiBaseURL);
-  }
-
-  // Reindex all runbooks
-  async reindexRunbooks() {
-    return this.request('/runbook/reindex', {
-      method: 'POST'
-    }, this.aiBaseURL);
-  }
-
-  // Test runbook retrieval
-  async testRunbookRetrieval() {
-    return this.request('/runbook/test', {}, this.aiBaseURL);
-  }
 }
 
 export const apiClient = new APIClient();

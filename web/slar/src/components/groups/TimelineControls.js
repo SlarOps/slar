@@ -65,13 +65,6 @@ const TimelineControls = ({ viewMode, setViewMode, timeline, currentOnCall, onFo
               </div>
             </div>
           )}
-          
-          {/* Next Rotation Info */}
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-            <span>Next:</span>
-            <span className="font-medium">{nextRotation.nextMember}</span>
-            <span>in {nextRotation.timeRemaining}</span>
-          </div>
         </div>
 
         {/* View Mode Selector */}
@@ -81,7 +74,6 @@ const TimelineControls = ({ viewMode, setViewMode, timeline, currentOnCall, onFo
             { value: 'day', label: 'Day', icon: '📅' },
             { value: 'week', label: 'Week', icon: '📆' },
             { value: '2-week', label: '2 Weeks', icon: '🗓️' },
-            { value: 'month', label: 'Month', icon: '📋' }
           ].map((mode) => (
             <button
               key={mode.value}
@@ -98,27 +90,7 @@ const TimelineControls = ({ viewMode, setViewMode, timeline, currentOnCall, onFo
           ))}
         </div>
       </div>
-
-      {/* Timeline Navigation Controls */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {/* Quick Navigation */}
-          <button
-            onClick={onFocusNow}
-            className="px-3 py-1.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors flex items-center gap-1.5"
-          >
-            <span>📍</span>
-            Focus Now
-          </button>
-
-          <button
-            onClick={() => timeline?.timeline?.fit?.()}
-            className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          >
-            🔍 Fit All
-          </button>
-        </div>
-
         {/* Timeline Info */}
         <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
           <div className="flex items-center gap-1">
@@ -136,27 +108,7 @@ const TimelineControls = ({ viewMode, setViewMode, timeline, currentOnCall, onFo
         </div>
       </div>
 
-      {/* Timeline Statistics */}
-      <div className="grid grid-cols-3 gap-4 text-center">
-        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
-          <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
-            {timeline ? '24/7' : '--'}
-          </div>
-          <div className="text-xs text-blue-500 dark:text-blue-300">Coverage</div>
-        </div>
-        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
-          <div className="text-lg font-bold text-green-600 dark:text-green-400">
-            {timeline ? '7d' : '--'}
-          </div>
-          <div className="text-xs text-green-500 dark:text-green-300">Avg Shift</div>
-        </div>
-        <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3">
-          <div className="text-lg font-bold text-purple-600 dark:text-purple-400">
-            {timeline ? '4' : '--'}
-          </div>
-          <div className="text-xs text-purple-500 dark:text-purple-300">Team Size</div>
-        </div>
-      </div>
+      
     </div>
   );
 };

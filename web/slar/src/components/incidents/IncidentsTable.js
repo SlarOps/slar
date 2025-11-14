@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { MarkdownRenderer } from '../ui';
 
-export default function IncidentsTable({ 
-  incidents = [], 
-  loading = false, 
+export default function IncidentsTable({
+  incidents = [],
+  loading = false,
   onIncidentAction,
   selectedIncidents = [],
   onIncidentSelect,
@@ -95,9 +95,11 @@ export default function IncidentsTable({
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+      <>
+        {/* Desktop Loading Skeleton */}
+        <div className="hidden md:block bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             {/* Header Skeleton */}
             <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
@@ -226,6 +228,41 @@ export default function IncidentsTable({
           </table>
         </div>
       </div>
+
+        {/* Mobile Loading Skeleton */}
+        <div className="md:hidden space-y-3">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+              <div className="animate-pulse">
+                {/* Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+                    <div className="flex space-x-2 mb-2">
+                      <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-full w-16"></div>
+                      <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-full w-16"></div>
+                      <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-full w-12"></div>
+                    </div>
+                  </div>
+                </div>
+                {/* Description */}
+                <div className="mb-3">
+                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                </div>
+                {/* Footer */}
+                <div className="flex items-center justify-between">
+                  <div className="flex space-x-3">
+                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-16"></div>
+                  </div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
     );
   }
 
@@ -242,9 +279,11 @@ export default function IncidentsTable({
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+    <>
+      {/* Desktop Table View - Hidden on Mobile */}
+      <div className="hidden md:block bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th scope="col" className="w-8 px-6 py-3">
@@ -435,5 +474,60 @@ export default function IncidentsTable({
         </table>
       </div>
     </div>
+
+      {/* Mobile Card View - Hidden on Desktop */}
+      <div className="md:hidden space-y-3">
+        {incidents.map((incident) => (
+          <div
+            key={incident.id}
+            className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => handleIncidentClick(incident.id)}
+          >
+            <div className="flex items-start gap-3">
+              {/* Checkbox */}
+              <input
+                type="checkbox"
+                className="h-5 w-5 mt-1 text-blue-600 focus:ring-blue-500 border-gray-300 rounded flex-shrink-0"
+                checked={selectedIncidents.includes(incident.id)}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onIncidentSelect(incident.id, e.target.checked);
+                }}
+              />
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                {/* Title */}
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 line-clamp-2">
+                  {incident.title}
+                </h3>
+
+                {/* Metadata - Status, Assignee, Created date */}
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  {/* Status Badge */}
+                  {getStatusBadge(incident.status)}
+
+                  {/* Assignee */}
+                  <div className="flex items-center gap-1 text-gray-600 dark:text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span className="truncate">
+                      {incident.assigned_to_name || 'Unassigned'}
+                    </span>
+                  </div>
+
+                  {/* Created date */}
+                  <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap ml-auto">
+                    {formatDate(incident.created_at)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

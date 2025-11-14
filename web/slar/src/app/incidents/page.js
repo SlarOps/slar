@@ -238,16 +238,20 @@ export default function IncidentsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6 p-4 md:p-6">
       {/* Header with Stats */}
       <div>
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Incidents</h1>
-          <button 
-            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
+          <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">Incidents</h1>
+          <button
+            className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             onClick={() => setShowCreateModal(true)}
           >
-            Create Incident
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span className="hidden sm:inline">Create Incident</span>
+            <span className="sm:hidden">New</span>
           </button>
         </div>
         
@@ -266,40 +270,40 @@ export default function IncidentsPage() {
         )}
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 md:p-4">
+            <div className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">
               {loading ? '...' : stats.total}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Total Incidents</div>
+            <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 mt-1">Total</div>
           </div>
-          
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-red-200 dark:border-red-800 p-3">
-            <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-red-200 dark:border-red-800 p-3 md:p-4">
+            <div className="text-xl md:text-2xl font-bold text-red-600 dark:text-red-400">
               {loading ? '...' : stats.triggered}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Triggered</div>
+            <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 mt-1">Triggered</div>
           </div>
-          
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-800 p-3">
-            <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-800 p-3 md:p-4">
+            <div className="text-xl md:text-2xl font-bold text-yellow-600 dark:text-yellow-400">
               {loading ? '...' : stats.acknowledged}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Acknowledged</div>
+            <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 mt-1">Acknowledged</div>
           </div>
-          
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-green-200 dark:border-green-800 p-3">
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-green-200 dark:border-green-800 p-3 md:p-4">
+            <div className="text-xl md:text-2xl font-bold text-green-600 dark:text-green-400">
               {loading ? '...' : stats.resolved}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Resolved</div>
+            <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 mt-1">Resolved</div>
           </div>
-          
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-orange-200 dark:border-orange-800 p-3">
-            <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-orange-200 dark:border-orange-800 p-3 md:p-4 col-span-2 md:col-span-1">
+            <div className="text-xl md:text-2xl font-bold text-orange-600 dark:text-orange-400">
               {loading ? '...' : stats.high_urgency}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">High Urgency</div>
+            <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 mt-1">High Urgency</div>
           </div>
         </div>
       </div>

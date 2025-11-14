@@ -7,8 +7,8 @@ export const useChatSubmit = (
   setIsSending,
   connectionStatus,
   wsConnection,
-  attachedIncident,
-  setMessages
+  setMessages,
+  sessionId
 ) => {
   const onSubmit = useCallback(async (e) => {
     e.preventDefault();
@@ -16,50 +16,35 @@ export const useChatSubmit = (
     if (!text || isSending) return;
 
     // Push user message
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    setMessages((prev) => [...prev, {
+      role: "user",
+      content: text,
+      timestamp: new Date().toISOString()
+    }]);
     setInput("");
-    setIsSending(true);
+    // setIsSending(true);
 
     // Check WebSocket connection
     if (connectionStatus !== "connected" || !wsConnection) {
       setMessages((prev) => [...prev, {
         role: "assistant",
-        content: "Connection to AI agent is not available. Please wait for reconnection..."
+        content: "Connection to AI agent is not available. Please wait for reconnection...",
+        type: "error",
+        timestamp: new Date().toISOString()
       }]);
-      setIsSending(false);
+      // setIsSending(false);
       return;
     }
 
     try {
-      // Prepare message content with incident context if attached
-      let messageContent = text;
-      if (attachedIncident) {
-        const incidentContext = `[INCIDENT CONTEXT]
-Incident ID: ${attachedIncident.id}
-Title: ${attachedIncident.title}
-Description: ${attachedIncident.description || 'No description'}
-Status: ${attachedIncident.status}
-Severity: ${attachedIncident.severity || 'Unknown'}
-Urgency: ${attachedIncident.urgency || 'Unknown'}
-Service: ${attachedIncident.service_name || 'Unknown'}
-Assigned to: ${attachedIncident.assigned_to_name || 'Unassigned'}
-Created: ${attachedIncident.created_at}
-${attachedIncident.acknowledged_at ? `Acknowledged: ${attachedIncident.acknowledged_at}` : ''}
-${attachedIncident.resolved_at ? `Resolved: ${attachedIncident.resolved_at}` : ''}
-
-[USER QUESTION]
-${text}`;
-        messageContent = incidentContext;
-      }
-
-      // Send message via WebSocket using the same format as the example
+      // Send message via WebSocket using Claude Agent API v1 format
       const message = {
-        content: messageContent,
-        source: "user"
+        prompt: text,
+        session_id: sessionId || ""
       };
 
       wsConnection.send(JSON.stringify(message));
-      console.log("Message sent via WebSocket:", message);
+      console.log("Message sent to Claude Agent API:", message);
 
       // Response will be handled by WebSocket onmessage event
       // No need to wait for response here as it's handled asynchronously
@@ -68,11 +53,16 @@ ${text}`;
       console.error("Error sending WebSocket message:", err);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error sending message: ${err?.message || String(err)}` },
+        {
+          role: "assistant",
+          content: `Error sending message: ${err?.message || String(err)}`,
+          type: "error",
+          timestamp: new Date().toISOString()
+        },
       ]);
-      setIsSending(false);
+      // setIsSending(false);
     }
-  }, [input, isSending, connectionStatus, wsConnection, attachedIncident, setInput, setIsSending, setMessages]);
+  }, [input, isSending, connectionStatus, wsConnection, sessionId, setInput, setIsSending, setMessages]);
 
   return { onSubmit };
 };

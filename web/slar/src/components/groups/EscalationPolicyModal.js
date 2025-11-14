@@ -367,7 +367,7 @@ export default function EscalationPolicyModal({
         </TransitionChild>
 
         <div className="fixed inset-0 overflow-y-auto">
-          <div className="flex min-h-full items-center justify-center p-4 text-center">
+          <div className="flex min-h-full items-center justify-center p-2 sm:p-4 text-center">
             <TransitionChild
               as={Fragment}
               enter="ease-out duration-300"
@@ -377,36 +377,36 @@ export default function EscalationPolicyModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <DialogPanel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 p-6 text-left align-middle transition-all shadow-2xl dark:shadow-gray-900/50">
+              <DialogPanel className="w-full max-w-4xl transform overflow-hidden rounded-xl sm:rounded-2xl bg-white dark:bg-gray-800 p-4 sm:p-6 text-left align-middle transition-all shadow-2xl dark:shadow-gray-900/50">
                 {/* Header */}
-                <div className="flex items-center justify-between mb-6">
-                  <DialogTitle as="h3" className="text-xl font-semibold leading-6 text-gray-900 dark:text-white">
+                <div className="flex items-center justify-between gap-3 mb-4 sm:mb-6">
+                  <DialogTitle as="h3" className="text-lg sm:text-xl font-semibold leading-6 text-gray-900 dark:text-white flex-1 min-w-0">
                     {isEditMode ? 'Edit Escalation Policy' : 'Create Escalation Policy'}
                   </DialogTitle>
                   <button
                     type="button"
-                    className="rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 p-2 transition-colors duration-200"
+                    className="flex-shrink-0 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 p-1.5 sm:p-2 transition-colors duration-200"
                     onClick={onClose}
                   >
                     <span className="sr-only">Close</span>
-                    <XMarkIcon className="h-6 w-6" aria-hidden="true" />
+                    <XMarkIcon className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
                   </button>
                 </div>
 
         {/* Content - Scrollable */}
-        <div className="overflow-y-auto flex-1 max-h-[calc(90vh-180px)]">
+        <div className="overflow-y-auto flex-1 max-h-[calc(90vh-150px)] sm:max-h-[calc(90vh-180px)]">
           {loadingPolicyDetail ? (
-            <div className="flex items-center justify-center p-8">
+            <div className="flex items-center justify-center p-6 sm:p-8">
               <div className="flex items-center space-x-3">
-                <svg className="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <svg className="animate-spin h-5 w-5 sm:h-6 sm:w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <span className="text-gray-600 dark:text-gray-400">Loading policy details...</span>
+                <span className="text-sm sm:text-base text-gray-600 dark:text-gray-400">Loading policy details...</span>
               </div>
             </div>
           ) : (
-          <div className="p-6 space-y-6">
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
           {/* Active Status - Only show in edit mode */}
           {isEditMode && (
             <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -448,30 +448,30 @@ export default function EscalationPolicyModal({
           </Field>
 
           {/* Escalation Steps */}
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h4 className="text-lg font-medium text-gray-900 dark:text-white">Escalation Steps</h4>
+          <div className="space-y-4 sm:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <h4 className="text-base sm:text-lg font-medium text-gray-900 dark:text-white">Escalation Steps</h4>
               <button
                 type="button"
                 onClick={addEscalationStep}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                Add Step
+                <span>Add Step</span>
               </button>
             </div>
 
             {escalationSteps.map((step, stepIndex) => (
-              <div key={step.id} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-4">
+              <div key={step.id} className="border border-gray-200 dark:border-gray-600 rounded-lg p-3 sm:p-4 space-y-3 sm:space-y-4">
                 {/* Step Header */}
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-semibold text-blue-600 dark:text-blue-300">{step.stepNumber}</span>
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs sm:text-sm font-semibold text-blue-600 dark:text-blue-300">{step.stepNumber}</span>
                     </div>
-                    <h5 className="text-md font-medium text-gray-900 dark:text-white">
+                    <h5 className="text-sm sm:text-md font-medium text-gray-900 dark:text-white">
                       Step {step.stepNumber}
                     </h5>
                   </div>
@@ -479,9 +479,9 @@ export default function EscalationPolicyModal({
                     <button
                       type="button"
                       onClick={() => removeEscalationStep(step.id)}
-                      className="text-gray-400 hover:text-red-500 p-1"
+                      className="text-gray-400 hover:text-red-500 p-1 sm:p-1.5 flex-shrink-0"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </button>
@@ -523,18 +523,18 @@ export default function EscalationPolicyModal({
 
                 {/* Add Target Section */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Targets
                   </label>
-                  <div className="flex gap-2 mb-3">
-                    <div className="bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-3 py-2 rounded-md text-sm font-medium flex items-center">
+                  <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                    <div className="bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-3 py-2 rounded-md text-xs sm:text-sm font-medium flex items-center justify-center sm:justify-start flex-shrink-0">
                       Add target
                     </div>
                     <div className="flex-1">
                       <Menu>
-                        <MenuButton className="inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
+                        <MenuButton className="inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-3 py-2 text-xs sm:text-sm font-semibold text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
                           <span className="text-gray-500 dark:text-gray-400">Select scheduler...</span>
-                          <ChevronDownIcon className="-mr-1 h-5 w-5 text-gray-400" />
+                          <ChevronDownIcon className="-mr-1 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
                         </MenuButton>
 
                         <MenuItems
@@ -579,23 +579,23 @@ export default function EscalationPolicyModal({
                   {/* Target List */}
                   <div className="space-y-2">
                     {step.targets.map((target) => (
-                      <div key={target.id} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                        <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center">
+                      <div key={target.id} className="flex items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center flex-shrink-0 text-sm sm:text-base">
                           {target.type === 'scheduler' ? '👥' : '📅'}
                         </div>
-                        
-                        <div className="flex-1">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">
+
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white truncate">
                             {target.name}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {target.type === 'scheduler' ? 'Scheduler' : 'Schedule'}: <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">{target.responder}</span>
+                            {target.type === 'scheduler' ? 'Scheduler' : 'Schedule'}: <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">{target.responder}</span>
                           </div>
                         </div>
-                        
+
                         <button
                           onClick={() => removeTargetFromStep(step.id, target.id)}
-                          className="text-gray-400 hover:text-red-500 p-1"
+                          className="text-gray-400 hover:text-red-500 p-1 sm:p-1.5 flex-shrink-0"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -607,16 +607,16 @@ export default function EscalationPolicyModal({
                   </div>
 
                   {/* Escalate After */}
-                  <div className="flex items-center gap-3 pt-4 border-t border-gray-200 dark:border-gray-600">
-                    <div className="w-8 h-8 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-3 sm:pt-4 border-t border-gray-200 dark:border-gray-600">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center flex-shrink-0 text-sm sm:text-base">
                       ⏰
                     </div>
-                    <span className="text-sm text-gray-700 dark:text-gray-300">Escalate after</span>
-                    
+                    <span className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">Escalate after</span>
+
                     <Menu>
-                      <MenuButton className="inline-flex items-center gap-2 rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
+                      <MenuButton className="inline-flex items-center gap-1 sm:gap-2 rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
                         {step.escalateAfterMinutes === 60 ? '1 hour' : `${step.escalateAfterMinutes} minute${step.escalateAfterMinutes > 1 ? 's' : ''}`}
-                        <ChevronDownIcon className="h-4 w-4 text-gray-400" />
+                        <ChevronDownIcon className="h-3 w-3 sm:h-4 sm:w-4 text-gray-400" />
                       </MenuButton>
 
                       <MenuItems
@@ -635,9 +635,9 @@ export default function EscalationPolicyModal({
                           <MenuItem key={option.value}>
                             <button
                               onClick={() => updateStepTimeout(step.id, option.value)}
-                              className={`group flex w-full items-center rounded-md px-3 py-2 text-sm text-gray-700 dark:text-gray-200 data-focus:bg-blue-100 dark:data-focus:bg-blue-900 ${
-                                step.escalateAfterMinutes === option.value 
-                                  ? 'bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-300' 
+                              className={`group flex w-full items-center rounded-md px-3 py-2 text-xs sm:text-sm text-gray-700 dark:text-gray-200 data-focus:bg-blue-100 dark:data-focus:bg-blue-900 ${
+                                step.escalateAfterMinutes === option.value
+                                  ? 'bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-300'
                                   : ''
                               }`}
                             >
@@ -647,8 +647,8 @@ export default function EscalationPolicyModal({
                         ))}
                       </MenuItems>
                     </Menu>
-                    
-                    <span className="text-sm text-gray-700 dark:text-gray-300">if not acknowledged</span>
+
+                    <span className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">if not acknowledged</span>
                   </div>
                 </div>
               ))}
@@ -656,15 +656,15 @@ export default function EscalationPolicyModal({
 
           {/* Repeat All After */}
           <Field>
-            <Label className="text-sm font-medium text-gray-900 dark:text-white">
+            <Label className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white">
               Repeat All After *
             </Label>
             <Menu>
-              <MenuButton className="mt-2 inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-4 py-3 text-sm text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
-                {policyData.repeat_max_times === 0 ? "Infinite repeat" : 
-                 policyData.repeat_max_times === 1 ? "1 time (no repeat)" : 
+              <MenuButton className="mt-2 inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600">
+                {policyData.repeat_max_times === 0 ? "Infinite repeat" :
+                 policyData.repeat_max_times === 1 ? "1 time (no repeat)" :
                  `${policyData.repeat_max_times} times`}
-                <ChevronDownIcon className="h-5 w-5 text-gray-400" />
+                <ChevronDownIcon className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
               </MenuButton>
               <MenuItems
                 transition
@@ -681,7 +681,7 @@ export default function EscalationPolicyModal({
                   <MenuItem key={option.value}>
                     <button
                       onClick={() => setPolicyData(prev => ({ ...prev, repeat_max_times: option.value }))}
-                      className="group flex w-full items-center rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-200 data-focus:bg-blue-100 dark:data-focus:bg-blue-900"
+                      className="group flex w-full items-center rounded-lg px-3 py-2 text-xs sm:text-sm text-gray-700 dark:text-gray-200 data-focus:bg-blue-100 dark:data-focus:bg-blue-900"
                     >
                       {option.label}
                     </button>
@@ -698,11 +698,11 @@ export default function EscalationPolicyModal({
         </div>
 
                 {/* Footer */}
-                <div className="mt-6 flex justify-end gap-3 pt-6">
+                <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 pt-4 sm:pt-6 border-t border-gray-200 dark:border-gray-700">
                   <button
                     type="button"
                     onClick={onClose}
-                    className="inline-flex justify-center rounded-md bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors duration-200"
+                    className="inline-flex justify-center rounded-md bg-white dark:bg-gray-700 px-4 py-2 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors duration-200 border border-gray-300 dark:border-gray-600"
                   >
                     Cancel
                   </button>
@@ -710,15 +710,15 @@ export default function EscalationPolicyModal({
                     type="button"
                     onClick={(e) => handleSubmit(e)}
                     disabled={loading || loadingPolicyDetail}
-                    className={`inline-flex justify-center rounded-md px-6 py-2 text-sm font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 ${
-                      isEditMode 
-                        ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500' 
+                    className={`inline-flex justify-center rounded-md px-4 sm:px-6 py-2 text-xs sm:text-sm font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 ${
+                      isEditMode
+                        ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
                         : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
                     }`}
                   >
                     {loading ? (
                       <div className="flex items-center">
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <svg className="animate-spin -ml-1 mr-2 h-3 w-3 sm:h-4 sm:w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>

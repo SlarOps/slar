@@ -203,29 +203,29 @@ export default function IncidentDetailModal({
   if (!isOpen) return null;
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       size="5xl"
       scrollable={true}
       maxHeight="calc(90vh - 120px)"
     >
-      <div className="space-y-6">
+      <div className="space-y-4 md:space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col space-y-4">
           <div className="flex-1">
             {loading ? (
               <div className="animate-pulse">
-                <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
+                <div className="h-6 md:h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
                 <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
               </div>
             ) : incident ? (
               <>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white mb-2">
                   Incident #{incident.id.slice(-8)}
                 </h1>
-                
-                <div className="flex items-center space-x-3 mb-4">
+
+                <div className="flex items-center gap-2 flex-wrap mb-3 md:mb-4">
                   <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(incident.status)}`}>
                     {incident.status.toUpperCase()}
                   </span>
@@ -240,7 +240,7 @@ export default function IncidentDetailModal({
                 </div>
               </>
             ) : (
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">
                 Incident Details
               </h1>
             )}
@@ -248,28 +248,13 @@ export default function IncidentDetailModal({
 
           {/* Action Buttons */}
           {incident && (
-            <div className="flex space-x-2 ml-4">
+            <div className="flex flex-col sm:flex-row gap-2">
               {/* Ask AI Agent Button */}
               <Button
                 onClick={() => {
-                  // Store incident data in sessionStorage to pass to AI agent
-                  const incidentData = {
-                    id: incident.id,
-                    title: incident.title,
-                    description: incident.description,
-                    status: incident.status,
-                    severity: incident.severity,
-                    urgency: incident.urgency,
-                    service_name: incident.service_name,
-                    assigned_to_name: incident.assigned_to_name,
-                    created_at: incident.created_at,
-                    acknowledged_at: incident.acknowledged_at,
-                    resolved_at: incident.resolved_at
-                  };
-                  sessionStorage.setItem('attachedIncident', JSON.stringify(incidentData));
                   router.push('/ai-agent');
                 }}
-                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center space-x-2"
+                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center justify-center space-x-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -277,35 +262,37 @@ export default function IncidentDetailModal({
                 <span>Ask AI Agent</span>
               </Button>
 
-              {incident.status === 'triggered' && (
-                <Button
-                  onClick={() => handleAction('acknowledge')}
-                  disabled={actionLoading}
-                  className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                >
-                  {actionLoading ? 'Processing...' : 'Acknowledge'}
-                </Button>
-              )}
+              <div className="flex gap-2">
+                {incident.status === 'triggered' && (
+                  <Button
+                    onClick={() => handleAction('acknowledge')}
+                    disabled={actionLoading}
+                    className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  >
+                    {actionLoading ? 'Processing...' : 'Acknowledge'}
+                  </Button>
+                )}
 
-              {incident.status !== 'resolved' && (
-                <Button
-                  onClick={() => handleAction('resolve')}
-                  disabled={actionLoading}
-                  className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-                >
-                  {actionLoading ? 'Processing...' : 'Resolve'}
-                </Button>
-              )}
+                {incident.status !== 'resolved' && (
+                  <Button
+                    onClick={() => handleAction('resolve')}
+                    disabled={actionLoading}
+                    className="flex-1 sm:flex-none bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                  >
+                    {actionLoading ? 'Processing...' : 'Resolve'}
+                  </Button>
+                )}
 
-              {incident.status !== 'resolved' && (
-                <Button
-                  onClick={() => handleAction('escalate')}
-                  disabled={actionLoading}
-                  className="bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
-                >
-                  {actionLoading ? 'Processing...' : 'Escalate'}
-                </Button>
-              )}
+                {incident.status !== 'resolved' && (
+                  <Button
+                    onClick={() => handleAction('escalate')}
+                    disabled={actionLoading}
+                    className="flex-1 sm:flex-none bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
+                  >
+                    {actionLoading ? 'Processing...' : 'Escalate'}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </div>

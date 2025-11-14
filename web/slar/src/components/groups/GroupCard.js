@@ -125,38 +125,38 @@ export default function GroupCard({ group, activeTab, onEdit, onDelete, onToggle
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4 hover:shadow-md transition-shadow">
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full border ${getTypeColor(group.type)}`}>
+        <div className="flex-1 min-w-0 pr-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 mb-2 flex-wrap">
+            <span className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full border ${getTypeColor(group.type)}`}>
               {group.type}
             </span>
-            <div className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
-              group.is_active 
-                ? 'text-green-600 bg-green-100 dark:bg-green-900/30' 
+            <div className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full ${
+              group.is_active
+                ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
                 : 'text-gray-600 bg-gray-100 dark:bg-gray-900/30'
             }`}>
               {group.is_active ? 'Active' : 'Inactive'}
             </div>
             {group.visibility && (
-              <div className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full border ${getVisibilityColor(group.visibility)}`}>
+              <div className={`inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full border ${getVisibilityColor(group.visibility)}`}>
                 {getVisibilityIcon(group.visibility)}
-                {group.visibility}
+                <span className="hidden sm:inline">{group.visibility}</span>
               </div>
             )}
           </div>
-          
-          <h3 
-            className="text-lg font-semibold text-gray-900 dark:text-white mb-1 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 line-clamp-1"
+
+          <h3
+            className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 line-clamp-1"
             onClick={handleViewDetails}
           >
             {group.name}
           </h3>
-          
+
           {group.description && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
+            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
               {group.description}
             </p>
           )}
@@ -222,17 +222,17 @@ export default function GroupCard({ group, activeTab, onEdit, onDelete, onToggle
       </div>
 
       {/* Group Stats */}
-      <div className="grid grid-cols-2 gap-4 mb-3">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3">
         <div>
           <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Members</span>
-          <p className="text-lg font-semibold text-gray-900 dark:text-white">
+          <p className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
             {group.member_count || 0}
           </p>
         </div>
         {group.type === 'escalation' && (
           <div>
             <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Timeout</span>
-            <p className="text-lg font-semibold text-gray-900 dark:text-white">
+            <p className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
               {group.escalation_timeout ? `${Math.floor(group.escalation_timeout / 60)}m` : 'N/A'}
             </p>
           </div>
@@ -257,14 +257,14 @@ export default function GroupCard({ group, activeTab, onEdit, onDelete, onToggle
             {group.members.slice(0, 3).map((member, index) => (
               <div
                 key={member.user_id}
-                className="w-6 h-6 bg-blue-500 text-white text-xs rounded-full flex items-center justify-center"
+                className="w-6 h-6 sm:w-7 sm:h-7 bg-blue-500 text-white text-xs rounded-full flex items-center justify-center"
                 title={member.user_name || member.user_email}
               >
                 {(member.user_name || member.user_email || '?').charAt(0).toUpperCase()}
               </div>
             ))}
             {group.members.length > 3 && (
-              <div className="w-6 h-6 bg-gray-400 text-white text-xs rounded-full flex items-center justify-center">
+              <div className="w-6 h-6 sm:w-7 sm:h-7 bg-gray-400 text-white text-xs rounded-full flex items-center justify-center">
                 +{group.members.length - 3}
               </div>
             )}
@@ -273,10 +273,10 @@ export default function GroupCard({ group, activeTab, onEdit, onDelete, onToggle
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 pt-3 border-t border-gray-200 dark:border-gray-700">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs text-gray-500 dark:text-gray-400 pt-3 border-t border-gray-200 dark:border-gray-700">
         <span>Created {formatTimeAgo(group.created_at)}</span>
         {group.user_name && (
-          <span>by {group.user_name}</span>
+          <span className="truncate">by {group.user_name}</span>
         )}
       </div>
 

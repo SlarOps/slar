@@ -404,7 +404,7 @@ func (w *IncidentWorker) escalateToUser(incident db.Incident, userID string) boo
 			log.Printf("✅ Sent incident escalation notification to user %s", userID)
 		}
 	}
-	
+
 	return success
 }
 
@@ -451,20 +451,20 @@ func (w *IncidentWorker) escalateToUserWithNotification(incident db.Incident, us
 }
 
 // escalateToScheduler finds current on-call user in scheduler and assigns
+// This uses the effective_shifts view which automatically handles schedule overrides
 func (w *IncidentWorker) escalateToScheduler(incident db.Incident, schedulerID string) bool {
 	log.Printf("DEBUG: Escalating to scheduler %s for incident %s (policy: %s, group: %s)",
 		schedulerID, incident.ID, incident.EscalationPolicyID, incident.GroupID)
 
-	// Find current on-call user for this specific scheduler
+	// Find current on-call user using effective_shifts view
 	query := `
-		SELECT s.user_id
-		FROM shifts s
-		WHERE s.scheduler_id = $1
-		AND s.group_id = $2
-		AND s.is_active = true
-		AND s.start_time <= NOW()
-		AND s.end_time >= NOW()
-		ORDER BY s.start_time ASC
+		SELECT effective_user_id
+		FROM effective_shifts
+		WHERE scheduler_id = $1
+		AND group_id = $2
+		AND start_time <= NOW()
+		AND end_time >= NOW()
+		ORDER BY start_time ASC
 		LIMIT 1
 	`
 
@@ -479,7 +479,7 @@ func (w *IncidentWorker) escalateToScheduler(incident db.Incident, schedulerID s
 		return false
 	}
 
-	log.Printf("DEBUG: Found on-call user %s for scheduler %s", userID, schedulerID)
+	log.Printf("DEBUG: Found on-call user (effective) %s for scheduler %s", userID, schedulerID)
 
 	// Assign without sending assignment notification (we'll send escalation notification instead)
 	success := w.escalateToUserWithNotification(incident, userID, false)
@@ -496,16 +496,16 @@ func (w *IncidentWorker) escalateToScheduler(incident db.Incident, schedulerID s
 }
 
 // escalateToGroup assigns to current on-call user in group
+// This uses the effective_shifts view which automatically handles schedule overrides
 func (w *IncidentWorker) escalateToGroup(incident db.Incident, groupID string) bool {
-	// Find current on-call user for this group
+	// Find current on-call user using effective_shifts view
 	query := `
-		SELECT s.user_id
-		FROM shifts s
-		WHERE s.group_id = $1
-		AND s.is_active = true
-		AND s.start_time <= NOW()
-		AND s.end_time >= NOW()
-		ORDER BY s.start_time ASC
+		SELECT effective_user_id
+		FROM effective_shifts
+		WHERE group_id = $1
+		AND start_time <= NOW()
+		AND end_time >= NOW()
+		ORDER BY start_time ASC
 		LIMIT 1
 	`
 

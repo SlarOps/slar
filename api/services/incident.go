@@ -980,22 +980,22 @@ func (s *IncidentService) GetAssigneeFromEscalationPolicy(escalationPolicyID, gr
 }
 
 // getCurrentOnCallUserFromScheduler gets the current on-call user from a specific scheduler
+// This uses the effective_shifts view which automatically handles schedule overrides
 func (s *IncidentService) getCurrentOnCallUserFromScheduler(schedulerID, groupID string) (string, error) {
 	log.Printf("DEBUG: getCurrentOnCallUserFromScheduler called with schedulerID='%s', groupID='%s'", schedulerID, groupID)
 
 	query := `
-		SELECT s.user_id
-		FROM shifts s
-		WHERE s.scheduler_id = $1
-		AND s.group_id = $2
-		AND s.is_active = true
-		AND s.start_time <= NOW()
-		AND s.end_time >= NOW()
-		ORDER BY s.start_time ASC
+		SELECT effective_user_id
+		FROM effective_shifts
+		WHERE scheduler_id = $1
+		AND group_id = $2
+		AND start_time <= NOW()
+		AND end_time >= NOW()
+		ORDER BY start_time ASC
 		LIMIT 1
 	`
 
-	log.Printf("DEBUG: Querying shifts table for current on-call user in scheduler")
+	log.Printf("DEBUG: Querying effective_shifts view for current on-call user in scheduler")
 
 	var userID string
 	err := s.PG.QueryRow(query, schedulerID, groupID).Scan(&userID)
@@ -1004,30 +1004,30 @@ func (s *IncidentService) getCurrentOnCallUserFromScheduler(schedulerID, groupID
 			log.Printf("DEBUG: No current on-call user found for scheduler '%s' in group '%s'", schedulerID, groupID)
 			return "", nil // No one currently on-call for this scheduler
 		}
-		log.Printf("DEBUG: Database error querying shifts: %v", err)
+		log.Printf("DEBUG: Database error querying effective_shifts: %v", err)
 		return "", fmt.Errorf("failed to get current on-call user from scheduler: %w", err)
 	}
 
-	log.Printf("DEBUG: Found current on-call user '%s' for scheduler '%s'", userID, schedulerID)
+	log.Printf("DEBUG: Found current on-call user (effective) '%s' for scheduler '%s'", userID, schedulerID)
 	return userID, nil
 }
 
 // getCurrentOnCallUserFromGroup gets the current on-call user from the group
+// This uses the effective_shifts view which automatically handles schedule overrides
 func (s *IncidentService) getCurrentOnCallUserFromGroup(groupID string) (string, error) {
 	log.Printf("DEBUG: getCurrentOnCallUserFromGroup called with groupID='%s'", groupID)
 
 	query := `
-		SELECT s.user_id
-		FROM shifts s
-		WHERE s.group_id = $1
-		AND s.is_active = true
-		AND s.start_time <= NOW()
-		AND s.end_time >= NOW()
-		ORDER BY s.start_time ASC
+		SELECT effective_user_id
+		FROM effective_shifts
+		WHERE group_id = $1
+		AND start_time <= NOW()
+		AND end_time >= NOW()
+		ORDER BY start_time ASC
 		LIMIT 1
 	`
 
-	log.Printf("DEBUG: Querying shifts table for current on-call user in group")
+	log.Printf("DEBUG: Querying effective_shifts view for current on-call user in group")
 
 	var userID string
 	err := s.PG.QueryRow(query, groupID).Scan(&userID)
@@ -1036,11 +1036,11 @@ func (s *IncidentService) getCurrentOnCallUserFromGroup(groupID string) (string,
 			log.Printf("DEBUG: No current on-call user found for group '%s'", groupID)
 			return "", nil // No one currently on-call for this group
 		}
-		log.Printf("DEBUG: Database error querying group shifts: %v", err)
+		log.Printf("DEBUG: Database error querying effective_shifts: %v", err)
 		return "", fmt.Errorf("failed to get current on-call user from group: %w", err)
 	}
 
-	log.Printf("DEBUG: Found current on-call user '%s' for group '%s'", userID, groupID)
+	log.Printf("DEBUG: Found current on-call user (effective) '%s' for group '%s'", userID, groupID)
 	return userID, nil
 }
 

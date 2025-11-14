@@ -585,6 +585,89 @@ func (h *SchedulerHandler) GetSchedulerPerformanceStats(c *gin.Context) {
 	})
 }
 
+// UpdateSchedulerWithShifts updates a scheduler and its shifts
+// PUT /groups/{id}/schedulers/{scheduler_id}
+func (h *SchedulerHandler) UpdateSchedulerWithShifts(c *gin.Context) {
+	groupID := c.Param("id")
+	schedulerID := c.Param("scheduler_id")
+
+	log.Printf("🔄 UpdateSchedulerWithShifts called - GroupID: %s, SchedulerID: %s", groupID, schedulerID)
+
+	if groupID == "" || schedulerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Group ID and Scheduler ID are required"})
+		return
+	}
+
+	var req struct {
+		Scheduler db.CreateSchedulerRequest `json:"scheduler" binding:"required"`
+		Shifts    []db.CreateShiftRequest   `json:"shifts" binding:"required,min=1"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Get user ID from JWT token
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// Set default values for shifts
+	for i := range req.Shifts {
+		if req.Shifts[i].ShiftType == "" {
+			req.Shifts[i].ShiftType = "custom"
+		}
+		// SchedulerID will be used from the URL parameter
+	}
+
+	// OPTIMIZATION: Use optimized service with fallback
+	startTime := time.Now()
+
+	// Try optimized service first
+	scheduler, shifts, err := h.OptimizedSchedulerService.UpdateSchedulerWithShiftsOptimized(
+		schedulerID,
+		req.Scheduler,
+		req.Shifts,
+		userID.(string),
+	)
+
+	if err != nil {
+		log.Printf("⚠️  Optimized update failed, falling back to original service: %v", err)
+
+		// Fallback to original service
+		scheduler, shifts, err = h.SchedulerService.UpdateSchedulerWithShifts(
+			schedulerID,
+			req.Scheduler,
+			req.Shifts,
+			userID.(string),
+		)
+
+		if err != nil {
+			if err.Error() == "scheduler not found" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Scheduler not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update scheduler: " + err.Error()})
+			return
+		}
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("✅ Scheduler %s updated successfully with %d shifts in %v", schedulerID, len(shifts), duration)
+
+	c.JSON(http.StatusOK, gin.H{
+		"scheduler": scheduler,
+		"shifts":    shifts,
+		"message":   "Scheduler updated successfully",
+		"performance": gin.H{
+			"duration_ms": duration.Milliseconds(),
+		},
+	})
+}
+
 // BenchmarkSchedulerCreation compares performance between optimized and original services
 // POST /groups/{id}/schedulers/benchmark
 func (h *SchedulerHandler) BenchmarkSchedulerCreation(c *gin.Context) {

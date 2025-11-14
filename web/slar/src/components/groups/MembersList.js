@@ -93,9 +93,9 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
               <div className="px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600">
                 Available Members ({filteredMembers.length})
               </div>
-              {filteredMembers.map(member => (
+              {filteredMembers.map((member, idx) => (
                 <button
-                  key={member.user_id}
+                  key={member.user_id || member.id || `filtered-${idx}`}
                   onClick={() => addMember(member)}
                   className="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-600 flex items-center gap-3 border-b border-gray-100 dark:border-gray-600 last:border-b-0"
                 >
@@ -149,7 +149,7 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
         ) : (
           selectedMembers.map((member, index) => (
             <div
-              key={member.user_id}
+              key={member.user_id || member.id || `member-${index}`}
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={handleDragOver}

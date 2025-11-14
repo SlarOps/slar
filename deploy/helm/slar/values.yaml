@@ -7,8 +7,8 @@ replicaCount: 1
 
 # Default image settings
 image:
-  repository: ghcr.io/slarops/
-  pullPolicy: IfNotPresent
+  repository: 192.168.100.137:5000/
+  pullPolicy: Always
   tag: ""
 
 # Image pull secrets for private registries
@@ -66,6 +66,22 @@ ingress:
           pathType: ImplementationSpecific
   tls: []
 
+gloo:
+  enabled: false
+  serviceName: slar-kong
+  servicePort: 8000
+  useHttp2: false
+  gatewayLabels:
+    app.kubernetes.io/name: slar-kong
+    app.kubernetes.io/instance: slar-kong
+    app.kubernetes.io/component: kong
+  sslConfig:
+    secretName: slar-ssl-cert
+    namespace: slar
+  domains:
+    - slar.prod.gcp.k.datajet.io
+  routePrefix: "/webhook/*"
+
 # Default resource limits
 resources: {}
   # limits:
@@ -111,10 +127,9 @@ affinity: {}
 # Components configuration with persistent storage
 components:
   ai:
-    dockerEnabled: false
     replicas: 1
     image:
-      tag: latest
+      tag: 1.0.1
       name: slar-ai
       pullPolicy: Always
     service:
@@ -122,85 +137,97 @@ components:
       type: ClusterIP
       port: 8002
     env:
+      # Required environment variables
       - name: PORT
         value: "8002"
+      - name: HOST
+        value: "0.0.0.0"
+      - name: SUPABASE_URL
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-url
+      - name: SUPABASE_ANON_KEY
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-anon-key
+      - name: SUPABASE_SERVICE_ROLE_KEY
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-service-role-key
       - name: OPENAI_API_KEY
         valueFrom:
           secretKeyRef:
             name: slar-secrets
             key: openai-api-key
-      - name: DATA_STORE
-        value: "/data"
-      - name: HF_HOME
-        value: "/data/huggingface"
-      - name: TRANSFORMERS_CACHE
-        value: "/data/transformers"
-      - name: SENTENCE_TRANSFORMERS_HOME
-        value: "/data/sentence_transformers"
-      - name: API_BASE_URL
+
+      # Optional environment variables
+      - name: SLAR_API_URL
         value: "http://slar-api.slar:8080"
-      - name: TOKENIZERS_PARALLELISM
-        value: "false"
-      - name: ENABLE_KUBERNETES
-        value: "true"
+      - name: USER_WORKSPACES_DIR
+        value: "/app/workspaces"
       - name: ENABLE_CODE_EXECUTOR
         value: "false"
       - name: OPENAI_MODEL
         value: "gpt-4o"
-    # Persistent storage configuration
+      - name: CHROMA_COLLECTION_NAME
+        value: "autogen_docs"
+
+    # Resource limits
+    resources:
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      requests:
+        cpu: "2"
+        memory: "2Gi"
+    # Persistent storage configuration for user workspaces
     persistence:
       enabled: true
-      storageClass: ""  # Use default storage class, or specify like "gp2", "standard", etc.
+      storageClass: "" # Use default storage class, or specify like "gp2", "standard", etc.
       accessMode: ReadWriteOnce
-      size: 10Gi  # Adjust size based on your needs
-      mountPath: "/data"
+      size: 10Gi # Adjust size based on your needs
+      mountPath: "/app/workspaces"
+
+    # Persistent storage configuration for Claude data
+    claudePersistence:
+      enabled: true
+      storageClass: "" # Use default storage class
+      accessMode: ReadWriteOnce
+      size: 5Gi # Adjust size based on your needs
+      mountPath: "/root/.claude"
+
     # Volume mounts for the container
     volumeMounts:
-      - name: ai-data
-        mountPath: /data
-      - name: mcp-config
-        mountPath: /app/mcp_config.yaml
-        subPath: mcp_config.yaml
-        readOnly: true
+      - name: ai-workspaces
+        mountPath: /app/workspaces
+      - name: ai-claude
+        mountPath: /root/.claude
+
     # Volumes definition
     volumes:
-      - name: ai-data
+      - name: ai-workspaces
         persistentVolumeClaim:
-          claimName: "{{ include \"slar.componentFullname\" (dict \"root\" . \"name\" \"ai\") }}-data"
-      - name: mcp-config
-        configMap:
-          name: "{{ include \"slar.componentFullname\" (dict \"root\" . \"name\" \"ai\") }}-mcp-config"
-    # MCP Configuration
-    mcpConfig:
-      enabled: true
-      data: |
-        "slar.advanced": {
-          "mcpServers": [
-            {
-              "context7" : {
-                "url": "https://mcp.context7.com/mcp"
-              }
-            }
-          ]
-        }
+          claimName: '{{ include "slar.componentFullname" (dict "root" . "name" "ai") }}-workspaces'
+      - name: ai-claude
+        persistentVolumeClaim:
+          claimName: '{{ include "slar.componentFullname" (dict "root" . "name" "ai") }}-claude'
 
-  terminal:
-    image:
-      name: slar-ai-terminal
-      tag: latest
-      pullPolicy: Always
-    service:
+    # RBAC configuration for AI pod
+    rbac:
+      # Enable RBAC for AI pod to access Kubernetes resources
       enabled: true
-      type: ClusterIP
-      port: 8003
-    env:
-      - name: PORT
-        value: "8003"
+      # Additional custom resources to grant read access (optional)
+      # customResources:
+      #   - apiGroups: ["custom.io"]
+      #     resources: ["customresources"]
 
   api:
     image:
       name: slar-api
-      tag: latest
+      tag: 1.0.1
       pullPolicy: Always
     service:
       enabled: true
@@ -231,36 +258,18 @@ components:
             key: supabase-jwt-secret
       - name: SLAR_ENV
         value: "production"
-
-  worker:
-    image:
-      name: slar-api
-      tag: latest
-      pullPolicy: Always
-    service:
-      enabled: false
-    command: ["./worker"]
-    env:
-      - name: DATABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: database-url
-      - name: POLL_INTERVAL
-        value: "1"
-      - name: BATCH_SIZE
-        value: "10"
-      - name: MAX_RETRIES
-        value: "3"
-      - name: LOG_LEVEL
-        value: "DEBUG"
-      - name: LOG_FILE
-        value: "/app/worker.log"
+    ingress:
+      enabled: true
+      hosts:
+        - host: dev-api.slarhq.com
+          paths:
+            - path: /
+              pathType: Prefix
 
   slack-worker:
     image:
       name: slar-slack-worker
-      tag: latest
+      tag: 1.0.1
       pullPolicy: Always
     service:
       enabled: false
@@ -296,7 +305,7 @@ components:
   web:
     image:
       name: slar-web
-      tag: latest
+      tag: 1.0.1
       pullPolicy: Always
     service:
       enabled: true
@@ -318,7 +327,7 @@ components:
     ingress:
       enabled: true
       hosts:
-        - host: slarhq.com
+        - host: dev.slarhq.com
           paths:
             - path: /
               pathType: Prefix
@@ -328,7 +337,7 @@ components:
       pullPolicy: IfNotPresent
     service:
       enabled: true
-      type: LoadBalancer
+      type: ClusterIP
       port: 8000
       ports:
         - name: proxy

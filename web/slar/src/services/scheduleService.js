@@ -161,6 +161,62 @@ export const createSchedulerWorkflow = async ({
 };
 
 /**
+ * NEW: Update scheduler workflow
+ * @param {Object} params - Parameters object
+ * @param {Object} params.apiClient - API client instance
+ * @param {Object} params.session - Session object
+ * @param {string} params.groupId - Group ID
+ * @param {string} params.schedulerId - Scheduler ID to update
+ * @param {Object} params.scheduleData - Frontend schedule data
+ * @param {Function} params.onSuccess - Success callback
+ * @param {Function} params.onError - Error callback
+ * @returns {Promise<Object>} Updated scheduler with shifts
+ */
+export const updateSchedulerWorkflow = async ({
+  apiClient,
+  session,
+  groupId,
+  schedulerId,
+  scheduleData,
+  onSuccess,
+  onError
+}) => {
+  try {
+    // 1. Validate authentication
+    validateAuthentication(session);
+    
+    // 2. Set API token
+    apiClient.setToken(session.access_token);
+    
+    // 3. Debug log
+    console.log('🔍 Received scheduleData for scheduler update:', scheduleData);
+    
+    // 4. Transform frontend data to scheduler + shifts format
+    const schedulerData = transformToSchedulerFormat(scheduleData);
+    
+    // 5. Update scheduler with shifts via API
+    const result = await apiClient.updateSchedulerWithShifts(groupId, schedulerId, schedulerData);
+    
+    // 6. Handle success
+    if (onSuccess) {
+      onSuccess(result.scheduler, result.shifts);
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error('Failed to update scheduler:', error);
+    
+    // Handle error callback
+    if (onError) {
+      onError(error);
+    }
+    
+    throw error;
+  }
+};
+
+/**
  * UPDATED: Complete schedule creation workflow (now uses scheduler architecture)
  * @param {Object} params - Parameters object
  * @param {Object} params.apiClient - API client instance

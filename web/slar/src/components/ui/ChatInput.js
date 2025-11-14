@@ -5,11 +5,7 @@ const ChatInput = ({
   value,
   onChange,
   onSubmit,
-  isLoading = false,
   placeholder = "Type your message...",
-  loadingText = "Sending...",
-  attachedIncident = null,
-  onRemoveAttachment = null,
   statusColor = () => "bg-gray-100 text-gray-800",
   severityColor = () => "bg-gray-100 text-gray-800",
   currentMode = "agent",
@@ -17,76 +13,45 @@ const ChatInput = ({
   showModeSelector = true,
   onStop = null,
   sessionId = null,
-  isStreaming = false
+  onSessionReset = null,
+  isSending = false,
+  syncStatus = 'idle'
 }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!value.trim() || isLoading) return;
+    if (!value.trim()) return;
     onSubmit(e);
   };
 
   const handleStop = () => {
-    if (onStop && sessionId) {
-      onStop(sessionId);
+    if (onStop) {
+      onStop();
     }
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur">
-      <div className="px-4 py-4">
+    <div className="fixed inset-x-0 bottom-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur dark:border-gray-800 shadow-lg" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0px)' }}>
+      <div className="px-4 pb-3 sm:py-4">
         <div className="max-w-3xl mx-auto">
-          {/* Attached Incident Display */}
-          {attachedIncident && (
-            <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start space-x-3">
-                  <div className="flex-shrink-0">
-                    <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2 mb-1">
-                      <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                        Incident #{attachedIncident.id.slice(-8)}
-                      </span>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColor(attachedIncident.status)}`}>
-                        {attachedIncident.status.toUpperCase()}
-                      </span>
-                      {attachedIncident.severity && (
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${severityColor(attachedIncident.severity)}`}>
-                          {attachedIncident.severity.toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-blue-800 dark:text-blue-200 font-medium truncate">
-                      {attachedIncident.title}
-                    </p>
-                    <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">
-                      {attachedIncident.service_name && `Service: ${attachedIncident.service_name} • `}
-                      Created: {new Date(attachedIncident.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-                {onRemoveAttachment && (
-                  <button
-                    type="button"
-                    onClick={onRemoveAttachment}
-                    className="flex-shrink-0 text-blue-400 hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-100"
-                    title="Remove attachment"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
             <div className="flex items-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2">
+              {/* New Session Button */}
+              {sessionId && onSessionReset && (
+                <div className="flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={onSessionReset}
+                    className="p-2 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-300 dark:hover:bg-red-900/20 rounded-md transition-colors"
+                    title="Start new session"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
               {/* Mode Selector */}
               {showModeSelector && (
                 <Menu as="div" className="relative">
@@ -168,18 +133,17 @@ const ChatInput = ({
               <input
                 value={value}
                 onChange={onChange}
-                placeholder={isLoading ? loadingText : placeholder}
-                disabled={isLoading}
-                className="flex-1 bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none disabled:opacity-60"
+                placeholder={placeholder}
+                className="flex-1 bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
               />
 
-              {/* Stop Button - Only show when streaming */}
-              {isStreaming && onStop && (
-                <button 
-                  type="button" 
+              {/* Stop Button - Show when streaming/sending */}
+              {onStop && isSending && (
+                <button
+                  type="button"
                   onClick={handleStop}
-                  className="p-2 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200" 
-                  title="Stop"
+                  className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-200 dark:hover:bg-red-900/20 rounded-md transition-colors animate-pulse"
+                  title="Stop generating"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                     <rect x="6" y="6" width="12" height="12" rx="2"/>
@@ -190,26 +154,21 @@ const ChatInput = ({
               {/* Send Button */}
               <button
                 type="submit"
-                disabled={isLoading || value.trim().length === 0}
-                className="p-2 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40"
-                title="Send"
+                disabled={value.trim().length === 0}
+                className={`p-2 hover:opacity-80 disabled:opacity-40 transition-colors ${
+                  syncStatus === 'ready'
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-gray-400 dark:text-gray-500'
+                }`}
+                title={syncStatus === 'ready' ? 'Send' : 'Waiting for workspace...'}
               >
-                {isLoading ? (
-                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                ) : (
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 2L11 13"/>
-                    <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-                  </svg>
-                )}
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 2L11 13"/>
+                  <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
               </button>
             </div>
           </form>
-
-          {/* Footer Text */}
-          <p className="text-center text-xs text-gray-400 py-2">
-            {currentMode === 'agent' ? 'SLAR agent can make mistakes. Check important info.' : 'Simple chat mode - responses are generated locally.'}
-          </p>
         </div>
       </div>
     </div>

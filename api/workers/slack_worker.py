@@ -471,6 +471,25 @@ class SlackWorker:
         # Remove Datadog %%% markers and everything after "[![Metric Graph]"
         clean_text = description.strip().replace("%%%", "").split("[![Metric Graph]")[0].strip()
         image_urls = []
+
+        # Normalize whitespace: Replace multiple newlines with single space
+        # This prevents long vertical messages in Slack
+        import re
+        clean_text = re.sub(r'\n+', ' ', clean_text)  # Replace all \n with space
+        clean_text = re.sub(r'\s+', ' ', clean_text)  # Collapse multiple spaces
+        clean_text = clean_text.strip()
+
+        # Truncate long descriptions intelligently
+        max_length = 500  # Reduced from 2900 to keep messages compact
+        if len(clean_text) > max_length:
+            # Try to truncate at sentence boundary
+            sentences = clean_text[:max_length].split('. ')
+            if len(sentences) > 1:
+                clean_text = '. '.join(sentences[:-1]) + '.'
+            else:
+                # Fallback to word boundary
+                clean_text = clean_text[:max_length].rsplit(' ', 1)[0] + '...'
+
         return clean_text, image_urls
 
     def title_contains_status(self, title: str) -> bool:
@@ -494,7 +513,7 @@ class SlackWorker:
 
     
     def format_incident_blocks(self, incident_data: Dict, notification_msg: Dict, status_override: str = None) -> List[Dict]:
-        """Format incident as Slack top-level blocks (Block Kit)"""
+        """Format incident as Slack top-level blocks (Block Kit) - Compact version"""
 
         # Get incident details
         incident_message = SlackMessage(incident_data)
@@ -504,14 +523,15 @@ class SlackWorker:
         description, image_urls = self.clean_description_text(description)
         priority = incident_message.get_priority()
         status = (status_override or incident_data.get('status', 'triggered')).lower()
+        alert_status = incident_message.get_incident_alert_status()
 
         # Status display mapping
         status_display = {
-            'triggered': '[Triggered]',
-            'acknowledged': '[Acknowledged]',
-            'resolved': '[Resolved]',
-            'closed': '[Closed]',
-            'escalated': '[Escalated]'
+            'triggered': 'Triggered',
+            'acknowledged': 'Acknowledged',
+            'resolved': 'Resolved',
+            'closed': 'Closed',
+            'escalated': 'Escalated'
         }
 
         emoji_mapping = {
@@ -522,73 +542,83 @@ class SlackWorker:
             'escalated': ":zap:"
         }
 
-        status_emoji = emoji_mapping.get(status, ":question:")    
+        status_emoji = emoji_mapping.get(status, ":question:")
 
         # Check if title already contains status information
-        title_has_status = any(status_text in title for status_text in status_display.values())
+        title_has_status = any(f"[{s}]" in title.lower() for s in status_display.values())
 
         # Build header text with length limit (Slack header text must be < 151 characters)
-        # Only add status display if title doesn't already contain it
         if title_has_status:
             header_prefix = f"{status_emoji} "
         else:
-            header_prefix = f"{status_emoji} [{priority}] {status_display.get(status, '[Unknown]')} "
-        max_title_length = 150 - len(header_prefix)
+            header_prefix = f"{status_emoji} *{status_display.get(status, 'Unknown')}* • {priority} • "
 
+        max_title_length = 150 - len(header_prefix)
         if len(title) > max_title_length:
-            # Reserve space for "..." (3 characters)
             available_length = max_title_length - 3
-            # Truncate at word boundary for better readability
             truncated_title = title[:available_length].rsplit(' ', 1)[0] + "..."
-            # If word boundary truncation results in very short text, use character truncation
             if len(truncated_title) < available_length * 0.7:
                 truncated_title = title[:available_length] + "..."
         else:
             truncated_title = title
 
         url = f"{self.config['api_base_url']}/incidents/{incident_data['id']}"
-        header_text = f"*<{url}|{header_prefix}{truncated_title}>* - `{incident_short_id}`"
         routed_teams = self.get_routed_teams(incident_data)
 
-        # Build blocks (no attachment wrapper)
+        # Build compact blocks with better markdown formatting
         blocks: List[Dict] = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": header_text
+                    "text": f"{header_prefix}<{url}|{truncated_title}> `{incident_short_id}`"
                 }
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"```{incident_message.get_incident_alert_status()}```"  # Slack section text limit is 3000 chars
-                }
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"{description[:2900]}{'...' if len(description) > 2900 else ''}"  # Slack section text limit is 3000 chars
-                }
-            },
-            {
-                "type": "section",
-                "fields": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*Priority*\n{priority[:100]}"  # Limit field text to 100 chars
-                    },
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*Routed Teams*\n{routed_teams[:10]}"
-                    }
-                ]
             }
         ]
 
-        # Add image blocks if any images were found
+        # Only add alert status if it's not empty and meaningful
+        if alert_status and alert_status.strip() and alert_status.lower() not in ['unknown', 'none', 'n/a']:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Status:* {alert_status}"
+                }
+            })
+
+        # Add description with markdown formatting
+        if description and description.strip():
+            # Format description with proper markdown
+            formatted_desc = description.replace('\n\n', '\n').strip()
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f">{formatted_desc}"  # Quote format for better visual separation
+                }
+            })
+
+        # Compact metadata in single line
+        metadata_parts = []
+        if routed_teams:
+            metadata_parts.append(f"*Team:* {routed_teams}")
+
+        source = incident_data.get('source', '')
+        if source:
+            metadata_parts.append(f"*Source:* {source}")
+
+        if metadata_parts:
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": " • ".join(metadata_parts)
+                    }
+                ]
+            })
+
+        # Add image blocks if any (keep for graphs)
         for image_url in image_urls:
             blocks.append({
                 "type": "image",

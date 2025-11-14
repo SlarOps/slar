@@ -1,3 +1,56 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs (but keep .next/standalone and .next/static for Docker build)
+.next/*
+!.next/standalone
+!.next/static
+out
+dist
+build
+
+# Environment files
 .env
-.node_modules
-.next
+.env.*
+.env.local
+.env.*.local
+!.env.example
+
+# Testing
+coverage
+.nyc_output
+*.log
+
+# Development
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Documentation
+README.md
+CHANGELOG.md
+*.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

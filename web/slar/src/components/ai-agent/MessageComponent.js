@@ -1,24 +1,125 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Badge } from './Badge';
 import { statusColor, severityColor } from './utils';
 
+// Utility to summarize large tool execution results
+const summarizeToolResult = (content, maxLength = 300) => {
+  if (!content || typeof content !== 'string') return { summary: '', full: content, needsSummary: false };
+
+  // If content is short enough, no summary needed
+  if (content.length <= maxLength) {
+    return { summary: content, full: content, needsSummary: false };
+  }
+
+  // Try to parse as JSON to provide structured summary
+  try {
+    const parsed = JSON.parse(content);
+
+    // Handle objects with 'items' array (kubectl responses)
+    if (parsed.items && Array.isArray(parsed.items)) {
+      const itemCount = parsed.items.length;
+
+      // Get unique values for common fields
+      const getUnique = (field) => [...new Set(parsed.items.map(item => item[field]).filter(Boolean))];
+
+      const namespaces = getUnique('namespace');
+      const statuses = getUnique('status');
+      const kinds = getUnique('kind');
+
+      let summary = `**${itemCount} item${itemCount !== 1 ? 's' : ''} returned**\n\n`;
+
+      if (kinds.length > 0) summary += `**Type:** ${kinds.join(', ')}\n`;
+      if (namespaces.length > 0) summary += `**Namespace:** ${namespaces.join(', ')}\n`;
+      if (statuses.length > 0) summary += `**Status:** ${statuses.join(', ')}\n`;
+
+      return {
+        summary: summary + `\n*Click "Show Full Result" to see all ${itemCount} items*`,
+        full: content,
+        needsSummary: true,
+        count: itemCount,
+        itemType: 'items'
+      };
+    }
+
+    // Handle plain array responses
+    if (Array.isArray(parsed)) {
+      const itemCount = parsed.length;
+      const summary = `**${itemCount} item${itemCount !== 1 ? 's' : ''} returned**\n\n*Click "Show Full Result" to see all items*`;
+
+      return {
+        summary,
+        full: content,
+        needsSummary: true,
+        count: itemCount,
+        itemType: 'items'
+      };
+    }
+
+    // Handle object responses
+    if (typeof parsed === 'object' && parsed !== null) {
+      const keys = Object.keys(parsed);
+
+      // Show a few key fields if object is small-ish
+      if (keys.length <= 10) {
+        const preview = keys.slice(0, 3).map(k => {
+          const val = JSON.stringify(parsed[k]).substring(0, 30);
+          return `**${k}:** ${val}${JSON.stringify(parsed[k]).length > 30 ? '...' : ''}`;
+        }).join('\n');
+
+        return {
+          summary: `**Object with ${keys.length} field${keys.length !== 1 ? 's' : ''}**\n\n${preview}${keys.length > 3 ? `\n\n*... and ${keys.length - 3} more fields*` : ''}`,
+          full: content,
+          needsSummary: true,
+          count: keys.length,
+          itemType: 'fields'
+        };
+      }
+
+      return {
+        summary: `**Object with ${keys.length} fields**\n\n*Click "Show Full Result" to see all fields*`,
+        full: content,
+        needsSummary: true,
+        count: keys.length,
+        itemType: 'fields'
+      };
+    }
+  } catch (e) {
+    // Not JSON, treat as plain text
+  }
+
+  // For plain text, show first N characters
+  const truncated = content.substring(0, maxLength);
+  const lastNewline = truncated.lastIndexOf('\n');
+  const summary = lastNewline > maxLength * 0.5 ? truncated.substring(0, lastNewline) : truncated;
+
+  return {
+    summary: summary + '\n\n*...(truncated) - Click "Show Full Result" to see more*',
+    full: content,
+    needsSummary: true
+  };
+};
+
 // Memoized Message Component để tránh re-render không cần thiết
-const MessageComponent = memo(({ message }) => {
-  // Add streaming indicator with staggered animation
-  const StreamingIndicator = () => (
-    <span className="inline-flex items-center ml-2">
-      <span className="animate-pulse text-gray-400" style={{ animationDelay: '0ms' }}>●</span>
-      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '200ms' }}>●</span>
-      <span className="animate-pulse text-gray-400 ml-1" style={{ animationDelay: '400ms' }}>●</span>
-    </span>
-  );
+const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendingApprovalId }) => {
+  // State for expandable tool results and thought
+  const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
+  const [isThoughtExpanded, setIsThoughtExpanded] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // Memoize tool result summary
+  const toolResultData = useMemo(() => {
+    if ((message.type === 'tool_result' || message.type === 'ToolCallExecutionEvent') && message.content) {
+      return summarizeToolResult(message.content);
+    }
+    return null;
+  }, [message.type, message.content]);
 
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
-      <p className="my-3 leading-relaxed" {...props} />
+      <p className="my-2 leading-relaxed" {...props} />
     ),
     ul: ({ node, ...props }) => (
       <ul className="my-2 list-disc" {...props} />
@@ -33,7 +134,7 @@ const MessageComponent = memo(({ message }) => {
       <a className="underline hover:no-underline" {...props} />
     ),
     pre: ({ node, ...props }) => (
-      <pre className="my-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto" {...props} />
+      <pre className="my-2 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto" {...props} />
     ),
     h1: ({ node, ...props }) => (
       <h1 className="text-lg font-semibold mt-3 mb-2" {...props} />
@@ -45,7 +146,7 @@ const MessageComponent = memo(({ message }) => {
       <blockquote className="border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3 text-gray-600 dark:text-gray-300" {...props} />
     ),
     table: ({ node, ...props }) => (
-      <table className="my-3 w-full border-collapse" {...props} />
+      <table className="my-2 w-full border-collapse" {...props} />
     ),
     th: ({ node, ...props }) => (
       <th className="border px-2 py-1 text-left bg-gray-50 dark:bg-gray-800" {...props} />
@@ -55,239 +156,310 @@ const MessageComponent = memo(({ message }) => {
     ),
   }), []);
 
+  // Handle copy to clipboard
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  // Handle regenerate
+  const handleRegenerate = () => {
+    if (onRegenerate) {
+      onRegenerate(message);
+    }
+  };
+
+  // Render different message types
+  const renderMessageContent = () => {
+    // Tool use message
+    if (message.type === 'tool_use') {
+      try {
+        const toolData = typeof message.content === 'string' ? JSON.parse(message.content) : message.content;
+        return (
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 my-2">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Tool: {toolData.name}</span>
+            </div>
+            <pre className="text-xs bg-white dark:bg-gray-900 p-2 rounded overflow-x-auto">
+              {JSON.stringify(toolData.input, null, 2)}
+            </pre>
+          </div>
+        );
+      } catch (e) {
+        return <div className="text-sm italic text-gray-500">Tool execution...</div>;
+      }
+    }
+
+    // Tool result message with summary/expand
+    if (message.type === 'tool_result' && toolResultData) {
+      const displayContent = isToolResultExpanded ? toolResultData.full : toolResultData.summary;
+
+      return (
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 my-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm font-medium text-green-900 dark:text-green-100">Tool Result</span>
+            </div>
+            {toolResultData.needsSummary && (
+              <button
+                onClick={() => setIsToolResultExpanded(!isToolResultExpanded)}
+                className="text-xs text-green-600 dark:text-green-400 hover:underline"
+              >
+                {isToolResultExpanded ? 'Show Summary' : 'Show Full Result'}
+              </button>
+            )}
+          </div>
+          <div className="text-sm">
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={markdownComponents}
+            >
+              {displayContent}
+            </Markdown>
+          </div>
+        </div>
+      );
+    }
+
+    // Permission request message - inline approval UI
+    if (message.type === 'permission_request') {
+      // Parse tool info from message content
+      let toolName = 'Unknown Tool';
+      let toolInput = {};
+
+      try {
+        // Try to extract from message content structure
+        if (message.tool_name) {
+          toolName = message.tool_name;
+        }
+        if (message.tool_input) {
+          toolInput = message.tool_input;
+        }
+
+        // Also parse from markdown content if available
+        const match = message.content?.match(/Tool: `([^`]+)`/);
+        if (match) {
+          toolName = match[1];
+        }
+        const jsonMatch = message.content?.match(/```json\n([\s\S]*?)\n```/);
+        if (jsonMatch) {
+          toolInput = JSON.parse(jsonMatch[1]);
+        }
+      } catch (e) {
+        console.error('Error parsing tool info:', e);
+      }
+
+      const isPending = message.approval_id === pendingApprovalId;
+
+      return (
+        <div className="border border-gray-500/20 rounded-lg p-3 my-2">
+          <div className="">
+            {/* Warning icon */}
+            <div className="flex-shrink-0 mt-1">
+              
+            </div>
+
+            <div className="flex-1">
+              {/* Title */}
+              <h5 className="text-xs sm:text-sm font-semibold text-yellow-900 dark:text-yellow-100">
+                Approval Required
+              </h5>
+
+              {/* Description */}
+              {/* <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                Claude wants to execute the following tool. Please review and approve or deny.
+              </p> */}
+
+              {/* Tool details */}
+              <div className="bg-white dark:bg-gray-900 rounded-md p-2 sm:p-3 space-y-2">
+                <div>
+                  <div className="text-xs sm:text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 break-all">
+                    {toolName}
+                  </div>
+                </div>
+
+                {toolInput && Object.keys(toolInput).length > 0 && (
+                  <div>
+                    <pre className="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded overflow-x-auto">
+                      {JSON.stringify(toolInput, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              {isPending && onApprove && onDeny ? (
+                <div className="flex flex-row gap-2 mt-3">
+                  <button
+                    onClick={() => onDeny(message.approval_id)}
+                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors touch-manipulation"
+                  >
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span className="hidden sm:inline">Deny</span>
+                    <span className="sm:hidden">Deny</span>
+                  </button>
+                  <button
+                    onClick={() => onApprove(message.approval_id)}
+                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-transparent rounded-lg hover:bg-blue-700 transition-colors shadow-sm touch-manipulation"
+                  >
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span className="hidden sm:inline">Approve & Execute</span>
+                    <span className="sm:hidden">Approve</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 text-xs italic">
+                  {message.approved ? (
+                    <>
+                      <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-green-600 dark:text-green-400">Approved</span>
+                    </>
+                  ) : message.denied ? (
+                    <>
+                      <svg className="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-red-600 dark:text-red-400">Denied</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 text-gray-400 dark:text-gray-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-gray-500 dark:text-gray-400">Waiting for response...</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Interrupted message
+    if (message.type === 'interrupted') {
+      return (
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-3 my-2 text-orange-900 dark:text-orange-100">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10h6v4H9z" />
+            </svg>
+            <span className="text-sm font-medium">Task interrupted by user</span>
+          </div>
+        </div>
+      );
+    }
+
+    // Error message
+    if (message.type === 'error') {
+      return (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 my-2 text-red-900 dark:text-red-100">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-sm">{message.content}</span>
+          </div>
+        </div>
+      );
+    }
+
+    // Default text message
+    return (
+      <div className="relative">
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={markdownComponents}
+        >
+          {message.content}
+        </Markdown>
+      </div>
+    );
+  };
+
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block" : "block"} rounded-3xl px-4 text-md leading-relaxed ${
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${
           message.role === "user"
             ? "bg-gray-100 text-gray-800"
             : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
         }`}
       >
-        <div>
-          {message.role !== "user" ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge color="bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
-                {message.source}
-              </Badge>
-              {message.thought && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 italic">
-                  💭 {message.thought.substring(0, 40)}...
-                </span>
+        {/* Thought display - expandable */}
+        {message.role !== "user" && message.thought && (
+          <div className="mb-2 pt-2">
+            <div
+              onClick={() => setIsThoughtExpanded(!isThoughtExpanded)}
+              className="text-xs text-gray-500 dark:text-gray-400 italic hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
+            >
+              <span>{isThoughtExpanded ? message.thought : `${message.thought.substring(0, 60)}...`}</span>
+              {message.thought.length > 60 && (
+                <svg className={`w-3 h-3 transition-transform ${isThoughtExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               )}
             </div>
-          ) : null}
-        {message.type === 'MemoryQueryEvent' && (
-          <div className="mt-1">
-            <Badge color="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
-              🔍 Memory Query
-            </Badge>
-          </div>
-        )}
-        {message.type === 'ToolCallRequestEvent' && (
-          <div className="mt-1">
-            <Badge color="bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-              ⚡ Tool Call Request
-            </Badge>
-          </div>
-        )}
-        {message.type === 'ToolCallExecutionEvent' && (
-          <div className="mt-1">
-            <Badge color="bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300">
-              🔧 Tool Execution
-            </Badge>
-          </div>
-        )}
-        </div>
-        
-        {message.type === 'MemoryQueryEvent' && (
-          <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center gap-2 mb-2">
-              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-              <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                Knowledge Sources {message.originalContent && Array.isArray(message.originalContent) ? `(${message.originalContent.filter(item => item.metadata).length})` : ''}
-              </span>
-            </div>
-
-            {message.originalContent && Array.isArray(message.originalContent) && (
-              <div className="flex flex-wrap gap-2">
-                {message.originalContent.filter(item => item.metadata).map((item, index) => (
-                    <div key={index} className="flex items-center gap-2 text-sm p-2 bg-white dark:bg-gray-800 rounded border min-w-0 max-w-xs flex-shrink-0">
-                      {item.metadata.github_url ? (
-                        <>
-                          <svg className="w-4 h-4 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                          </svg>
-                          <div className="flex-1 min-w-0">
-                            <a
-                              href={item.metadata.github_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate block"
-                              title={item.metadata.github_url}
-                            >
-                              📄 {item.metadata.path || item.metadata.github_url.split('/').pop()}
-                            </a>
-                            <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {item.metadata.chunk_index !== undefined && (
-                                <span>Chunk #{item.metadata.chunk_index}</span>
-                              )}
-                              {item.metadata.score !== undefined && (
-                                <span>Relevance: {(item.metadata.score * 100).toFixed(1)}%</span>
-                              )}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4 text-gray-600 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-gray-700 dark:text-gray-300 font-medium truncate block">
-                              📄 {item.metadata.path || item.metadata.source}
-                            </span>
-                            <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {item.metadata.chunk_index !== undefined && (
-                                <span>Chunk #{item.metadata.chunk_index}</span>
-                              )}
-                              {item.metadata.score !== undefined && (
-                                <span>Relevance: {(item.metadata.score * 100).toFixed(1)}%</span>
-                              )}
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
-        {message.type === 'ToolCallRequestEvent' && (
-          <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                Tool Call Request
-              </span>
-            </div>
-            <div className="rounded-lg overflow-x-auto">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={markdownComponents}
-              >
-                {message.content}
-              </Markdown>
-            </div>
-          </div>
-        )}
-
-        {message.type === 'ToolCallExecutionEvent' && (
-          <div className="mt-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-sm font-medium text-green-800 dark:text-green-200">
-                Tool Execution Result
-              </span>
-            </div>
-            <div className="rounded-lg overflow-x-auto">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={markdownComponents}
-              >
-                {message.content}
-              </Markdown>
-            </div>
-          </div>
-        )}
-        
-        {message.type !== 'MemoryQueryEvent' && message.type !== 'ToolCallRequestEvent' && message.type !== 'ToolCallExecutionEvent' && (
-        <div className="relative">
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-            components={markdownComponents}
-          >
-            {message.content}
-          </Markdown>
-          {message.isStreaming && <StreamingIndicator />}
-        </div>
-        )}
+        {/* Message content */}
+        {renderMessageContent()}
       </div>
 
-      {Array.isArray(message.incidents) && message.incidents.length > 0 && (
-        <div className="mt-3 space-y-3">
-          {message.incidents.map((inc) => (
-            <div key={inc.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:bg-gray-50/60 dark:hover:bg-gray-800/60 cursor-pointer transition-colors">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-                    {inc.title || inc.name || `Incident ${inc.id}`}
-                  </div>
-                  {inc.description && (
-                    <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
-                      {inc.description}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <Badge color={statusColor(inc.status)}>{inc.status || "unknown"}</Badge>
-                  {(inc.severity || inc.urgency) && (
-                    <Badge color={severityColor(inc.severity || inc.urgency)}>
-                      {inc.severity || inc.urgency}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 flex flex-wrap gap-x-3 gap-y-1">
-                {inc.id && <span className="font-mono">#{inc.id.slice(0, 8)}</span>}
-                {(inc.service_name || inc.service) && (
-                  <span>Service: {inc.service_name || inc.service}</span>
-                )}
-                {inc.group && <span>Group: {inc.group}</span>}
-                {(inc.assigned_to_name || inc.assignee) && (
-                  <span>Assignee: {inc.assigned_to_name || inc.assignee}</span>
-                )}
-                {(inc.created_at || inc.updated_at || inc.updatedAt) && (
-                  <span>
-                    {inc.created_at ? `Created: ${new Date(inc.created_at).toLocaleDateString()}` :
-                     inc.updated_at ? `Updated: ${new Date(inc.updated_at).toLocaleDateString()}` :
-                     `Updated: ${inc.updatedAt}`}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {message.role !== "user" && (
-        <div className="mt-2 flex items-center gap-3 text-gray-400">
-          <button title="Like" className="hover:text-gray-600">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 9V5a3 3 0 00-3-3l-1 5-4 4v9h11l2-8-5-3z"/></svg>
+      {/* Action buttons - only for assistant messages */}
+      {message.role !== "user" && message.type !== 'permission_request' && (
+        <div className="mt-2 flex items-center text-gray-400">
+          <button
+            onClick={handleCopy}
+            title={copySuccess ? "Copied!" : "Copy"}
+            className="p-2 sm:p-1 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-manipulation"
+          >
+            {copySuccess ? (
+              <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+            )}
           </button>
-          <button title="Dislike" className="hover:text-gray-600">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 15v4a3 3 0 003 3l1-5 4-4V4H7L5 12l5 3z"/></svg>
-          </button>
-          <button title="Copy" className="hover:text-gray-600">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          </button>
-          <button title="Regenerate" className="hover:text-gray-600">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 10-3.51 7.06"/><path d="M21 12h-4"/></svg>
-          </button>
-          <button title="More" className="hover:text-gray-600">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-          </button>
+          {onRegenerate && (
+            <button
+              onClick={handleRegenerate}
+              title="Regenerate"
+              className="p-2 sm:p-1 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-manipulation"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 10-3.51 7.06"/>
+                <path d="M21 12h-4"/>
+              </svg>
+            </button>
+          )}
         </div>
       )}
     </div>

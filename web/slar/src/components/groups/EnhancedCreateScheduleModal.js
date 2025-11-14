@@ -5,19 +5,17 @@ import React, { useState, useEffect } from 'react';
 import RotationCard from './RotationCard';
 import MembersList from './MembersList';
 import SchedulePreview from './SchedulePreview';
-import { TIME_ZONES, DEFAULT_ROTATION } from './scheduleConstants';
+import { DEFAULT_ROTATION } from './scheduleConstants';
 
 export default function EnhancedCreateScheduleModal({ isOpen, onClose, members, groupId, session, onSubmit, existingSchedules = [] }) {
   const [formData, setFormData] = useState({
     name: '',
-    timeZone: 'UTC',
-    team: '',
     rotations: [],
     conditions: [],
     selectedMembers: []
   });
 
-  // Initialize with default rotation
+  // Initialize with 2 rotations: default and override
   useEffect(() => {
     if (isOpen && formData.rotations.length === 0) {
       const today = new Date();
@@ -31,29 +29,25 @@ export default function EnhancedCreateScheduleModal({ isOpen, onClose, members, 
           minute: '2-digit',
           second: '2-digit'
         })} am`,
-        rotations: [{
-          ...DEFAULT_ROTATION,
-          id: 1,
-          startDate: today.toISOString().split('T')[0],
-          startTime: '00:04'
-        }]
+        rotations: [
+          {
+            ...DEFAULT_ROTATION,
+            id: 1,
+            name: 'Default Rotation',
+            startDate: today.toISOString().split('T')[0],
+            startTime: '00:04'
+          },
+          {
+            ...DEFAULT_ROTATION,
+            id: 2,
+            name: 'Override Rotation',
+            startDate: today.toISOString().split('T')[0],
+            startTime: '00:04'
+          }
+        ]
       }));
     }
   }, [isOpen, formData.rotations.length]);
-
-  const addRotation = () => {
-    const newRotation = {
-      ...DEFAULT_ROTATION,
-      id: Date.now(),
-      name: `Rotation ${formData.rotations.length + 1}`,
-      startDate: new Date().toISOString().split('T')[0]
-    };
-    
-    setFormData(prev => ({
-      ...prev,
-      rotations: [...prev.rotations, newRotation]
-    }));
-  };
 
   const updateRotation = (id, updatedRotation) => {
     setFormData(prev => ({
@@ -77,13 +71,12 @@ export default function EnhancedCreateScheduleModal({ isOpen, onClose, members, 
     // Convert to API format with scheduler information
     const scheduleData = {
       name: formData.name,
-      time_zone: formData.timeZone,
       rotations: formData.rotations,
       members: formData.selectedMembers,
       // NEW: Scheduler information
-      schedulerName: formData.team || formData.name || 'default',
-      schedulerDisplayName: formData.team ? `${formData.team} Team` : `${formData.name} Team`,
-      description: `Scheduler for ${formData.team || formData.name}`,
+      schedulerName: formData.name || 'default',
+      schedulerDisplayName: formData.name,
+      description: `Scheduler for ${formData.name}`,
       rotationType: 'manual' // Default rotation type
     };
     
@@ -129,52 +122,12 @@ export default function EnhancedCreateScheduleModal({ isOpen, onClose, members, 
                 />
               </div>
 
-              {/* Schedule Time Zone */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Schedule Time Zone <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.timeZone}
-                  onChange={(e) => setFormData(prev => ({ ...prev, timeZone: e.target.value }))}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  {TIME_ZONES.map(tz => (
-                    <option key={tz.value} value={tz.value}>{tz.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Teams */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Teams
-                </label>
-                <select
-                  value={formData.team}
-                  onChange={(e) => setFormData(prev => ({ ...prev, team: e.target.value }))}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="">Datajet</option>
-                </select>
-              </div>
-
               {/* Schedule Rotations */}
               <div>
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4">
                   <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
                     Schedule Rotations
                   </label>
-                  <button
-                    type="button"
-                    onClick={addRotation}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                    Add
-                  </button>
                 </div>
                 
                 <div className="space-y-4">

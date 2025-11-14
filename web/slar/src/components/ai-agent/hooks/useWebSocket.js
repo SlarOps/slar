@@ -1,45 +1,40 @@
 import { useState, useRef, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
 export const useWebSocket = (session, setMessages, setIsSending) => {
   const [wsConnection, setWsConnection] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [sessionId, setSessionId] = useState(null);
+  const [pendingApproval, setPendingApproval] = useState(null);
   const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   useEffect(() => {
     const connectWebSocket = () => {
-      // Check if session and token are available
-      if (!session?.access_token) {
-        console.log("No access token available, skipping WebSocket connection");
-        setConnectionStatus("error");
-        return;
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+
+      // Generate or get session ID for reconnection support (UUID v4 format for Claude CLI compatibility)
+      let currentSessionId = localStorage.getItem('claude_session_id');
+      if (!currentSessionId) {
+        currentSessionId = uuidv4();
+        localStorage.setItem('claude_session_id', currentSessionId);
       }
 
-      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      
-      // Generate or get session ID for reconnection support
-      let currentSessionId = localStorage.getItem('ai_chat_session_id');
-      if (!currentSessionId) {
-        currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-        localStorage.setItem('ai_chat_session_id', currentSessionId);
-      }
-      
       // Update sessionId state
       setSessionId(currentSessionId);
-      
+
+      // Build WebSocket URL - Claude Agent API v1
       let wsUrl;
-      
       if (process.env.NEXT_PUBLIC_AI_WS_URL) {
-        // Use custom WS URL but ensure token and session_id are appended
-        const baseUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
-        const separator = baseUrl.includes('?') ? '&' : '?';
-        wsUrl = `${baseUrl}${separator}token=${session.access_token}&session_id=${currentSessionId}`;
+        wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
       } else {
-        // Use default URL with token and session_id
-        wsUrl = `${scheme}://${window.location.host}/ws/chat?token=${session.access_token}&session_id=${currentSessionId}`;
+        // Default to localhost:8002
+        wsUrl = `/ws/chat`;
       }
 
-      
+      console.log("Connecting to Claude Agent API:", wsUrl);
       setConnectionStatus("connecting");
 
       try {
@@ -47,148 +42,95 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
-          console.log("WebSocket connected");
+          console.log("WebSocket connected to Claude Agent API");
           setConnectionStatus("connected");
           setWsConnection(ws);
+          reconnectAttemptsRef.current = 0;
         };
 
         ws.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data);
+            // Handle both JSON and text messages from Claude Agent SDK
+            let data;
+            try {
+              data = JSON.parse(event.data);
+            } catch (e) {
+              // If parsing fails, treat as text message
+              setMessages((prev) => {
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+                  return [...prev.slice(0, -1), {
+                    ...lastMsg,
+                    content: (lastMsg.content || '') + event.data,
+                    isStreaming: true
+                  }];
+                }
+                return [...prev, {
+                  role: 'assistant',
+                  content: event.data,
+                  type: 'text',
+                  timestamp: new Date().toISOString(),
+                  isStreaming: true
+                }];
+              });
+              return;
+            }
+
             console.log("WebSocket message received:", data);
 
-            // Handle different message types based on the example
-            if (data.type === 'UserInputRequestedEvent') {
-              // Re-enable input when user input is requested
-              setIsSending(false);
-              // Don't add UserInputRequestedEvent to messages, just handle the state
-            } else if (data.type === 'error') {
-              // Display error message
+            // Handle different message types from Claude Agent API
+            if (data.type === 'ping') {
+              // Respond to heartbeat
+              ws.send(JSON.stringify({ type: 'pong', timestamp: data.timestamp }));
+              console.log('📡 Pong sent');
+            } else if (data.type === 'permission_request') {
+              // Tool approval request
+              console.log('🔧 Tool approval requested:', data.tool_name);
+              setPendingApproval({
+                tool_name: data.tool_name,
+                input_data: data.input_data,
+                suggestions: data.suggestions || []
+              });
               setMessages((prev) => [...prev, {
-                role: "assistant",
-                content: `Error: ${data.content}`
+                role: 'assistant',
+                content: `Requesting permission to use tool: **${data.tool_name}**\n\`\`\`json\n${JSON.stringify(data.input_data, null, 2)}\n\`\`\``,
+                type: 'permission_request',
+                timestamp: new Date().toISOString(),
+                isStreaming: false
+              }]);
+            } else if (data.type === 'error') {
+              // Error message
+              console.error('❌ Error from server:', data.error);
+              setMessages((prev) => [...prev, {
+                role: 'assistant',
+                content: `Error: ${data.error}`,
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                isStreaming: false
               }]);
               setIsSending(false);
-            } else if (data.content !== undefined && data.source) {
-              // Handle regular messages with content and source
-              // Handle content based on message type
-              let processedContent;
-              let originalContent = null;
-
-              if (data.type === 'MemoryQueryEvent') {
-                // For MemoryQueryEvent, preserve original content structure
-                originalContent = data.content;
-                processedContent = typeof data.content === 'string'
-                  ? data.content
-                  : JSON.stringify(data.content);
-              } else {
-                // For other messages, ensure content is a string
-                processedContent = typeof data.content === 'string'
-                  ? data.content
-                  : JSON.stringify(data.content);
-              }
-
-              // Check if this is a streaming message (has full_message_id and type is streaming chunk)
-              if (data.full_message_id && data.type === 'ModelClientStreamingChunkEvent') {
-                setMessages((prev) => {
-                  const lastMessage = prev[prev.length - 1];
-                  
-                  // If last message has same full_message_id, append content
-                  if (lastMessage && lastMessage.full_message_id === data.full_message_id) {
-                    console.log("Updating message", lastMessage.content, processedContent);
-                    console.log("Updating message", lastMessage.full_message_id, data.full_message_id);
-                    const updatedMessage = {
-                      ...lastMessage,
-                      content: lastMessage.content + processedContent,
-                      isStreaming: true, // Keep streaming until we get final TextMessage
-                      incidents: data.incidents || lastMessage.incidents,
-                      metadata: data.metadata || lastMessage.metadata,
-                      results: data.results || lastMessage.results
-                    };
-                    
-                    return [...prev.slice(0, -1), updatedMessage];
-                  } else {
-                    // New streaming message
-                    return [...prev, {
-                      role: "assistant",
-                      content: processedContent,
-                      originalContent: originalContent,
-                      source: data.source,
-                      type: data.type,
-                      metadata: data.metadata,
-                      results: data.results,
-                      incidents: data.incidents || null,
-                      full_message_id: data.full_message_id,
-                      isStreaming: true
-                    }];
-                  }
-                });
-                // Don't disable sending for streaming chunks
-              } else if (data.type === 'TextMessage' && data.id) {
-                // This is the final message - update the existing streaming message
-                setMessages((prev) => {
-                  const lastMessage = prev[prev.length - 1];
-                  
-                  // If the TextMessage's id matches the last message's full_message_id, update it
-                  if (lastMessage && lastMessage.full_message_id === data.id) {
-                    // Update the last message with final content and mark as complete
-                    const updatedMessage = {
-                      ...lastMessage,
-                      content: processedContent, // Use final complete content from TextMessage
-                      isStreaming: false, // Mark as complete
-                      incidents: data.incidents || lastMessage.incidents,
-                      metadata: data.metadata || lastMessage.metadata,
-                      results: data.results || lastMessage.results
-                    };
-                    
-                    return [...prev.slice(0, -1), updatedMessage];
-                  } else {
-                    // If no matching streaming message found, create new message
-                    return [...prev, {
-                      role: "assistant",
-                      content: processedContent,
-                      originalContent: originalContent,
-                      source: data.source,
-                      type: data.type,
-                      metadata: data.metadata,
-                      results: data.results,
-                      incidents: data.incidents || null,
-                      full_message_id: data.id, // Use TextMessage's id as full_message_id
-                      isStreaming: false
-                    }];
-                  }
-                });
-
-                // Disable sending when final message is received
-                if (data.source !== 'user') {
-                  setIsSending(false);
-                }
-              } else {
-                // Non-streaming message (original behavior)
-                setMessages((prev) => [...prev, {
-                  role: "assistant",
-                  content: processedContent,
-                  originalContent: originalContent, // Store original for MemoryQueryEvent
-                  source: data.source,
-                  type: data.type,
-                  metadata: data.metadata,
-                  results: data.results,
-                  incidents: data.incidents || null,
-                  isStreaming: false
-                }]);
-
-                // Only disable sending if this is an assistant message
-                if (data.source !== 'user') {
-                  setIsSending(false);
-                }
-              }
             } else {
-              // Fallback for other message types
-              console.log("Received message:", data);
-              setIsSending(false);
+              // Default: treat as text content (streaming from Claude)
+              setMessages((prev) => {
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+                  return [...prev.slice(0, -1), {
+                    ...lastMsg,
+                    content: (lastMsg.content || '') + (typeof data === 'string' ? data : JSON.stringify(data, null, 2)),
+                    isStreaming: true
+                  }];
+                }
+                return [...prev, {
+                  role: 'assistant',
+                  content: typeof data === 'string' ? data : JSON.stringify(data, null, 2),
+                  type: 'text',
+                  timestamp: new Date().toISOString(),
+                  isStreaming: true
+                }];
+              });
             }
           } catch (error) {
-            console.error("Error parsing WebSocket message:", error);
+            console.error("Error handling WebSocket message:", error);
             setIsSending(false);
           }
         };
@@ -197,19 +139,39 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
           console.log("WebSocket disconnected:", event.code, event.reason);
           setConnectionStatus("disconnected");
           setWsConnection(null);
-          // setMessages((prev) => [...prev, {
-          //   role: "assistant",
-          //   content: "Connection closed. Please refresh the page."
-          // }]);
 
-          // Attempt to reconnect after 3 seconds if not a normal closure
-          if (event.code !== 1000) {
-            setTimeout(() => {
-              if (wsRef.current?.readyState === WebSocket.CLOSED) {
-                connectWebSocket();
-              }
+          // Mark last message as not streaming
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+              return [...prev.slice(0, -1), { ...lastMsg, isStreaming: false }];
+            }
+            return prev;
+          });
+          setIsSending(false);
+
+          // Auto-reconnect if not a normal closure
+          if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
+            reconnectAttemptsRef.current += 1;
+            console.log(`Reconnecting... Attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              connectWebSocket();
             }, 3000);
+          } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+            console.error('Max reconnection attempts reached');
+            setMessages((prev) => [...prev, {
+              role: 'assistant',
+              content: 'Connection lost. Please refresh the page.',
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              isStreaming: false
+            }]);
           }
+        };
+
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setConnectionStatus("error");
         };
 
       } catch (error) {
@@ -222,6 +184,9 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
 
     // Cleanup on unmount
     return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       if (wsRef.current) {
         wsRef.current.close(1000, "Component unmounting");
         wsRef.current = null;
@@ -229,5 +194,5 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
     };
   }, [session, setMessages, setIsSending]);
 
-  return { wsConnection, connectionStatus, sessionId };
+  return { wsConnection, connectionStatus, sessionId, pendingApproval, setPendingApproval };
 };

@@ -150,9 +150,6 @@ export default function ServiceScheduleSelector({
 
       {/* Scope Preview */}
       <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-        <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Schedule Preview:
-        </div>
         <div className="text-sm text-gray-600 dark:text-gray-400">
           {selectedScope === 'group' && (
             <>

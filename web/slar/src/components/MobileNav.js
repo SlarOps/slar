@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '../contexts/AuthContext';
@@ -8,8 +8,22 @@ import { usePathname } from 'next/navigation';
 
 export default function MobileNav() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isVisible, setIsVisible] = useState(true);
   const { user, signOut, isAuthenticated } = useAuth();
   const pathname = usePathname();
+
+  // Listen to custom toggle event from AI agent page
+  useEffect(() => {
+    const handleToggleNav = (e) => {
+      setIsVisible(e.detail.visible);
+      if (!e.detail.visible) {
+        setIsOpen(false); // Close menu when hiding
+      }
+    };
+
+    window.addEventListener('toggleNavVisibility', handleToggleNav);
+    return () => window.removeEventListener('toggleNavVisibility', handleToggleNav);
+  }, []);
 
   // Don't show nav on auth pages
   if (pathname === '/login' || pathname === '/signup') {
@@ -22,7 +36,9 @@ export default function MobileNav() {
   };
 
   return (
-    <nav className="fixed inset-x-0 top-0 z-50 bg-background border-b border-black/10 dark:border-white/10">
+    <nav className={`fixed inset-x-0 top-0 z-50 bg-background border-b border-black/10 dark:border-white/10 transition-transform duration-300 ${
+      !isVisible ? '-translate-y-full' : 'translate-y-0'
+    }`}>
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2">
           <span className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-blue-800 bg-clip-text text-transparent">SLAR</span>
@@ -100,7 +116,7 @@ function NavLinks({ onNavigate }) {
   return (
     <>
       <Link href="/ai-agent" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Ai agent
+        Assistant
       </Link>
       <Link href="/incidents" onClick={onNavigate} className="text-sm font-medium hover:underline">
         Incidents
@@ -112,10 +128,7 @@ function NavLinks({ onNavigate }) {
         Uptime
       </Link>
       <Link href="/integrations" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Integrations
-      </Link>
-      <Link href="/runbooks" onClick={onNavigate} className="text-sm font-medium hover:underline">
-        Runbooks
+        Agent Config
       </Link>
     </>
   );

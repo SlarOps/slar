@@ -41,37 +41,38 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
   const hasActiveFilters = filters.search || filters.type || filters.status || filters.sort !== 'created_at_desc';
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
             Groups
           </h2>
-          <span className="inline-flex px-2 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-full">
+          <span className="inline-flex px-2 py-1 text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-full">
             {totalCount} total
           </span>
         </div>
-        
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={onCreateGroup}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Create Group
+            <span className="hidden xs:inline">Create Group</span>
+            <span className="xs:hidden">Create</span>
           </button>
-          
+
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="md:hidden flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+            className="md:hidden flex items-center gap-2 px-3 py-2 text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-lg transition-colors"
           >
-            <svg 
+            <svg
               className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-              fill="none" 
-              stroke="currentColor" 
+              fill="none"
+              stroke="currentColor"
               viewBox="0 0 24 24"
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -82,7 +83,7 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
       </div>
 
       {/* Filters */}
-      <div className={`${isExpanded ? 'block' : 'hidden'} md:block space-y-4`}>
+      <div className={`${isExpanded ? 'block' : 'hidden'} md:block space-y-3`}>
         {/* Search */}
         <div>
           <input
@@ -95,12 +96,12 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
         </div>
 
         {/* Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           {/* Type */}
           <select
             value={filters.type}
             onChange={(e) => handleFilterChange('type', e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             {GROUP_TYPE_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
@@ -113,7 +114,7 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
           <select
             value={filters.status}
             onChange={(e) => handleFilterChange('status', e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             {STATUS_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
@@ -126,7 +127,7 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
           <select
             value={filters.sort}
             onChange={(e) => handleFilterChange('sort', e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             {SORT_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
@@ -139,7 +140,7 @@ export default function GroupFilters({ filters, onFiltersChange, totalCount, onC
           {hasActiveFilters && (
             <button
               onClick={clearFilters}
-              className="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="px-3 py-2 text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               Clear Filters
             </button>
