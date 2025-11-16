@@ -13,27 +13,18 @@ import {
   ChevronRightIcon,
   LinkIcon
 } from '@heroicons/react/24/outline';
+import apiClient from '../../lib/api';
 import {
   fetchPluginsFromMarketplace,
-  downloadSkillFromMarketplace,
-  downloadEntireMarketplace,
   parseGitHubUrl,
-  fetchMarketplaceMetadata,
-  installPluginFromMarketplace
+  fetchMarketplaceMetadata
 } from '../../lib/marketplaceGithub';
 import {
   getInstalledPluginsFromDB,
-  loadMarketplaceFromDB,
-  loadAllMarketplacesFromDB
+  loadMarketplaceFromDB
 } from '../../lib/workspaceManager';
 
-const DEFAULT_MARKETPLACES = [
-  {
-    url: 'https://github.com/anthropics/skills',
-    branch: 'main',
-    name: 'anthropic-agent-skills'  // From marketplace.json
-  }
-];
+const DEFAULT_MARKETPLACES = [];
 
 export default function MarketplaceTab() {
   const { session } = useAuth();
@@ -231,34 +222,22 @@ export default function MarketplaceTab() {
     setDownloadProgress({ current: 1, total: 1, skillName: 'Fetching marketplace metadata...' });
 
     try {
-      // Get auth token
-      const authToken = `Bearer ${session?.access_token || ''}`;
-      if (!authToken || authToken === 'Bearer ') {
-        throw new Error('No authentication token available');
-      }
+      // Set auth token for API client
+      apiClient.setToken(session?.access_token);
 
       // Infer marketplace name from URL
       const inferredMarketplaceName = `${parsed.owner}-${parsed.repo}`;
 
-      // DOWNLOAD ENTIRE MARKETPLACE (ZIP + Metadata)
+      // DOWNLOAD ENTIRE MARKETPLACE (ZIP + Metadata) via API
       // Backend downloads ZIP from GitHub → Uploads to S3 → Saves metadata to PostgreSQL
-      // This ensures ZIP file exists for plugin installation
       setDownloadProgress({ current: 1, total: 2, skillName: 'Downloading marketplace from GitHub...' });
 
-      const downloadResult = await downloadEntireMarketplace(
-        parsed.owner,
-        parsed.repo,
-        'main',
-        authToken,
-        inferredMarketplaceName,
-        (progress) => {
-          setDownloadProgress({
-            current: 1,
-            total: 2,
-            skillName: progress.skillName || 'Downloading...'
-          });
-        }
-      );
+      const downloadResult = await apiClient.downloadMarketplace({
+        owner: parsed.owner,
+        repo: parsed.repo,
+        branch: 'main',
+        marketplace_name: inferredMarketplaceName
+      });
 
       if (!downloadResult.success) {
         throw new Error(downloadResult.error || 'Failed to download marketplace');
@@ -266,7 +245,7 @@ export default function MarketplaceTab() {
 
       console.log('[MarketplaceTab] ✅ Marketplace downloaded:', downloadResult.marketplace);
 
-      const marketplaceName = downloadResult.marketplaceName || inferredMarketplaceName;
+      const marketplaceName = downloadResult.marketplaceName || downloadResult.marketplace?.name || inferredMarketplaceName;
 
       // Add to marketplaces list
       const newMarketplace = {
@@ -333,26 +312,56 @@ export default function MarketplaceTab() {
     }
   };
 
-  const handleRemoveMarketplace = (marketplaceUrl) => {
-    if (!confirm('Remove this marketplace? Installed skills will remain.')) {
+  const handleRemoveMarketplace = async (marketplaceUrl) => {
+    if (!confirm('Delete this marketplace? This will remove all installed plugins and downloaded files. This action cannot be undone.')) {
       return;
     }
 
-    const updatedMarketplaces = marketplaces.filter(m => m.url !== marketplaceUrl);
-    setMarketplaces(updatedMarketplaces);
-    localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
+    // Find marketplace by URL
+    const marketplace = marketplaces.find(m => m.url === marketplaceUrl);
+    if (!marketplace || !marketplace.name) {
+      toast.error('Marketplace name not found. Cannot delete.');
+      return;
+    }
 
-    // Remove marketplace data
-    const newData = { ...marketplaceData };
-    delete newData[marketplaceUrl];
-    setMarketplaceData(newData);
+    const marketplaceName = marketplace.name;
+    let toastId;
 
-    // Remove from cached list
-    const newCached = new Set(cachedMarketplaces);
-    newCached.delete(marketplaceUrl);
-    setCachedMarketplaces(newCached);
+    try {
+      toastId = toast.loading(`Deleting marketplace "${marketplaceName}"...`);
 
-    toast.success('Marketplace removed');
+      // Set auth token and call async delete API (enqueues cleanup task to PGMQ)
+      apiClient.setToken(session?.access_token);
+      const result = await apiClient.deleteMarketplace(marketplaceName);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete marketplace');
+      }
+
+      console.log(`[MarketplaceTab] ✅ Marketplace deletion initiated (job_id: ${result.job_id})`);
+
+      // Update UI immediately (optimistic update)
+      const updatedMarketplaces = marketplaces.filter(m => m.url !== marketplaceUrl);
+      setMarketplaces(updatedMarketplaces);
+      localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
+
+      // Remove marketplace data from state
+      const newData = { ...marketplaceData };
+      delete newData[marketplaceUrl];
+      setMarketplaceData(newData);
+
+      // Remove from cached list
+      const newCached = new Set(cachedMarketplaces);
+      newCached.delete(marketplaceUrl);
+      setCachedMarketplaces(newCached);
+
+      if (toastId) toast.dismiss(toastId);
+      toast.success(`Marketplace "${marketplaceName}" deletion initiated. Cleanup running in background.`);
+    } catch (error) {
+      console.error('[MarketplaceTab] Failed to delete marketplace:', error);
+      if (toastId) toast.dismiss(toastId);
+      toast.error(`Failed to delete marketplace: ${error.message}`);
+    }
   };
 
   const handleRefreshMarketplaces = async () => {
@@ -397,15 +406,12 @@ export default function MarketplaceTab() {
         skillsCount: plugin.skills.length
       });
 
-      // Get auth token
-      const authToken = `Bearer ${session?.access_token || ''}`;
-
-      // Call simplified install endpoint (only updates database)
-      const installResult = await installPluginFromMarketplace(
+      // Set auth token and call install endpoint (only updates database)
+      apiClient.setToken(session?.access_token);
+      const installResult = await apiClient.installPlugin(
         plugin.marketplaceName,
         plugin.name,  // Plugin name (e.g., "document-skills", "example-skills")
-        plugin.version,
-        authToken
+        plugin.version
       );
 
       if (!installResult.success) {

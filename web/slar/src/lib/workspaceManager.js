@@ -1193,3 +1193,64 @@ export async function getWorkspaceInfo(userId) {
     return { success: false, error: error.message };
   }
 }
+
+/**
+ * Delete marketplace asynchronously via PGMQ
+ *
+ * This function calls the AI service DELETE endpoint which:
+ * 1. Marks marketplace as "deleting" in PostgreSQL
+ * 2. Enqueues cleanup task to PGMQ
+ * 3. Returns immediately (background worker handles actual cleanup)
+ *
+ * Background worker will:
+ * - Delete workspace directory
+ * - Delete ZIP files from S3
+ * - Delete installed plugins
+ * - Delete marketplace metadata
+ *
+ * @param {string} marketplaceName - Name of marketplace to delete
+ * @param {string} authToken - Bearer token for authentication
+ * @returns {Promise<Object>} - {success: bool, message: str, job_id: number}
+ */
+export async function deleteMarketplaceAsync(marketplaceName, authToken) {
+  try {
+    const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8002';
+
+    console.log(`[deleteMarketplaceAsync] Deleting marketplace: ${marketplaceName}`);
+
+    const response = await fetch(
+      `${AI_BASE_URL}/api/marketplace/${encodeURIComponent(marketplaceName)}?auth_token=${encodeURIComponent(authToken)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to delete marketplace');
+    }
+
+    console.log(`[deleteMarketplaceAsync] ✅ Marketplace deletion initiated (job_id: ${data.job_id})`);
+
+    return {
+      success: true,
+      message: data.message,
+      job_id: data.job_id,
+      status: data.status
+    };
+  } catch (error) {
+    console.error('[deleteMarketplaceAsync] Error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}

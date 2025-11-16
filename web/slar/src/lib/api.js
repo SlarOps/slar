@@ -1,6 +1,6 @@
 // API client for SLAR backend
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-const AI_BASE_URL =  process.env.NEXT_PUBLIC_AI_URL || '/ai'
+const AI_BASE_URL =  process.env.NEXT_PUBLIC_AI_API_URL || '/ai'
 
 class APIClient {
   constructor() {
@@ -894,6 +894,64 @@ class APIClient {
   async deleteSession(sessionId) {
     return this.request(`/sessions/${sessionId}`, {
       method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  // ===========================
+  // MARKETPLACE MANAGEMENT APIs
+  // ===========================
+
+  /**
+   * Delete marketplace asynchronously via PGMQ
+   *
+   * This marks the marketplace as "deleting" and enqueues a cleanup task.
+   * The background worker will handle actual cleanup (workspace, S3, DB).
+   *
+   * @param {string} marketplaceName - Name of marketplace to delete
+   * @returns {Promise<{success: boolean, message: string, job_id: number}>}
+   */
+  async deleteMarketplace(marketplaceName) {
+    return this.request(`/api/marketplace/${encodeURIComponent(marketplaceName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Download marketplace repository (ZIP + metadata)
+   *
+   * Downloads entire marketplace from GitHub and saves to:
+   * - Metadata → PostgreSQL (instant reads)
+   * - Files → S3 Storage (ZIP file)
+   *
+   * @param {object} data - {owner, repo, branch, marketplace_name}
+   * @returns {Promise<{success: boolean, marketplace: object}>}
+   */
+  async downloadMarketplace(data) {
+    return this.request('/api/marketplace/download-repo-zip', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Install plugin from marketplace
+   *
+   * Marks plugin as installed in PostgreSQL. When user opens AI agent,
+   * sync_bucket will unzip only installed plugins from marketplace ZIP.
+   *
+   * @param {string} marketplaceName - Marketplace name
+   * @param {string} pluginName - Plugin name to install
+   * @param {string} version - Plugin version
+   * @returns {Promise<{success: boolean, plugin: object}>}
+   */
+  async installPlugin(marketplaceName, pluginName, version = '1.0.0') {
+    return this.request('/api/marketplace/install-plugin', {
+      method: 'POST',
+      body: JSON.stringify({
+        marketplace_name: marketplaceName,
+        plugin_name: pluginName,
+        version: version
+      })
     }, this.aiBaseURL);
   }
 
