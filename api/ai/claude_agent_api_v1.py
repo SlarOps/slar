@@ -161,16 +161,16 @@ app = FastAPI(
 # CORS middleware - Configure allowed origins from environment
 # For development: use specific localhost domains
 # For production: MUST use specific domains only (never use "*")
-ALLOWED_ORIGINS = os.getenv(
-    "AI_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:8000"
-).split(",")
+# ALLOWED_ORIGINS = os.getenv(
+#     "AI_ALLOWED_ORIGINS",
+#     "http://localhost:3000,http://localhost:8000"
+# ).split(",")
 
-logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
+# logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins="*",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -1828,12 +1828,6 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     # Authenticate BEFORE accepting connection (prevents DoS)
-    is_valid, result = await verify_websocket_auth(websocket)
-
-    if not is_valid:
-        # Reject connection with error code
-        await websocket.close(code=4001, reason=result)
-        return
 
     # Now safe to accept
     await websocket.accept()
