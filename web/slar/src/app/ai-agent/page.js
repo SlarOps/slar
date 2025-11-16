@@ -47,7 +47,7 @@ export default function AIAgentPage() {
     approveTool,
     denyTool,
     connect: connectWebSocket,
-  } = useClaudeWebSocket(authToken, { autoConnect: false });
+  } = useClaudeWebSocket(authToken, { autoConnect: true });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {

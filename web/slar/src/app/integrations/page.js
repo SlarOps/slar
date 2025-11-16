@@ -45,7 +45,7 @@ export default function IntegrationsPage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen dark:bg-gray-900">
       <div className="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
         {/* Header */}
         <div className="mb-4 sm:mb-6 md:mb-8">

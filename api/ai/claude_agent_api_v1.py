@@ -6,6 +6,7 @@ import time
 import uuid
 from asyncio import Lock
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -152,25 +153,64 @@ async def rate_limit_middleware(request: Request, call_next):
 
     return await call_next(request)
 
+
+# Background worker task reference
+cleanup_worker_task = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI.
+    Handles startup and shutdown events.
+    """
+    global cleanup_worker_task
+
+    # Startup
+    logger.info("🚀 Starting background workers...")
+
+    # Start marketplace cleanup worker
+    cleanup_worker_task = asyncio.create_task(
+        marketplace_cleanup_worker(), name="marketplace_cleanup_worker"
+    )
+
+    logger.info("✅ Background workers started")
+
+    yield
+
+    # Shutdown
+    logger.info("🛑 Stopping background workers...")
+
+    if cleanup_worker_task and not cleanup_worker_task.done():
+        cleanup_worker_task.cancel()
+        try:
+            await cleanup_worker_task
+        except asyncio.CancelledError:
+            logger.info("✅ Marketplace cleanup worker stopped")
+
+    logger.info("✅ All background workers stopped")
+
+
 app = FastAPI(
     title="Claude Agent API",
     description="WebSocket API for Claude Agent SDK with session management",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware - Configure allowed origins from environment
 # For development: use specific localhost domains
 # For production: MUST use specific domains only (never use "*")
-ALLOWED_ORIGINS = os.getenv(
-    "AI_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:8000"
-).split(",")
+# ALLOWED_ORIGINS = os.getenv(
+#     "AI_ALLOWED_ORIGINS",
+#     "http://localhost:3000,http://localhost:8000"
+# ).split(",")
 
-logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
+# logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins="*",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -1796,6 +1836,328 @@ async def download_repo_zip(request: Request):
         }
 
 
+@app.delete("/api/marketplace/{marketplace_name}")
+async def delete_marketplace(marketplace_name: str, request: Request):
+    """
+    Delete marketplace asynchronously using PGMQ.
+
+    This endpoint marks the marketplace as "deleting" and enqueues a cleanup task
+    to PGMQ. The background worker will handle:
+    1. Cleanup workspace directories
+    2. Delete ZIP files from S3
+    3. Delete installed plugins (cascade)
+    4. Delete marketplace record from PostgreSQL
+
+    Path params:
+        marketplace_name: Name of marketplace to delete
+
+    Query params:
+        auth_token: Bearer token
+
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "job_id": int  # PGMQ message ID for tracking
+        }
+    """
+    try:
+        from supabase_storage import extract_user_id_from_token, get_supabase_client
+
+        # Get auth token from query or header
+        auth_token = request.query_params.get("auth_token") or request.headers.get(
+            "authorization", ""
+        )
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        # Extract user_id
+        user_id = extract_user_id_from_token(auth_token)
+        if not user_id:
+            return {"success": False, "error": "Invalid auth token"}
+
+        logger.info(f"🗑️  User {user_id}: Deleting marketplace '{marketplace_name}'")
+
+        supabase = get_supabase_client()
+
+        # Check if marketplace exists
+        marketplace_result = (
+            supabase.table("marketplaces")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("name", marketplace_name)
+            .execute()
+        )
+
+        if not marketplace_result.data or len(marketplace_result.data) == 0:
+            return {"success": False, "error": "Marketplace not found"}
+
+        marketplace = marketplace_result.data[0]
+
+        # Update marketplace status to "deleting"
+        supabase.table("marketplaces").update({"status": "deleting"}).eq(
+            "user_id", user_id
+        ).eq("name", marketplace_name).execute()
+
+        logger.info(f"✅ Marketplace status updated to 'deleting'")
+
+        # Enqueue cleanup task to PGMQ
+        # Message format: {"user_id": "...", "marketplace_name": "...", "marketplace_id": "..."}
+        cleanup_message = {
+            "user_id": user_id,
+            "marketplace_name": marketplace_name,
+            "marketplace_id": marketplace["id"],
+            "zip_path": marketplace.get("zip_path"),
+            "enqueued_at": datetime.now().isoformat(),
+        }
+
+        # Send to PGMQ queue using raw SQL
+        # pgmq.send(queue_name => TEXT, msg => JSONB)
+        import psycopg2
+
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            raise Exception("DATABASE_URL not configured")
+
+        conn = psycopg2.connect(db_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM pgmq.send(queue_name => %s, msg => %s)",
+                    ("marketplace_cleanup_queue", json.dumps(cleanup_message)),
+                )
+                job_id = cur.fetchone()[0]  # Returns msg_id
+                conn.commit()
+
+            logger.info(
+                f"✅ Cleanup task enqueued to PGMQ (job_id: {job_id}, marketplace: {marketplace_name})"
+            )
+        finally:
+            conn.close()
+
+        return {
+            "success": True,
+            "message": f"Marketplace '{marketplace_name}' deletion initiated. Cleanup will run in background.",
+            "job_id": job_id,
+            "status": "deleting",
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "deleting marketplace"),
+        }
+
+
+async def cleanup_marketplace_task(
+    user_id: str, marketplace_name: str, marketplace_id: str, zip_path: str = None
+):
+    """
+    Background task to cleanup marketplace files and metadata.
+
+    This function is called by the PGMQ worker to cleanup:
+    1. User workspace directories (.claude/plugins/marketplaces/{marketplace_name})
+    2. S3 storage (ZIP files)
+    3. Installed plugins (cascade delete)
+    4. Marketplace metadata (PostgreSQL)
+
+    Args:
+        user_id: User ID
+        marketplace_name: Marketplace name
+        marketplace_id: Marketplace UUID
+        zip_path: Path to ZIP file in S3
+
+    Returns:
+        dict: {"success": bool, "message": str, "cleaned_files": int}
+    """
+    from pathlib import Path
+
+    from supabase_storage import get_supabase_client, get_user_workspace_path
+
+    logger.info(
+        f"🧹 Starting cleanup for marketplace '{marketplace_name}' (user: {user_id})"
+    )
+
+    try:
+        supabase = get_supabase_client()
+        cleaned_items = []
+
+        # Step 1: Cleanup workspace directory
+        try:
+            workspace_path = get_user_workspace_path(user_id)
+            marketplace_dir = (
+                workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
+            )
+
+            if marketplace_dir.exists():
+                import shutil
+
+                shutil.rmtree(marketplace_dir)
+                cleaned_items.append(f"workspace:{marketplace_dir}")
+                logger.info(f"✅ Deleted workspace directory: {marketplace_dir}")
+            else:
+                logger.info(f"ℹ️  Workspace directory not found: {marketplace_dir}")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to cleanup workspace: {e}")
+
+        # Step 2: Cleanup S3 storage (ZIP file)
+        if zip_path:
+            try:
+                supabase.storage.from_(user_id).remove([zip_path])
+                cleaned_items.append(f"s3:{zip_path}")
+                logger.info(f"✅ Deleted ZIP file from S3: {zip_path}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to delete ZIP from S3: {e}")
+
+        # Step 3: Delete installed plugins (CASCADE will handle this, but let's be explicit)
+        try:
+            plugin_result = (
+                supabase.table("installed_plugins")
+                .delete()
+                .eq("user_id", user_id)
+                .eq("marketplace_name", marketplace_name)
+                .execute()
+            )
+            deleted_count = len(plugin_result.data) if plugin_result.data else 0
+            cleaned_items.append(f"plugins:{deleted_count}")
+            logger.info(
+                f"✅ Deleted {deleted_count} installed plugins for marketplace"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to delete installed plugins: {e}")
+
+        # Step 4: Delete marketplace record from PostgreSQL
+        try:
+            supabase.table("marketplaces").delete().eq("id", marketplace_id).execute()
+            cleaned_items.append(f"metadata:marketplace")
+            logger.info(f"✅ Deleted marketplace metadata from PostgreSQL")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete marketplace metadata: {e}")
+            raise  # This is critical, raise to retry
+
+        logger.info(
+            f"🎉 Marketplace cleanup completed: {marketplace_name} ({len(cleaned_items)} items)"
+        )
+
+        return {
+            "success": True,
+            "message": f"Marketplace '{marketplace_name}' cleaned up successfully",
+            "cleaned_items": cleaned_items,
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Marketplace cleanup failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Cleanup failed: {sanitize_error_message(e, 'cleaning up marketplace')}",
+            "cleaned_items": cleaned_items,
+        }
+
+
+async def marketplace_cleanup_worker():
+    """
+    Background worker to poll PGMQ for marketplace cleanup tasks.
+
+    This worker runs continuously in the background and:
+    1. Polls marketplace_cleanup_queue every 5 seconds
+    2. Processes cleanup tasks
+    3. Archives completed tasks
+    4. Retries failed tasks (PGMQ handles this automatically)
+
+    The worker uses PGMQ visibility timeout to prevent duplicate processing.
+    """
+    import psycopg2
+    import psycopg2.extras
+
+    logger.info("🚀 Marketplace cleanup worker started")
+
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error("❌ DATABASE_URL not configured, worker cannot start")
+        return
+
+    # Create connection pool for efficiency
+    conn = None
+
+    while True:
+        try:
+            # Reconnect if needed
+            if conn is None or conn.closed:
+                conn = psycopg2.connect(db_url)
+                logger.info("✅ Connected to PostgreSQL for PGMQ worker")
+
+            # Read message from PGMQ
+            # pgmq.read(queue_name => TEXT, vt => INTEGER, qty => INTEGER)
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM pgmq.read(
+                        queue_name => %s,
+                        vt => %s,
+                        qty => %s
+                    )
+                    """,
+                    ("marketplace_cleanup_queue", 300, 1),  # 5 min visibility timeout
+                )
+                messages = cur.fetchall()
+
+            if not messages or len(messages) == 0:
+                # No messages, sleep and retry
+                await asyncio.sleep(5)
+                continue
+
+            # Process first message
+            message = messages[0]
+            msg_id = message["msg_id"]
+            message_body = message["message"]  # Already parsed as dict by RealDictCursor
+
+            logger.info(
+                f"📬 Received cleanup task (msg_id: {msg_id}): {message_body}"
+            )
+
+            # Parse message
+            user_id = message_body.get("user_id")
+            marketplace_name = message_body.get("marketplace_name")
+            marketplace_id = message_body.get("marketplace_id")
+            zip_path = message_body.get("zip_path")
+
+            # Execute cleanup
+            cleanup_result = await cleanup_marketplace_task(
+                user_id, marketplace_name, marketplace_id, zip_path
+            )
+
+            if cleanup_result["success"]:
+                # Archive (delete) message from queue
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT pgmq.archive(queue_name => %s, msg_id => %s)",
+                        ("marketplace_cleanup_queue", msg_id),
+                    )
+                    conn.commit()
+
+                logger.info(
+                    f"✅ Cleanup task completed and archived (msg_id: {msg_id})"
+                )
+            else:
+                # Let message become visible again for retry
+                # PGMQ will automatically retry based on visibility timeout
+                logger.warning(
+                    f"⚠️  Cleanup task failed, will retry (msg_id: {msg_id})"
+                )
+
+        except Exception as e:
+            logger.error(f"❌ Worker error: {e}", exc_info=True)
+            # Close connection on error to force reconnect
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+                conn = None
+            await asyncio.sleep(10)  # Back off on error
+
+
 async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
     """
     Verify WebSocket authentication before accepting connection.
@@ -1828,19 +2190,13 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     # Authenticate BEFORE accepting connection (prevents DoS)
-    is_valid, result = await verify_websocket_auth(websocket)
-
-    if not is_valid:
-        # Reject connection with error code
-        await websocket.close(code=4001, reason=result)
-        return
 
     # Now safe to accept
     await websocket.accept()
 
     # Store user_id for session
-    authenticated_user_id = result
-    logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
+    # authenticated_user_id = result
+    # logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
 
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)

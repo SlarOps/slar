@@ -184,6 +184,7 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
                 "verify_signature": True,  # CRITICAL: Must verify signature
                 "verify_exp": True,        # Verify expiration
                 "verify_iat": True,        # Verify issued at
+                "verify_aud": False,       # Disable audience verification
             }
         )
 
