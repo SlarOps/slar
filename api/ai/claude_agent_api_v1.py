@@ -583,7 +583,7 @@ async def sync_bucket(request: Request):
         from supabase_storage import extract_user_id_from_token, unzip_installed_plugins
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
 
         if not auth_token:
             logger.warning("⚠️  No auth token provided for bucket sync")
@@ -677,7 +677,7 @@ async def sync_mcp_config(request: Request):
     """
     try:
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
 
         if not auth_token:
             logger.warning("⚠️  No auth token provided for sync")
@@ -821,7 +821,7 @@ async def create_mcp_server(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         server_name = body.get("server_name")
         server_type = body.get(
             "server_type", "stdio"
@@ -1038,7 +1038,7 @@ async def update_memory(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         content = body.get("content", "")
 
         if not auth_token:
@@ -1141,7 +1141,7 @@ async def sync_skills(request: Request):
     """
     try:
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
 
         if not auth_token:
             logger.warning("⚠️  No auth token provided for skill sync")
@@ -1224,7 +1224,7 @@ async def install_plugin_from_marketplace(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         marketplace_name = body.get("marketplace_name")
         plugin_name = body.get("plugin_name")
         version = body.get("version", "1.0.0")
@@ -1392,7 +1392,7 @@ async def install_plugin(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         plugin = body.get("plugin", {})
 
         if not auth_token:
@@ -1546,7 +1546,7 @@ async def fetch_marketplace_metadata(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         owner = body.get("owner")
         repo = body.get("repo")
         branch = body.get("branch", "main")
@@ -1700,7 +1700,7 @@ async def download_repo_zip(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         owner = body.get("owner")
         repo = body.get("repo")
         branch = body.get("branch", "main")

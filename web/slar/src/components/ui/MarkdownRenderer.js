@@ -16,16 +16,16 @@ import 'highlight.js/styles/github.css';
  * @param {string} size - Size variant: 'sm', 'base', 'lg' (default: 'base')
  * @param {boolean} removePercents - Whether to remove %%% markers (default: true)
  */
-export default function MarkdownRenderer({ 
-  content, 
-  className = '', 
+export default function MarkdownRenderer({
+  content,
+  className = '',
   size = 'base',
-  removePercents = true 
+  removePercents = true
 }) {
   if (!content) return null;
 
   // Remove %%% markers from content (common in Datadog alerts)
-  const processedContent = removePercents 
+  const processedContent = removePercents
     ? content.replace(/^%%%\s*/gm, '').replace(/\s*%%%$/gm, '')
     : content;
 
@@ -33,48 +33,48 @@ export default function MarkdownRenderer({
   const sizeConfig = {
     sm: {
       prose: 'prose-sm',
-      p: 'my-1 leading-relaxed',
-      ul: 'my-1 list-disc pl-4',
-      ol: 'my-1 list-decimal pl-4',
+      p: 'my-1 leading-relaxed break-words',
+      ul: 'my-1 list-disc pl-4 break-words',
+      ol: 'my-1 list-decimal pl-4 break-words',
       li: 'my-0.5',
-      pre: 'my-2 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-2 text-xs',
-      code: 'bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs',
-      h1: 'text-sm font-semibold mt-2 mb-1',
-      h2: 'text-sm font-semibold mt-2 mb-1',
-      h3: 'text-xs font-semibold mt-1 mb-0.5',
-      blockquote: 'border-l-2 border-gray-300 dark:border-gray-700 pl-2 my-2',
+      pre: 'my-2 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-2 text-xs max-w-full',
+      code: 'bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs break-all',
+      h1: 'text-sm font-semibold mt-2 mb-1 break-words',
+      h2: 'text-sm font-semibold mt-2 mb-1 break-words',
+      h3: 'text-xs font-semibold mt-1 mb-0.5 break-words',
+      blockquote: 'border-l-2 border-gray-300 dark:border-gray-700 pl-2 my-2 break-words',
       table: 'my-2 w-full border-collapse text-xs',
       th: 'border px-1 py-0.5 text-left bg-gray-50 dark:bg-gray-800',
       td: 'border px-1 py-0.5 align-top',
     },
     base: {
       prose: 'prose-sm',
-      p: 'my-2 leading-relaxed',
-      ul: 'my-2 list-disc pl-5',
-      ol: 'my-2 list-decimal pl-5',
+      p: 'my-2 leading-relaxed break-words',
+      ul: 'my-2 list-disc pl-5 break-words',
+      ol: 'my-2 list-decimal pl-5 break-words',
       li: 'my-1',
-      pre: 'my-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-3',
-      code: 'bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs',
-      h1: 'text-lg font-semibold mt-3 mb-2',
-      h2: 'text-base font-semibold mt-3 mb-2',
-      h3: 'text-sm font-semibold mt-2 mb-1',
-      blockquote: 'border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3',
+      pre: 'my-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-3 max-w-full',
+      code: 'bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs break-all',
+      h1: 'text-lg font-semibold mt-3 mb-2 break-words',
+      h2: 'text-base font-semibold mt-3 mb-2 break-words',
+      h3: 'text-sm font-semibold mt-2 mb-1 break-words',
+      blockquote: 'border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3 break-words',
       table: 'my-3 w-full border-collapse',
       th: 'border px-2 py-1 text-left bg-gray-50 dark:bg-gray-800',
       td: 'border px-2 py-1 align-top',
     },
     lg: {
       prose: 'prose',
-      p: 'my-3 leading-relaxed',
-      ul: 'my-3 list-disc pl-6',
-      ol: 'my-3 list-decimal pl-6',
+      p: 'my-3 leading-relaxed break-words',
+      ul: 'my-3 list-disc pl-6 break-words',
+      ol: 'my-3 list-decimal pl-6 break-words',
       li: 'my-1.5',
-      pre: 'my-4 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-4',
-      code: 'bg-gray-100 dark:bg-gray-800 px-1.5 py-1 rounded text-sm',
-      h1: 'text-xl font-semibold mt-4 mb-3',
-      h2: 'text-lg font-semibold mt-4 mb-2',
-      h3: 'text-base font-semibold mt-3 mb-2',
-      blockquote: 'border-l-4 border-gray-300 dark:border-gray-700 pl-4 my-4',
+      pre: 'my-4 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto p-4 max-w-full',
+      code: 'bg-gray-100 dark:bg-gray-800 px-1.5 py-1 rounded text-sm break-all',
+      h1: 'text-xl font-semibold mt-4 mb-3 break-words',
+      h2: 'text-lg font-semibold mt-4 mb-2 break-words',
+      h3: 'text-base font-semibold mt-3 mb-2 break-words',
+      blockquote: 'border-l-4 border-gray-300 dark:border-gray-700 pl-4 my-4 break-words',
       table: 'my-4 w-full border-collapse',
       th: 'border px-3 py-2 text-left bg-gray-50 dark:bg-gray-800',
       td: 'border px-3 py-2 align-top',
@@ -108,7 +108,7 @@ export default function MarkdownRenderer({
             <pre className={config.pre} {...props} />
           ),
           code: ({ node, inline, ...props }) => (
-            inline ? 
+            inline ?
               <code className={config.code} {...props} /> :
               <code {...props} />
           ),

@@ -82,12 +82,12 @@ export default function Modal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <DialogPanel 
+              <DialogPanel
                 className={`w-full ${sizeClasses[size]} transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 text-left align-middle transition-all shadow-2xl dark:shadow-gray-900/50 ${className}`}
               >
                 {/* Header */}
                 {(title || showCloseButton) && (
-                  <div className="flex items-center justify-between p-6 pb-4">
+                  <div className="flex items-center justify-between p-4 md:p-6 pb-4">
                     {title && (
                       <DialogTitle as="h3" className="text-xl font-semibold leading-6 text-gray-900 dark:text-white">
                         {title}
@@ -107,8 +107,8 @@ export default function Modal({
                 )}
 
                 {/* Content */}
-                <div className={`px-6 ${scrollable ? 'overflow-y-auto' : ''} ${footer ? 'pb-4' : 'pb-6'}`} 
-                     style={scrollable ? { maxHeight } : {}}>
+                <div className={`px-4 md:px-6 ${scrollable ? 'overflow-y-auto' : ''} ${footer ? 'pb-4' : 'pb-6'}`}
+                  style={scrollable ? { maxHeight } : {}}>
                   {children}
                 </div>
 
@@ -141,18 +141,18 @@ export function ModalFooter({ children, className = '' }) {
 /**
  * Modal Button Components - Helper components for consistent button styling
  */
-export function ModalButton({ 
-  variant = 'primary', 
-  onClick, 
-  disabled = false, 
-  loading = false, 
-  children, 
+export function ModalButton({
+  variant = 'primary',
+  onClick,
+  disabled = false,
+  loading = false,
+  children,
   className = '',
   type = 'button',
-  ...props 
+  ...props
 }) {
   const baseClasses = 'inline-flex justify-center items-center rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
-  
+
   const variantClasses = {
     primary: 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm focus:ring-blue-500',
     secondary: 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600',
@@ -205,8 +205,8 @@ export function ConfirmationModal({
           <ModalButton variant="secondary" onClick={onClose}>
             {cancelText}
           </ModalButton>
-          <ModalButton 
-            variant={variant} 
+          <ModalButton
+            variant={variant}
             onClick={onConfirm}
             loading={loading}
           >
@@ -233,7 +233,7 @@ export function LoadingModal({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={() => {}} // Prevent closing during loading
+      onClose={() => { }} // Prevent closing during loading
       title={title}
       size="md"
       showCloseButton={false}
