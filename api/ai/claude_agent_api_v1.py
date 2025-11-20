@@ -4,6 +4,13 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from ../.env
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
+
 from asyncio import Lock
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -236,12 +243,12 @@ async def heartbeat_task(websocket: WebSocket, interval: int = 10):
             await asyncio.sleep(interval)
             try:
                 await websocket.send_json({"type": "ping", "timestamp": time.time()})
-                print("📡 Sent heartbeat ping")
+                logger.debug("📡 Sent heartbeat ping")
             except Exception as e:
-                print(f"❌ Heartbeat failed: {e}")
+                logger.warning(f"❌ Heartbeat failed: {e}")
                 break
     except asyncio.CancelledError:
-        print("🛑 Heartbeat task cancelled")
+        logger.info("🛑 Heartbeat task cancelled")
         raise
 
 
