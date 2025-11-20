@@ -220,9 +220,8 @@ export default function AIAgentPage() {
           {/* Toggle Navigation Button */}
           <button
             onClick={toggleNav}
-            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${
-              isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
-            }`}
+            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
+              }`}
             title={`${isNavVisible ? 'Hide' : 'Show'} navigation (⌘B)`}
             aria-label="Toggle navigation"
           >

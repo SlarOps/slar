@@ -15,8 +15,10 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 API_BASE_URL = os.getenv("SLAR_API_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("SLAR_API_TOKEN", "")
 
-# Dynamic token storage (set per WebSocket session)
-_dynamic_auth_token: Optional[str] = None
+from contextvars import ContextVar
+
+# Dynamic token storage (set per WebSocket session, async-safe)
+_auth_token_ctx: ContextVar[Optional[str]] = ContextVar("auth_token", default=None)
 
 
 def set_auth_token(token: str) -> None:
@@ -27,11 +29,8 @@ def set_auth_token(token: str) -> None:
     Args:
         token: The JWT authentication token from the frontend
     """
-    global _dynamic_auth_token
-    _dynamic_auth_token = token
-    print(
-        f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})"
-    )
+    _auth_token_ctx.set(token)
+    # print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
 
 
 def get_auth_token() -> str:
@@ -42,7 +41,7 @@ def get_auth_token() -> str:
     Returns:
         The authentication token to use for API requests
     """
-    return _dynamic_auth_token or API_TOKEN
+    return _auth_token_ctx.get() or API_TOKEN
 
 
 # Implementation functions (callable directly)
