@@ -91,6 +91,8 @@ services:
       dockerfile: Dockerfile
       # Note: Requires building Next.js locally first
       # Run: cd ../../web/slar && npm run build
+      platforms:
+        - linux/amd64
     image: ghcr.io/slarops/slar-web:1.0.1
     expose:
       - "3000"

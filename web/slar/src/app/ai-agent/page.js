@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, Suspense } from "react";
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import { ChatInput } from '../../components/ui';
 import {
@@ -14,13 +15,22 @@ import 'highlight.js/styles/github.css';
 import { useClaudeWebSocket } from '../../hooks/useClaudeWebSocket';
 import { useSyncBucket } from '../../hooks/useSyncBucket';
 
-export default function AIAgentPage() {
+function AIAgentContent() {
   const { session } = useAuth();
+  const searchParams = useSearchParams();
+  const incidentId = searchParams.get('incident');
   const [input, setInput] = useState("");
   const [isNavVisible, setIsNavVisible] = useState(true);
   const endRef = useRef(null);
   const messageAreaRef = useRef(null);
   const lastClickTime = useRef(0);
+
+  // Pre-fill input with incident context if available
+  useEffect(() => {
+    if (incidentId) {
+      setInput(`Analyze incident ${incidentId}`);
+    }
+  }, [incidentId]);
 
   // Extract auth token from session
   const authToken = session?.access_token || null;
@@ -220,9 +230,8 @@ export default function AIAgentPage() {
           {/* Toggle Navigation Button */}
           <button
             onClick={toggleNav}
-            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${
-              isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
-            }`}
+            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
+              }`}
             title={`${isNavVisible ? 'Hide' : 'Show'} navigation (⌘B)`}
             aria-label="Toggle navigation"
           >
@@ -279,5 +288,17 @@ export default function AIAgentPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function AIAgentPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    }>
+      <AIAgentContent />
+    </Suspense>
   );
 }

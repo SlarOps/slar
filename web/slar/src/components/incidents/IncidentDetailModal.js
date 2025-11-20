@@ -7,10 +7,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { apiClient } from '../../lib/api';
 import { Modal, MarkdownRenderer } from '../ui';
 
-export default function IncidentDetailModal({ 
-  isOpen, 
-  onClose, 
-  incidentId 
+export default function IncidentDetailModal({
+  isOpen,
+  onClose,
+  incidentId
 }) {
   const { session } = useAuth();
   const router = useRouter();
@@ -30,7 +30,7 @@ export default function IncidentDetailModal({
         setLoading(true);
         setError(null);
         apiClient.setToken(session.access_token);
-        
+
         const data = await apiClient.getIncident(incidentId);
         setIncident(data);
         setEvents(data.recent_events || []);
@@ -47,10 +47,10 @@ export default function IncidentDetailModal({
 
   const handleAction = async (action) => {
     if (!incident) return;
-    
+
     try {
       setActionLoading(true);
-      
+
       switch (action) {
         case 'acknowledge':
           await apiClient.acknowledgeIncident(incident.id);
@@ -62,12 +62,12 @@ export default function IncidentDetailModal({
           await apiClient.escalateIncident(incident.id);
           break;
       }
-      
+
       // Refresh incident data
       const data = await apiClient.getIncident(incidentId);
       setIncident(data);
       setEvents(data.recent_events || []);
-      
+
     } catch (err) {
       console.error(`Error ${action} incident:`, err);
       setError(`Failed to ${action} incident`);
@@ -208,7 +208,7 @@ export default function IncidentDetailModal({
       onClose={onClose}
       size="5xl"
       scrollable={true}
-      maxHeight="calc(90vh - 120px)"
+      maxHeight="calc(100vh - 40px)"
     >
       <div className="space-y-4 md:space-y-6">
         {/* Header */}
@@ -221,7 +221,7 @@ export default function IncidentDetailModal({
               </div>
             ) : incident ? (
               <>
-                <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                <h1 className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white mb-2 break-words">
                   Incident #{incident.id.slice(-8)}
                 </h1>
 
@@ -248,13 +248,13 @@ export default function IncidentDetailModal({
 
           {/* Action Buttons */}
           {incident && (
-            <div className="flex flex-col sm:flex-row gap-2">
+            <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2">
               {/* Ask AI Agent Button */}
               <Button
                 onClick={() => {
-                  router.push('/ai-agent');
+                  router.push(`/ai-agent?incident=${incident.id}`);
                 }}
-                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center justify-center space-x-2"
+                className="w-full sm:w-auto bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center justify-center space-x-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -262,37 +262,35 @@ export default function IncidentDetailModal({
                 <span>Ask AI Agent</span>
               </Button>
 
-              <div className="flex gap-2">
-                {incident.status === 'triggered' && (
-                  <Button
-                    onClick={() => handleAction('acknowledge')}
-                    disabled={actionLoading}
-                    className="flex-1 sm:flex-none bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                  >
-                    {actionLoading ? 'Processing...' : 'Acknowledge'}
-                  </Button>
-                )}
+              {incident.status === 'triggered' && (
+                <Button
+                  onClick={() => handleAction('acknowledge')}
+                  disabled={actionLoading}
+                  className="w-full sm:w-auto bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  {actionLoading ? '...' : 'Acknowledge'}
+                </Button>
+              )}
 
-                {incident.status !== 'resolved' && (
-                  <Button
-                    onClick={() => handleAction('resolve')}
-                    disabled={actionLoading}
-                    className="flex-1 sm:flex-none bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-                  >
-                    {actionLoading ? 'Processing...' : 'Resolve'}
-                  </Button>
-                )}
+              {incident.status !== 'resolved' && (
+                <Button
+                  onClick={() => handleAction('resolve')}
+                  disabled={actionLoading}
+                  className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                >
+                  {actionLoading ? '...' : 'Resolve'}
+                </Button>
+              )}
 
-                {incident.status !== 'resolved' && (
-                  <Button
-                    onClick={() => handleAction('escalate')}
-                    disabled={actionLoading}
-                    className="flex-1 sm:flex-none bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
-                  >
-                    {actionLoading ? 'Processing...' : 'Escalate'}
-                  </Button>
-                )}
-              </div>
+              {incident.status !== 'resolved' && (
+                <Button
+                  onClick={() => handleAction('escalate')}
+                  disabled={actionLoading}
+                  className="w-full sm:w-auto bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
+                >
+                  {actionLoading ? '...' : 'Escalate'}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -321,17 +319,17 @@ export default function IncidentDetailModal({
             </div>
           </div>
         ) : incident ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
             {/* Main Content - Alert Information */}
-            <div className="lg:col-span-2 space-y-6">
+            <div className="lg:col-span-2 space-y-4 md:space-y-6">
               {/* Alert Content */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
-                
+
                 <div className="space-y-4">
                   {/* Alert Title and Description */}
                   <div>
-                    <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2">
+                    <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
                       {incident.title}
                     </h4>
                     {incident.description && (
@@ -342,7 +340,7 @@ export default function IncidentDetailModal({
                       />
                     )}
                   </div>
-                  
+
                   {/* Alert Metadata */}
                   <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                     <div>
@@ -375,9 +373,9 @@ export default function IncidentDetailModal({
 
                 </div>
               </div>
-              
+
               {/* Timeline */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                   Timeline & Escalation History
                 </h3>
@@ -403,7 +401,7 @@ export default function IncidentDetailModal({
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between">
                                   <div className="flex-1">
-                                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                    <p className="text-sm font-medium text-gray-900 dark:text-white break-words">
                                       {formatEventDescription(event)}
                                     </p>
                                     <div className="flex items-center space-x-2 mt-1">
@@ -441,7 +439,7 @@ export default function IncidentDetailModal({
                                   )}
 
                                   {event.event_data?.note && (
-                                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 p-2 bg-gray-100 dark:bg-gray-700 rounded">
+                                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 p-2 bg-gray-100 dark:bg-gray-700 rounded break-words">
                                       {event.event_data.note}
                                     </p>
                                   )}
@@ -464,11 +462,11 @@ export default function IncidentDetailModal({
             </div>
 
             {/* Sidebar - Details */}
-            <div className="space-y-6">
+            <div className="space-y-4 md:space-y-6">
               {/* Incident Details */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Details</h3>
-                
+
                 <div className="space-y-3">
                   <div>
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Incident ID</dt>
@@ -476,7 +474,7 @@ export default function IncidentDetailModal({
                       {incident.id}
                     </dd>
                   </div>
-                  
+
                   {incident.incident_number && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Incident Number</dt>
@@ -485,7 +483,7 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   {incident.priority && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Priority</dt>
@@ -496,14 +494,14 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   <div>
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Created</dt>
                     <dd className="text-sm text-gray-900 dark:text-white">
                       {new Date(incident.created_at).toLocaleString()}
                     </dd>
                   </div>
-                  
+
                   {incident.acknowledged_at && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Acknowledged</dt>
@@ -512,7 +510,7 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   {incident.resolved_at && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Resolved</dt>
@@ -521,7 +519,7 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   {incident.assigned_to_name && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Assigned To</dt>
@@ -530,7 +528,7 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   {incident.service_name && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Service</dt>
@@ -539,7 +537,7 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
+
                   {incident.group_name && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Group</dt>
@@ -548,9 +546,9 @@ export default function IncidentDetailModal({
                       </dd>
                     </div>
                   )}
-                  
 
-                  
+
+
                   {/* Escalation Information */}
                   {incident.escalation_policy_name && (
                     <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
@@ -566,15 +564,14 @@ export default function IncidentDetailModal({
                               <span>Escalated to Level {incident.current_escalation_level}</span>
                             )}
                             {incident.escalation_status && (
-                              <span className={`ml-2 px-2 py-1 text-xs font-medium rounded-full ${
-                                incident.escalation_status === 'escalating'
-                                  ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300'
-                                  : incident.escalation_status === 'completed'
+                              <span className={`ml-2 px-2 py-1 text-xs font-medium rounded-full ${incident.escalation_status === 'escalating'
+                                ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300'
+                                : incident.escalation_status === 'completed'
                                   ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300'
                                   : incident.escalation_status === 'pending'
-                                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300'
-                                  : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
-                              }`}>
+                                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300'
+                                    : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
+                                }`}>
                                 {incident.escalation_status}
                               </span>
                             )}
@@ -599,14 +596,14 @@ export default function IncidentDetailModal({
                       </div>
                     </div>
                   )}
-                  
+
                   {incident.external_url && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">External Link</dt>
                       <dd className="text-sm">
-                        <a 
-                          href={incident.external_url} 
-                          target="_blank" 
+                        <a
+                          href={incident.external_url}
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                         >
