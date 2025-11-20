@@ -42,6 +42,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const streamingTimeoutRef = useRef(null);
   const streamingInactivityTimeout = 2000; // 2 seconds of inactivity marks message as complete
   const authTokenRef = useRef(authToken); // Store token in ref for WebSocket access
+  const isIntentionalDisconnect = useRef(false); // Track intentional disconnects
 
   // Update auth token ref when it changes
   useEffect(() => {
@@ -83,6 +84,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     try {
       console.log('Connecting to WebSocket:', DEFAULT_WS_URL);
       setConnectionStatus('connecting');
+      isIntentionalDisconnect.current = false;
 
       const ws = new WebSocket(DEFAULT_WS_URL);
       wsRef.current = ws;
@@ -329,6 +331,11 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       };
 
       ws.onerror = (error) => {
+        // Don't log error if it's an intentional disconnect
+        if (isIntentionalDisconnect.current) {
+          console.log('[WS] Suppressing error for intentional disconnect');
+          return;
+        }
         console.error('WebSocket error:', error);
         setConnectionStatus('error');
       };
@@ -353,6 +360,12 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         setConnectionStatus('disconnected');
         wsRef.current = null;
         setIsSending(false);
+
+        // Check if this was an intentional disconnect (e.g. React Strict Mode unmount)
+        if (isIntentionalDisconnect.current) {
+          console.log('[WS] Intentional disconnect, not reconnecting');
+          return;
+        }
 
         // Auto-reconnect if not a normal closure and haven't exceeded max attempts
         if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -390,6 +403,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
 
     if (wsRef.current) {
+      isIntentionalDisconnect.current = true; // Mark as intentional
       wsRef.current.close(1000, 'Client disconnect');
       wsRef.current = null;
     }
@@ -574,8 +588,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
 
     // Check if already connected or connecting to prevent Strict Mode double-connection
     if (wsRef.current &&
-        (wsRef.current.readyState === WebSocket.OPEN ||
-         wsRef.current.readyState === WebSocket.CONNECTING)) {
+      (wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING)) {
       console.log('Skipping duplicate connection in Strict Mode');
       return;
     }

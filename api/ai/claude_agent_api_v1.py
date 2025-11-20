@@ -4,6 +4,13 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from ../.env
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
+
 from asyncio import Lock
 from collections import defaultdict
 from contextlib import asynccontextmanager

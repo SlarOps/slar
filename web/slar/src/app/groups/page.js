@@ -112,35 +112,32 @@ export default function GroupsPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+      <div className="border-b border-gray-200 dark:border-gray-700">
         <nav className="-mb-px flex space-x-4 sm:space-x-8 min-w-max px-1">
           <button
             onClick={() => setActiveTab('my')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'my'
+            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${activeTab === 'my'
                 ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
+              }`}
           >
             My Groups
           </button>
           <button
             onClick={() => setActiveTab('public')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'public'
+            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${activeTab === 'public'
                 ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
+              }`}
           >
             Public Groups
           </button>
           <button
             onClick={() => setActiveTab('all')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'all'
+            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${activeTab === 'all'
                 ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            }`}
+              }`}
           >
             All Groups
           </button>
@@ -148,7 +145,7 @@ export default function GroupsPage() {
       </div>
 
       {/* Filters */}
-      <GroupFilters 
+      <GroupFilters
         filters={filters}
         onFiltersChange={handleFiltersChange}
         totalCount={stats.total}
@@ -156,7 +153,7 @@ export default function GroupsPage() {
       />
 
       {/* Groups List */}
-      <GroupsList 
+      <GroupsList
         filters={filters}
         activeTab={activeTab}
         refreshTrigger={refreshTrigger}

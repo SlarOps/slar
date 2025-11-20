@@ -95,7 +95,7 @@ export default function GroupDetailPage() {
       try {
         // Set authentication token
         apiClient.setToken(session.access_token);
-        
+
         // Fetch group with members
         const data = await apiClient.getGroupWithMembers(params.id);
         setGroup(data);
@@ -125,12 +125,12 @@ export default function GroupDetailPage() {
     try {
       apiClient.setToken(session.access_token);
       await apiClient.addGroupMember(params.id, memberData);
-      
+
       // Refresh group data to show new member
       const updatedGroup = await apiClient.getGroupWithMembers(params.id);
       setGroup(updatedGroup);
       // setShowAddMember(false);
-      
+
       // Show success message
       alert(`Successfully added ${selectedUser.name} to the group!`);
     } catch (error) {
@@ -153,7 +153,7 @@ export default function GroupDetailPage() {
     try {
       apiClient.setToken(session.access_token);
       await apiClient.removeGroupMember(params.id, userId);
-      
+
       // Optimistically update UI
       setGroup(prev => ({
         ...prev,
@@ -177,12 +177,12 @@ export default function GroupDetailPage() {
     try {
       apiClient.setToken(session.access_token);
       await apiClient.updateGroupMember(params.id, userId, { role: newRole });
-      
+
       // Optimistically update UI
       setGroup(prev => ({
         ...prev,
-        members: prev.members.map(member => 
-          member.id === memberId 
+        members: prev.members.map(member =>
+          member.id === memberId
             ? { ...member, role: newRole }
             : member
         )
@@ -298,8 +298,8 @@ export default function GroupDetailPage() {
   ];
 
   const renderServiceTab = () => (
-    <ServicesTab 
-      groupId={params.id} 
+    <ServicesTab
+      groupId={params.id}
       members={group?.members || []}
       onServiceCreate={(data) => {
         if (data.action === 'schedule_created') {
@@ -315,7 +315,7 @@ export default function GroupDetailPage() {
   );
 
   const renderMembersTab = () => (
-    <MembersTab 
+    <MembersTab
       group={group}
       onAddMember={handleAddMember}
       onRemoveMember={handleRemoveMember}
@@ -329,8 +329,8 @@ export default function GroupDetailPage() {
   );
 
   const renderEscalationTab = () => (
-    <EscalationPolicyTab 
-      groupId={params.id} 
+    <EscalationPolicyTab
+      groupId={params.id}
       members={group?.members || []}
     />
   );
@@ -378,11 +378,10 @@ export default function GroupDetailPage() {
               <span className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full border ${getTypeColor(group.type)}`}>
                 {group.type}
               </span>
-              <div className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full ${
-                group.is_active
+              <div className={`inline-flex px-1.5 sm:px-2 py-0.5 text-xs font-medium rounded-full ${group.is_active
                   ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
                   : 'text-gray-600 bg-gray-100 dark:bg-gray-900/30'
-              }`}>
+                }`}>
                 {group.is_active ? 'Active' : 'Inactive'}
               </div>
               {group.visibility && (
@@ -419,17 +418,16 @@ export default function GroupDetailPage() {
 
       {/* Tab Navigation */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-        <div className="border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+        <div className="border-b border-gray-200 dark:border-gray-700">
           <nav className="-mb-px flex space-x-4 sm:space-x-8 px-3 sm:px-6 min-w-max" aria-label="Tabs">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${
-                  activeTab === tab.id
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 dark:text-blue-400 dark:border-blue-400'
                     : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
-                }`}
+                  }`}
               >
                 <span className="flex-shrink-0">{tab.icon}</span>
                 <span className="hidden xs:inline">{tab.name}</span>
