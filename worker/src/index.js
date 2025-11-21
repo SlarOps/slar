@@ -49,7 +49,7 @@ export default {
         // Priority: SLAR_WEBHOOK_URL > FALLBACK_WEBHOOK_URL > /monitors/report
         if (env.SLAR_WEBHOOK_URL) {
             // Send via integration webhook (PagerDuty Events API format)
-            await handleIncidentsViaWebhook(env.SLAR_WEBHOOK_URL, monitors, results)
+            await handleIncidentsViaWebhook(env, env.SLAR_WEBHOOK_URL, monitors, results)
         } else if (env.FALLBACK_WEBHOOK_URL) {
             // Fallback webhook for critical alerts
             const downMonitors = results.filter(r => !r.is_up)
@@ -61,50 +61,93 @@ export default {
     },
 }
 
-async function handleIncidentsViaWebhook(webhookUrl, monitors, results) {
-    // Track state changes and send webhook events
+async function handleIncidentsViaWebhook(env, webhookUrl, monitors, results) {
+    // Only send webhooks on state changes to prevent alert fatigue
+    // Query previous state from D1 for each monitor
+
     for (let i = 0; i < results.length; i++) {
         const result = results[i]
         const monitor = monitors.find(m => m.id === result.monitor_id)
 
         if (!monitor) continue
 
-        // Determine if state changed (we need to check previous state from D1)
-        // For simplicity, we'll send events for all down monitors
-        // In production, you'd want to track state changes more carefully
+        // Get previous check result from D1
+        const previousState = await getPreviousMonitorState(env, result.monitor_id)
 
-        if (!result.is_up) {
-            // Monitor is down - trigger incident
+        // Detect state changes
+        const currentlyUp = result.is_up
+        const previouslyUp = previousState ? previousState.is_up : true // Assume UP if no history
+
+        // Only send webhook on state change
+        if (!currentlyUp && previouslyUp) {
+            // State changed: UP → DOWN (trigger incident)
+            console.log(`Monitor ${monitor.id} state changed: UP → DOWN`)
             await sendWebhookEvent(webhookUrl, 'trigger', monitor, result)
-        } else if (result.is_up && result.previous_was_down) {
-            // Monitor recovered - resolve incident
+        } else if (currentlyUp && !previouslyUp) {
+            // State changed: DOWN → UP (resolve incident)
+            console.log(`Monitor ${monitor.id} state changed: DOWN → UP`)
             await sendWebhookEvent(webhookUrl, 'resolve', monitor, result)
+        } else if (!currentlyUp && !previouslyUp) {
+            // Still down - no webhook (prevent spam)
+            console.log(`Monitor ${monitor.id} still DOWN - no webhook sent`)
+        } else {
+            // Still up - no webhook needed
+            console.log(`Monitor ${monitor.id} still UP`)
         }
     }
 }
 
-async function sendWebhookEvent(webhookUrl, action, monitor, result) {
-    const payload = {
-        routing_key: 'monitor-worker',
-        event_action: action,
-        dedup_key: monitor.id,
-        payload: {
-            summary: action === 'trigger'
-                ? `Monitor Down: ${monitor.url}`
-                : `Monitor Recovered: ${monitor.url}`,
-            source: 'uptime-monitor',
-            severity: action === 'trigger' ? 'critical' : 'info',
-            timestamp: new Date().toISOString(),
-            custom_details: {
-                monitor_id: monitor.id,
-                url: monitor.url,
-                method: monitor.method,
-                status: result.status,
-                latency: result.latency,
-                error: result.error,
-                location: await getWorkerLocation()
+async function getPreviousMonitorState(env, monitorId) {
+    try {
+        // Query the most recent check result for this monitor
+        const result = await env.SLAR_DB.prepare(`
+            SELECT is_up, created_at 
+            FROM monitor_logs 
+            WHERE monitor_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT 1 OFFSET 1
+        `).bind(monitorId).first()
+
+        if (result) {
+            return {
+                is_up: result.is_up === 1,
+                created_at: result.created_at
             }
         }
+
+        return null
+    } catch (e) {
+        console.error(`Failed to get previous state for monitor ${monitorId}:`, e)
+        return null
+    }
+}
+
+async function sendWebhookEvent(webhookUrl, action, monitor, result) {
+    // Use Generic Webhook format matching backend expectations
+    const payload = {
+        alert_name: `Monitor ${action === 'trigger' ? 'Down' : 'Recovered'}: ${monitor.url}`,
+        severity: action === 'trigger' ? 'critical' : 'info',
+        status: action === 'trigger' ? 'firing' : 'resolved',
+        summary: action === 'trigger'
+            ? `Monitor is unreachable: ${monitor.url}`
+            : `Monitor has recovered: ${monitor.url}`,
+        description: result.error || `HTTP ${result.status} - ${result.latency}ms`,
+        labels: {
+            source: 'uptime-monitor',
+            monitor_id: monitor.id,
+            url: monitor.url,
+            method: monitor.method,
+            location: await getWorkerLocation(),
+            monitor_type: monitor.type || 'http'
+        },
+        annotations: {
+            status_code: result.status?.toString() || 'N/A',
+            latency_ms: result.latency?.toString() || 'N/A',
+            error_message: result.error || '',
+            check_time: new Date().toISOString()
+        },
+        fingerprint: monitor.id, // Use monitor ID for deduplication
+        starts_at: new Date().toISOString()
     }
 
     try {
@@ -115,9 +158,10 @@ async function sendWebhookEvent(webhookUrl, action, monitor, result) {
         })
 
         if (!response.ok) {
-            console.error(`Failed to send webhook event: ${response.status} ${response.statusText}`)
+            const errorText = await response.text()
+            console.error(`Failed to send webhook event: ${response.status} ${response.statusText}`, errorText)
         } else {
-            console.log(`Sent ${action} event for monitor ${monitor.id}`)
+            console.log(`Sent ${action} event for monitor ${monitor.id} (${monitor.url})`)
         }
     } catch (e) {
         console.error(`Error sending webhook event:`, e)
@@ -125,9 +169,13 @@ async function sendWebhookEvent(webhookUrl, action, monitor, result) {
 }
 
 async function checkMonitor(monitor) {
-    // Route to appropriate check type based on method
+    // Route to appropriate check type basync function checkMonitor(monitor) {
     if (monitor.method === 'TCP_PING') {
         return await checkTCPMonitor(monitor)
+    } else if (monitor.method === 'DNS') {
+        return await checkDNSMonitor(monitor)
+    } else if (monitor.method === 'CERT_CHECK') {
+        return await checkCertMonitor(monitor)
     } else {
         return await checkHTTPMonitor(monitor)
     }
@@ -235,50 +283,78 @@ async function checkTCPMonitor(monitor) {
 
     try {
         // Parse host:port from target
+        // Target should be in format "hostname:port" (e.g., "example.com:443" or "192.168.1.1:22")
         const target = monitor.target || monitor.url
-        const [host, portStr] = target.split(':')
-        const port = parseInt(portStr)
 
-        if (!host || !port || isNaN(port)) {
-            throw new Error(`Invalid target format: ${target}. Expected host:port`)
+        // Simple parsing: split by last colon to handle IPv6 addresses
+        const lastColonIndex = target.lastIndexOf(':')
+        if (lastColonIndex === -1) {
+            throw new Error(`Invalid target format: ${target}. Expected hostname:port`)
         }
 
-        // Use fetch with a simple TCP connection test
-        // For Cloudflare Workers, we'll attempt a connection to the TCP endpoint
-        // This is a workaround since Workers don't have native TCP socket support
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), monitor.timeout || 10000)
+        const hostname = target.substring(0, lastColonIndex)
+        const port = parseInt(target.substring(lastColonIndex + 1))
 
-        try {
-            // Try to connect using fetch to http://host:port
-            // This will fail if the port is not open, which is what we want to detect
-            const testUrl = `http://${host}:${port}`
-            await fetch(testUrl, {
-                method: 'HEAD',
-                signal: controller.signal
+        if (!hostname || !port || isNaN(port)) {
+            throw new Error(`Invalid target format: ${target}. Expected hostname:port`)
+        }
+
+        // Cloudflare Workers Sockets API doesn't allow connections to common HTTP ports
+        // Fallback to HTTP fetch for ports 80, 443, 8080, 8443
+        const httpPorts = [80, 443, 8080, 8443]
+        if (httpPorts.includes(port)) {
+            console.log(`TCP Monitor ${monitor.id}: Port ${port} is HTTP port, using fetch fallback`)
+
+            const protocol = (port === 443 || port === 8443) ? 'https' : 'http'
+            const url = `${protocol}://${hostname}:${port}`
+
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), monitor.timeout || 10000)
+
+            try {
+                const response = await fetch(url, {
+                    method: 'HEAD',
+                    signal: controller.signal
+                })
+                clearTimeout(timeoutId)
+                isUp = true
+                console.log(`TCP Monitor ${monitor.id}: ${target} is reachable (HTTP ${response.status})`)
+            } catch (e) {
+                clearTimeout(timeoutId)
+                // Even connection errors mean the host is reachable
+                if (e.name !== 'AbortError') {
+                    isUp = true
+                    console.log(`TCP Monitor ${monitor.id}: ${target} is reachable (got response)`)
+                } else {
+                    throw new Error('Connection timeout')
+                }
+            }
+        } else {
+            // Use Cloudflare Sockets API for non-HTTP ports
+            // Import dynamically to support both local and Cloudflare environments
+            const { connect } = await import(/* webpackIgnore: true */ 'cloudflare:sockets')
+
+            const socket = connect({ hostname, port })
+
+            // Create timeout promise
+            const timeout = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Connection timed out')), monitor.timeout || 10000)
             })
 
-            clearTimeout(timeoutId)
+            // Race between connection and timeout
+            await Promise.race([socket.opened, timeout])
+
+            // Connection successful, close the socket
+            await socket.close()
+
             isUp = true
             console.log(`TCP Monitor ${monitor.id}: ${target} is reachable`)
-        } catch (e) {
-            clearTimeout(timeoutId)
-            // For TCP checks, we consider it "up" if we get ANY response (even errors like connection refused)
-            // because it means the host is reachable. Only timeout means it's down.
-            if (e.name === 'AbortError') {
-                isUp = false
-                error = 'Connection timeout'
-            } else {
-                // Got a response (even if it's an error), so the port is reachable
-                isUp = true
-            }
-            console.log(`TCP Monitor ${monitor.id}: ${target} - ${e.message}`)
         }
 
     } catch (e) {
-        error = e.message || 'Unknown error'
+        error = e.message || 'Connection failed'
         isUp = false
-        console.error(`TCP Monitor ${monitor.id} check failed:`, error)
+        console.log(`TCP Monitor ${monitor.id}: ${monitor.target || monitor.url} - ${error}`)
     }
 
     const latency = Date.now() - start
@@ -287,8 +363,162 @@ async function checkTCPMonitor(monitor) {
         monitor_id: monitor.id,
         is_up: isUp,
         latency,
-        status: 0, // TCP checks don't have HTTP status
+        status: 0, // TCP doesn't have HTTP status
         error
+    }
+}
+
+async function checkDNSMonitor(monitor) {
+    const start = Date.now()
+    let isUp = false
+    let error = ''
+    let resolvedValues = []
+
+    try {
+        const target = monitor.target || monitor.url
+        const recordType = monitor.dns_record_type || 'A'
+
+        // Use Cloudflare DNS over HTTPS
+        const dnsUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(target)}&type=${recordType}`
+
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), monitor.timeout || 10000)
+
+        const response = await fetch(dnsUrl, {
+            headers: {
+                'Accept': 'application/dns-json'
+            },
+            signal: controller.signal
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+            throw new Error(`DNS query failed: ${response.status}`)
+        }
+
+        const dnsData = await response.json()
+
+        // Check if we got answers
+        if (!dnsData.Answer || dnsData.Answer.length === 0) {
+            throw new Error(`No DNS records found for ${target}`)
+        }
+
+        // Extract resolved values based on record type
+        resolvedValues = dnsData.Answer.map(answer => {
+            // For A/AAAA records, return the IP
+            if (recordType === 'A' || recordType === 'AAAA') {
+                return answer.data
+            }
+            // For CNAME, MX, TXT, return the data
+            return answer.data
+        })
+
+        // Check against expected values if provided
+        if (monitor.expected_values && monitor.expected_values.length > 0) {
+            const expectedSet = new Set(monitor.expected_values)
+            const resolvedSet = new Set(resolvedValues)
+
+            // Check if at least one expected value matches
+            const hasMatch = monitor.expected_values.some(expected => resolvedSet.has(expected))
+
+            if (!hasMatch) {
+                isUp = false
+                error = `DNS mismatch. Expected: ${monitor.expected_values.join(', ')}, Got: ${resolvedValues.join(', ')}`
+            } else {
+                isUp = true
+            }
+        } else {
+            // No expected values, just check if we got any resolution
+            isUp = resolvedValues.length > 0
+        }
+
+        console.log(`DNS Monitor ${monitor.id}: ${target} resolved to ${resolvedValues.join(', ')}`)
+
+    } catch (e) {
+        error = e.message || 'DNS resolution failed'
+        isUp = false
+        console.log(`DNS Monitor ${monitor.id}: ${monitor.target || monitor.url} - ${error}`)
+    }
+
+    const latency = Date.now() - start
+
+    return {
+        monitor_id: monitor.id,
+        is_up: isUp,
+        latency,
+        status: 0,
+        error,
+        resolved_values: resolvedValues.join(', ')
+    }
+}
+
+async function checkCertMonitor(monitor) {
+    const start = Date.now()
+    let isUp = false
+    let error = ''
+    let certInfo = {}
+
+    try {
+        const target = monitor.target || monitor.url
+
+        // Ensure URL starts with https://
+        const url = target.startsWith('https://') ? target : `https://${target}`
+
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), monitor.timeout || 10000)
+
+        const response = await fetch(url, {
+            method: 'HEAD',
+            signal: controller.signal
+        })
+
+        clearTimeout(timeoutId)
+
+        // In Cloudflare Workers, certificate info is available via response.cf
+        // However, detailed cert info like expiry date is not directly available
+        // We need to use a different approach
+
+        // For now, we'll use a simple check: if HTTPS connection succeeds, cert is valid
+        // For expiry checking, we'd need to use external API or custom implementation
+
+        if (response.ok || response.status < 500) {
+            // Connection successful, certificate is valid
+            isUp = true
+
+            // Try to get TLS info from Cloudflare
+            if (response.cf) {
+                certInfo.tlsVersion = response.cf.tlsVersion
+                certInfo.tlsCipher = response.cf.tlsCipher
+            }
+
+            console.log(`Cert Monitor ${monitor.id}: ${url} - Certificate valid`)
+        } else {
+            isUp = false
+            error = `HTTP ${response.status}`
+        }
+
+    } catch (e) {
+        error = e.message || 'Certificate check failed'
+        isUp = false
+
+        // Check if it's a TLS/SSL error
+        if (error.includes('SSL') || error.includes('TLS') || error.includes('certificate')) {
+            error = 'Certificate error: ' + error
+        }
+
+        console.log(`Cert Monitor ${monitor.id}: ${monitor.target || monitor.url} - ${error}`)
+    }
+
+    const latency = Date.now() - start
+
+    return {
+        monitor_id: monitor.id,
+        is_up: isUp,
+        latency,
+        status: 0,
+        error,
+        cert_info: JSON.stringify(certInfo)
     }
 }
 

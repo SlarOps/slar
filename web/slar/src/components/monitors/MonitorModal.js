@@ -4,6 +4,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../lib/api';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
+import Select from '../ui/Select';
 
 export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess }) {
     const [formData, setFormData] = useState({
@@ -23,11 +24,19 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
         tooltip: monitor?.tooltip || '',
         status_page_link: monitor?.status_page_link || '',
         headers: monitor?.headers ? JSON.stringify(monitor.headers, null, 2) : '',
-        body: monitor?.body || ''
+        body: monitor?.body || '',
+        // DNS monitoring fields
+        dns_record_type: monitor?.dns_record_type || 'A',
+        expected_values: monitor?.expected_values ? monitor.expected_values.join(', ') : '',
+        // Certificate monitoring fields
+        cert_expiry_days_warning: monitor?.cert_expiry_days_warning || 30
     });
     const [saving, setSaving] = useState(false);
 
     const isTCPPing = formData.method === 'TCP_PING';
+    const isDNS = formData.method === 'DNS';
+    const isCertCheck = formData.method === 'CERT_CHECK';
+    const isHTTP = !isTCPPing && !isDNS && !isCertCheck;
     const supportsBody = ['POST', 'PUT', 'PATCH'].includes(formData.method);
 
     const handleSubmit = async (e) => {
@@ -50,6 +59,19 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                 submitData.headers = {};
             }
 
+            // Process DNS-specific fields
+            if (isDNS) {
+                // Convert comma-separated expected values to array
+                if (submitData.expected_values) {
+                    submitData.expected_values = submitData.expected_values
+                        .split(',')
+                        .map(v => v.trim())
+                        .filter(v => v.length > 0);
+                } else {
+                    submitData.expected_values = [];
+                }
+            }
+
             // Clean up empty optional fields
             if (!submitData.response_keyword) delete submitData.response_keyword;
             if (!submitData.response_forbidden_keyword) delete submitData.response_forbidden_keyword;
@@ -58,9 +80,9 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
             if (!submitData.body) delete submitData.body;
             if (!submitData.description) delete submitData.description;
 
-            // For TCP_PING, ensure target is set
-            if (isTCPPing && !submitData.target) {
-                toast.error('Target (host:port) is required for TCP_PING');
+            // For TCP_PING, DNS, and CERT_CHECK, ensure target is set
+            if ((isTCPPing || isDNS || isCertCheck) && !submitData.target) {
+                toast.error('Target is required for this monitor type');
                 setSaving(false);
                 return;
             }
@@ -124,34 +146,41 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
 
                     {/* Method */}
                     <div className="col-span-2">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Method *
-                        </label>
-                        <select
+                        <Select
+                            label="Method"
+                            required
                             value={formData.method}
-                            onChange={(e) => setFormData({ ...formData, method: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        >
-                            <optgroup label="HTTP Methods">
-                                <option value="GET">GET</option>
-                                <option value="POST">POST</option>
-                                <option value="PUT">PUT</option>
-                                <option value="PATCH">PATCH</option>
-                                <option value="DELETE">DELETE</option>
-                                <option value="HEAD">HEAD</option>
-                            </optgroup>
-                            <optgroup label="TCP Monitoring">
-                                <option value="TCP_PING">TCP_PING</option>
-                            </optgroup>
-                        </select>
+                            onChange={(value) => setFormData({ ...formData, method: value })}
+                            options={[
+                                { value: 'GET', label: 'GET', description: 'HTTP GET request' },
+                                { value: 'POST', label: 'POST', description: 'HTTP POST request' },
+                                { value: 'PUT', label: 'PUT', description: 'HTTP PUT request' },
+                                { value: 'PATCH', label: 'PATCH', description: 'HTTP PATCH request' },
+                                { value: 'DELETE', label: 'DELETE', description: 'HTTP DELETE request' },
+                                { value: 'HEAD', label: 'HEAD', description: 'HTTP HEAD request' },
+                                { value: 'TCP_PING', label: 'TCP_PING', description: 'Check if TCP port is reachable' },
+                                { value: 'DNS', label: 'DNS Resolution', description: 'Monitor domain name resolution' },
+                                { value: 'CERT_CHECK', label: 'Certificate Check', description: 'Validate SSL/TLS certificates' },
+                            ]}
+                        />
                         {isTCPPing && (
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                 TCP_PING checks if a TCP port is reachable
                             </p>
                         )}
+                        {isDNS && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                DNS monitors domain name resolution and validates IP addresses
+                            </p>
+                        )}
+                        {isCertCheck && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                Certificate check validates SSL/TLS certificates for HTTPS sites
+                            </p>
+                        )}
                     </div>
 
-                    {/* URL (for HTTP) or Target (for TCP) */}
+                    {/* URL (for HTTP) or Target (for TCP/DNS/CERT) */}
                     {isTCPPing ? (
                         <div className="col-span-2">
                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -167,6 +196,40 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                             />
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                 Examples: github.com:22 (SSH), db.example.com:3306 (MySQL)
+                            </p>
+                        </div>
+                    ) : isDNS ? (
+                        <div className="col-span-2">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Domain Name *
+                            </label>
+                            <input
+                                type="text"
+                                required
+                                value={formData.target}
+                                onChange={(e) => setFormData({ ...formData, target: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                placeholder="example.com"
+                            />
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                Domain to resolve (without http://)
+                            </p>
+                        </div>
+                    ) : isCertCheck ? (
+                        <div className="col-span-2">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                HTTPS URL *
+                            </label>
+                            <input
+                                type="text"
+                                required
+                                value={formData.target}
+                                onChange={(e) => setFormData({ ...formData, target: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                placeholder="https://example.com"
+                            />
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                HTTPS URL to check certificate
                             </p>
                         </div>
                     ) : (
@@ -185,8 +248,45 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                         </div>
                     )}
 
+                    {/* DNS-specific fields */}
+                    {isDNS && (
+                        <>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    DNS Record Type *
+                                </label>
+                                <select
+                                    value={formData.dns_record_type}
+                                    onChange={(e) => setFormData({ ...formData, dns_record_type: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                >
+                                    <option value="A">A (IPv4)</option>
+                                    <option value="AAAA">AAAA (IPv6)</option>
+                                    <option value="CNAME">CNAME</option>
+                                    <option value="MX">MX (Mail)</option>
+                                    <option value="TXT">TXT</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    Expected Values (optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={formData.expected_values}
+                                    onChange={(e) => setFormData({ ...formData, expected_values: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                    placeholder="1.2.3.4, 5.6.7.8"
+                                />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Comma-separated IPs or values to validate
+                                </p>
+                            </div>
+                        </>
+                    )}
+
                     {/* HTTP-only fields */}
-                    {!isTCPPing && (
+                    {isHTTP && (
                         <>
                             {/* Headers */}
                             <div className="col-span-2">

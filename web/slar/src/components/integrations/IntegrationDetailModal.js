@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Modal, ModalFooter, ModalButton } from '../ui';
-import { 
+import {
   FireIcon,
   ChartBarIcon,
   LinkIcon,
@@ -16,9 +16,9 @@ import {
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 
-export default function IntegrationDetailModal({ 
-  isOpen, 
-  onClose, 
+export default function IntegrationDetailModal({
+  isOpen,
+  onClose,
   integration,
   onEdit
 }) {
@@ -28,7 +28,7 @@ export default function IntegrationDetailModal({
 
   const getIntegrationTypeIcon = (type) => {
     const iconProps = "h-8 w-8";
-    
+
     switch (type) {
       case 'prometheus':
         return <FireIcon className={`${iconProps} text-orange-600 dark:text-orange-400`} />;
@@ -189,6 +189,99 @@ export default function IntegrationDetailModal({
             </p>
           </div>
         )}
+
+        {/* Example Payload */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Example Payload
+          </label>
+          <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap overflow-x-auto">
+              {integration.type === 'datadog' && `{
+  "id": "$ID",
+  "last_updated": "$LAST_UPDATED",
+  "event_type": "$EVENT_TYPE",
+  "title": "$EVENT_TITLE",
+  "date": "$DATE",
+  "org": {
+    "id": "$ORG_ID",
+    "name": "$ORG_NAME"
+  },
+  "body": "$EVENT_MSG",
+  "transition": "$ALERT_TRANSITION",
+  "aggregate": "$AGGREG_KEY",
+  "alert_priority": "$ALERT_PRIORITY",
+  "alert_title": "$ALERT_TITLE",
+  "alert_status": "$ALERT_STATUS",
+  "alert_query": "$ALERT_QUERY",
+  "alert_cycle_key": "$ALERT_CYCLE_KEY",
+  "tags": "$TAGS"
+}`}
+              {integration.type === 'prometheus' && `{
+  "version": "4",
+  "groupKey": "{}:{alertname=\\"InstanceDown\\"}",
+  "status": "firing",
+  "receiver": "slar-webhook",
+  "groupLabels": {
+    "alertname": "InstanceDown"
+  },
+  "commonLabels": {
+    "alertname": "InstanceDown",
+    "instance": "localhost:9090",
+    "job": "prometheus",
+    "severity": "critical"
+  },
+  "commonAnnotations": {
+    "description": "Instance localhost:9090 is down",
+    "summary": "Instance down"
+  },
+  "externalURL": "http://prometheus:9093",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "InstanceDown",
+        "instance": "localhost:9090",
+        "job": "prometheus",
+        "severity": "critical"
+      },
+      "annotations": {
+        "description": "Instance localhost:9090 is down",
+        "summary": "Instance down"
+      },
+      "startsAt": "2024-01-01T00:00:00Z",
+      "endsAt": "0001-01-01T00:00:00Z"
+    }
+  ]
+}`}
+              {integration.type === 'webhook' && `{
+  "title": "Alert Title",
+  "description": "Alert description or message",
+  "severity": "critical",
+  "status": "firing",
+  "source": "monitoring-system",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "labels": {
+    "service": "api",
+    "environment": "production"
+  },
+  "annotations": {
+    "summary": "Brief summary",
+    "description": "Detailed description"
+  }
+}`}
+              {!['datadog', 'prometheus', 'webhook'].includes(integration.type) && `{
+  "message": "Alert message",
+  "severity": "high",
+  "timestamp": "${new Date().toISOString()}",
+  "source": "${integration.type}"
+}`}
+            </pre>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+            Send a POST request with this payload structure to the webhook URL above
+          </p>
+        </div>
 
         {/* Statistics */}
         <div className="grid grid-cols-2 gap-4">

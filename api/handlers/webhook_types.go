@@ -344,6 +344,9 @@ func (g *GenericWebhook) ToProcessedAlert() ProcessedAlert {
 		alert.Status = "firing"
 	}
 
+	// Map severity to priority
+	alert.Priority = mapSeverityToPriority(alert.Severity)
+
 	// Set timestamps
 	if g.StartsAt != nil {
 		alert.StartsAt = *g.StartsAt

@@ -110,18 +110,19 @@ func (h *MonitorHandler) CreateMonitor(c *gin.Context) {
 		return
 	}
 
-	// Validate based on method type
-	if m.Method == "TCP_PING" {
+	// Validate required fields based on method type
+	if m.Method == "TCP_PING" || m.Method == "DNS" || m.Method == "CERT_CHECK" {
+		// These methods use 'target' field instead of 'url'
 		if m.Target == nil || *m.Target == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target (host:port) is required for TCP_PING"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target is required for " + m.Method})
 			return
 		}
-		// For TCP_PING, URL is not required but we'll set it to target for consistency
+		// Set URL to target for consistency if not provided
 		if m.URL == "" {
 			m.URL = *m.Target
 		}
 	} else {
-		// For HTTP methods
+		// HTTP methods require 'url'
 		if m.URL == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
 			return
@@ -505,7 +506,9 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 		SELECT 
 			created_at,
 			latency,
-			is_up
+			is_up,
+			status,
+			error
 		FROM monitor_logs
 		WHERE monitor_id = ? AND created_at >= ?
 		ORDER BY created_at ASC
@@ -520,12 +523,20 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 	for _, row := range results {
 		timestamp := int64(0)
 		latency := 0.0
+		status := 0
+		errorMsg := ""
 
 		if val, ok := row["created_at"].(float64); ok {
 			timestamp = int64(val)
 		}
 		if val, ok := row["latency"].(float64); ok {
 			latency = val
+		}
+		if val, ok := row["status"].(float64); ok {
+			status = int(val)
+		}
+		if val, ok := row["error"].(string); ok {
+			errorMsg = val
 		}
 
 		t := time.Unix(timestamp, 0)
@@ -534,6 +545,8 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 			"time":      t.Format("3PM"),
 			"latency":   latency,
 			"is_up":     row["is_up"],
+			"status":    status,
+			"error":     errorMsg,
 		})
 	}
 

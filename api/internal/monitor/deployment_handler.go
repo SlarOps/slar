@@ -39,7 +39,7 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 	}
 
 	// Validate integration if provided
-	var webhookURL string
+	var webhookURL sql.NullString
 	if req.IntegrationID != "" {
 		err := h.db.QueryRow(`
 			SELECT webhook_url FROM integrations 
@@ -49,9 +49,9 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 		if err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Integration not found or inactive"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate integration: " + err.Error()})
+				return
 			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate integration"})
 			return
 		}
 	}
@@ -103,8 +103,8 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 	bindings = append(bindings, WorkerBinding{Type: "plain_text", Name: "SLAR_API_URL", Text: apiURL})
 
 	// Add webhook URL binding if integration is linked
-	if webhookURL != "" {
-		bindings = append(bindings, WorkerBinding{Type: "plain_text", Name: "SLAR_WEBHOOK_URL", Text: webhookURL})
+	if webhookURL.Valid && webhookURL.String != "" {
+		bindings = append(bindings, WorkerBinding{Type: "plain_text", Name: "SLAR_WEBHOOK_URL", Text: webhookURL.String})
 	}
 
 	err = cf.UploadWorker(req.CFAccountID, req.WorkerName, string(scriptContent), bindings)
@@ -248,17 +248,17 @@ func (h *DeploymentHandler) RedeployWorker(c *gin.Context) {
 
 	// Add webhook URL binding if integration is linked
 	if integrationID.Valid && integrationID.String != "" {
-		var webhookURL string
+		var webhookURL sql.NullString
 		err := h.db.QueryRow(`
 			SELECT webhook_url FROM integrations 
 			WHERE id = $1 AND is_active = true
 		`, integrationID.String).Scan(&webhookURL)
 
-		if err == nil && webhookURL != "" {
+		if err == nil && webhookURL.Valid && webhookURL.String != "" {
 			bindings = append(bindings, WorkerBinding{
 				Type: "plain_text",
 				Name: "SLAR_WEBHOOK_URL",
-				Text: webhookURL,
+				Text: webhookURL.String,
 			})
 		}
 	}

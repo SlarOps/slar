@@ -300,18 +300,14 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
     const loadMonitorStats = async () => {
         try {
             setLoading(true);
-            const [statsData, historyData] = await Promise.all([
+            const [statsData, historyData, responseData] = await Promise.all([
                 apiClient.getMonitorStats(monitor.id),
-                apiClient.getMonitorUptimeHistory(monitor.id)
+                apiClient.getMonitorUptimeHistory(monitor.id),
+                apiClient.getMonitorResponseTimes(monitor.id, '24h') // Load for status bar
             ]);
             setStats(statsData);
             setHistory(historyData);
-
-            // Only load response times if expanded
-            if (expanded) {
-                const responseData = await apiClient.getMonitorResponseTimes(monitor.id, '24h');
-                setResponseTimes(responseData);
-            }
+            setResponseTimes(responseData);
         } catch (error) {
             console.error('Failed to load monitor stats:', error);
         } finally {
@@ -319,14 +315,7 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
         }
     };
 
-    // Load response times when expanding
-    useEffect(() => {
-        if (expanded && responseTimes.length === 0) {
-            apiClient.getMonitorResponseTimes(monitor.id, '24h')
-                .then(data => setResponseTimes(data))
-                .catch(err => console.error('Failed to load response times:', err));
-        }
-    }, [expanded]);
+
 
     const handleDelete = async (e) => {
         e.stopPropagation();
@@ -409,9 +398,9 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                 </div>
 
                 {/* Uptime Status Bar - Always Visible */}
-                {!loading && history.length > 0 && (
+                {!loading && responseTimes.length > 0 && (
                     <div className="mb-1.5">
-                        <UptimeStatusBar history={history} />
+                        <UptimeStatusBar checks={responseTimes} />
                     </div>
                 )}
 
