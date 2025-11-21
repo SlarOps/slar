@@ -111,81 +111,62 @@ export default function IncidentDetailModal({
         />
 
         {/* Content */}
-        {loading ? (
-          <div className="space-y-4">
-            <div className="animate-pulse">
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-4"></div>
-              <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
+        {
+          loading ? (
+            <div className="space-y-4">
+              <div className="animate-pulse">
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-4"></div>
+                <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
+              </div>
             </div>
-          </div>
-        ) : incident ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-            {/* Main Content - Alert Information */}
-            <div className="lg:col-span-2 space-y-4 md:space-y-6">
-              {/* Alert Content */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
+          ) : incident ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+              {/* Main Content - Alert Information */}
+              <div className="lg:col-span-2 space-y-4 md:space-y-6">
+                {/* Alert Content */}
+                <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
 
-                <div className="space-y-4">
-                  {/* Alert Title and Description */}
-                  <div>
-                    <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
-                      {incident.title}
-                    </h4>
-                    {incident.description && (
-                      <MarkdownRenderer
-                        content={incident.description}
-                        size="base"
-                        className="text-sm text-gray-600 dark:text-gray-400"
-                      />
-                    )}
-                  </div>
+                  <div className="space-y-4">
+                    {/* Alert Title and Description */}
+                    <div>
+                      <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
+                        {incident.title}
+                      </h4>
+                      {incident.description && (
+                        <MarkdownRenderer
+                          content={incident.description}
+                          size="base"
+                          className="text-sm text-gray-600 dark:text-gray-400"
+                        />
+                      )}
+                    </div>
 
-                  {/* Alert Metadata */}
-                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <div>
-                      <dt className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Severity</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white mt-1">
-                        {incident.severity || 'Unknown'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Urgency</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white mt-1">
-                        {incident.urgency || 'Normal'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white mt-1">
-                        {incident.status}
-                      </dd>
-                    </div>
-                    {incident.source && (
+                    {/* Alert Metadata */}
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                       <div>
-                        <dt className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Source</dt>
+                        <dt className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Severity</dt>
                         <dd className="text-sm text-gray-900 dark:text-white mt-1">
-                          {incident.source}
+                          {incident.severity || 'Unknown'}
                         </dd>
                       </div>
-                    )}
-                  </div>
+                    </div>
 
+                  </div>
                 </div>
+
+                <IncidentTimeline events={events} />
               </div>
 
-              <IncidentTimeline events={events} />
+              {/* Sidebar - Details */}
+              <IncidentSidebar incident={incident} />
             </div>
-
-            {/* Sidebar - Details */}
-            <IncidentSidebar incident={incident} />
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <p className="text-gray-500 dark:text-gray-400">No incident data available</p>
-          </div>
-        )}
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500 dark:text-gray-400">No incident data available</p>
+            </div>
+          )}
       </div>
     </Modal>
   );
