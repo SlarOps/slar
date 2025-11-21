@@ -238,6 +238,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 			monitorRoutes.POST("/deploy", deploymentHandler.DeployWorker)
 			monitorRoutes.GET("/deployments", deploymentHandler.GetDeployments)
+			monitorRoutes.GET("/deployments/:id/stats", deploymentHandler.GetDeploymentStats) // NEW: Worker stats
 			monitorRoutes.POST("/deployments/:id/redeploy", deploymentHandler.RedeployWorker)
 			monitorRoutes.DELETE("/deployments/:id", deploymentHandler.DeleteDeployment)
 

@@ -392,3 +392,82 @@ func (h *DeploymentHandler) ensureD1Schema(cf *CloudflareClient, accountID, dbID
 
 	return nil
 }
+
+// GetDeploymentStats returns worker details and metrics for a deployment
+func (h *DeploymentHandler) GetDeploymentStats(c *gin.Context) {
+	deploymentID := c.Param("id")
+
+	// Get deployment info
+	var cfAccountID, cfAPIToken, workerName string
+	err := h.db.QueryRow(`
+		SELECT cf_account_id, cf_api_token, worker_name
+		FROM monitor_deployments
+		WHERE id = $1
+	`, deploymentID).Scan(&cfAccountID, &cfAPIToken, &workerName)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	cf := NewCloudflareClient(cfAPIToken)
+
+	// Fetch details and metrics in parallel
+	// Use channels for simple concurrency
+	detailsChan := make(chan *WorkerDetails, 1)
+	metricsChan := make(chan *WorkerMetrics, 1)
+	metricsErrChan := make(chan error, 1)
+	errChan := make(chan error, 2)
+
+	go func() {
+		d, err := cf.GetWorkerDetails(cfAccountID, workerName)
+		if err != nil {
+			errChan <- fmt.Errorf("details error: %w", err)
+			detailsChan <- nil
+			return
+		}
+		detailsChan <- d
+	}()
+
+	go func() {
+		m, err := cf.GetWorkerMetrics(cfAccountID, workerName)
+		if err != nil {
+			// Log error but don't fail completely if metrics fail
+			fmt.Printf("Warning: Failed to get worker metrics: %v\n", err)
+			metricsErrChan <- err
+			metricsChan <- nil
+			return
+		}
+		metricsErrChan <- nil
+		metricsChan <- m
+	}()
+
+	details := <-detailsChan
+	metrics := <-metricsChan
+	metricsErr := <-metricsErrChan
+
+	// Check for critical errors (details are critical)
+	select {
+	case err := <-errChan:
+		if details == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	default:
+	}
+
+	response := gin.H{
+		"details": details,
+		"metrics": metrics,
+	}
+
+	if metricsErr != nil {
+		response["metrics_error"] = metricsErr.Error()
+	}
+
+	c.JSON(http.StatusOK, response)
+}

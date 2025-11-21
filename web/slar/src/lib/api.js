@@ -980,6 +980,15 @@ class APIClient {
   }
 
   /**
+   * Get worker deployment statistics
+   * @param {string} deploymentId - Deployment ID
+   * @returns {Promise<object>} Worker stats
+   */
+  async getDeploymentStats(deploymentId) {
+    return this.request(`/monitors/deployments/${deploymentId}/stats`);
+  }
+
+  /**
    * Create a new monitor
    * @param {object} monitorData - Monitor configuration
    * @returns {Promise<object>} Created monitor

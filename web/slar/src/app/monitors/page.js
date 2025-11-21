@@ -224,6 +224,24 @@ export default function MonitorsPage() {
 
 function DeploymentCard({ deployment, onSelect, onUpdate, onDelete, isSelected }) {
     const [redeploying, setRedeploying] = useState(false);
+    const [stats, setStats] = useState(null);
+    const [loadingStats, setLoadingStats] = useState(true);
+
+    useEffect(() => {
+        loadStats();
+    }, [deployment.id]);
+
+    const loadStats = async () => {
+        try {
+            setLoadingStats(true);
+            const data = await apiClient.getDeploymentStats(deployment.id);
+            setStats(data);
+        } catch (error) {
+            console.error('Failed to load deployment stats:', error);
+        } finally {
+            setLoadingStats(false);
+        }
+    };
 
     const handleRedeploy = async (e) => {
         e.stopPropagation();
@@ -255,7 +273,7 @@ function DeploymentCard({ deployment, onSelect, onUpdate, onDelete, isSelected }
                 }`}
             onClick={onSelect}
         >
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
                 <div className="flex-1 min-w-0">
                     <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white mb-1">{deployment.name}</h3>
                     <div className="space-y-0.5 text-xs text-gray-600 dark:text-gray-400">
@@ -281,6 +299,46 @@ function DeploymentCard({ deployment, onSelect, onUpdate, onDelete, isSelected }
                         Active
                     </span>
                 </div>
+            </div>
+
+            {/* Worker Stats */}
+            <div className="border-t border-gray-100 dark:border-gray-700 pt-3 mt-1">
+                {loadingStats ? (
+                    <div className="flex gap-4 animate-pulse">
+                        <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                        <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                        <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    </div>
+                ) : stats ? (
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                        <div className="flex items-center gap-1" title="Requests (24h)">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                            </svg>
+                            <span>{stats.metrics?.requests?.toLocaleString() || 0} requests</span>
+                        </div>
+                        <div className="flex items-center gap-1" title="Errors (24h)">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <span>{stats.metrics?.errors?.toLocaleString() || 0} errors</span>
+                        </div>
+                        <div className="flex items-center gap-1" title="Avg CPU Time">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                            </svg>
+                            <span>{stats.metrics?.cpu_time?.toFixed(2) || 0} ms</span>
+                        </div>
+                        <div className="flex items-center gap-1" title="Bindings">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                            </svg>
+                            <span>{stats.details?.bindings?.length || 0} bindings</span>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-xs text-gray-400">Stats unavailable</div>
+                )}
             </div>
         </div>
     );
