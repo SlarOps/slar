@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import { ChatInput } from '../../components/ui';
 import {
@@ -107,6 +108,31 @@ export default function AIAgentPage() {
       }
     }
   }, [messages, sendMessage]);
+
+  // Handle incident analysis from URL
+  const searchParams = useSearchParams();
+  const incidentId = searchParams.get('incident');
+  const hasSentAutoPrompt = useRef(false);
+
+  useEffect(() => {
+    if (
+      incidentId &&
+      connectionStatus === 'connected' &&
+      syncStatus === 'ready' &&
+      !hasSentAutoPrompt.current
+    ) {
+      // Short delay to ensure UI is ready
+      const timer = setTimeout(() => {
+        sendMessage(`Analyze incident ${incidentId} and provide a summary and potential root causes.`);
+        hasSentAutoPrompt.current = true;
+
+        // Optional: Clear the query param to prevent re-sending on refresh
+        // window.history.replaceState({}, '', '/ai-agent');
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [incidentId, connectionStatus, syncStatus, sendMessage]);
 
   // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
@@ -220,9 +246,8 @@ export default function AIAgentPage() {
           {/* Toggle Navigation Button */}
           <button
             onClick={toggleNav}
-            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${
-              isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
-            }`}
+            className={`fixed z-40 p-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all ${isNavVisible ? 'top-20 right-4' : 'top-4 right-4'
+              }`}
             title={`${isNavVisible ? 'Hide' : 'Show'} navigation (⌘B)`}
             aria-label="Toggle navigation"
           >

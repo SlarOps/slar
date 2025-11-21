@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { href: '/ai-agent', label: 'Assistant' },
   { href: '/incidents', label: 'Incidents' },
   { href: '/groups', label: 'Groups' },
-  { href: '/uptime', label: 'Uptime' },
+  { href: '/monitors', label: 'Monitors' },
   { href: '/integrations', label: 'Agent Config' },
 ];
 
@@ -118,8 +118,8 @@ export default function MobileNav() {
                       key={link.href}
                       href={link.href}
                       className={`block px-4 py-3 rounded-xl text-base font-medium transition-colors ${pathname === link.href
-                          ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                        ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                        : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
                         }`}
                     >
                       {link.label}
@@ -186,8 +186,8 @@ function DesktopNavLinks() {
           key={link.href}
           href={link.href}
           className={`text-sm font-medium transition-colors ${pathname === link.href
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
             }`}
         >
           {link.label}
