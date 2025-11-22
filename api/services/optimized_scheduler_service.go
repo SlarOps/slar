@@ -346,6 +346,49 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 		return scheduler, nil, fmt.Errorf("failed to update scheduler: %w", err)
 	}
 
+	// =================================================================================
+	// PRESERVE OVERRIDES: Fetch active overrides before deleting shifts
+	// =================================================================================
+	type PreservedOverride struct {
+		ID                 string
+		OriginalScheduleID string
+		GroupID            string
+		NewUserID          string
+		OverrideReason     string
+		OverrideType       string
+		OverrideStartTime  time.Time
+		OverrideEndTime    time.Time
+		CreatedBy          string
+	}
+
+	var preservedOverrides []PreservedOverride
+	overrideRows, err := tx.Query(`
+		SELECT so.id, so.original_schedule_id, so.group_id, so.new_user_id, 
+		       COALESCE(so.override_reason, ''), COALESCE(so.override_type, 'temporary'), 
+		       so.override_start_time, so.override_end_time, COALESCE(so.created_by, '')
+		FROM schedule_overrides so
+		JOIN shifts s ON so.original_schedule_id = s.id
+		WHERE s.scheduler_id = $1 AND so.is_active = true AND s.is_active = true
+	`, schedulerID)
+
+	if err == nil {
+		defer overrideRows.Close()
+		for overrideRows.Next() {
+			var po PreservedOverride
+			if err := overrideRows.Scan(
+				&po.ID, &po.OriginalScheduleID, &po.GroupID, &po.NewUserID,
+				&po.OverrideReason, &po.OverrideType,
+				&po.OverrideStartTime, &po.OverrideEndTime, &po.CreatedBy,
+			); err == nil {
+				preservedOverrides = append(preservedOverrides, po)
+			}
+		}
+	} else {
+		log.Printf("⚠️ Failed to fetch overrides for preservation: %v", err)
+		// Don't fail the whole update, but log the error
+	}
+	log.Printf("ℹ️ Found %d active overrides to preserve", len(preservedOverrides))
+
 	// OPTIMIZATION: Soft delete all existing shifts in single query
 	_, err = tx.Exec(`
 		UPDATE shifts
@@ -362,6 +405,59 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 	createdShifts, err := s.batchInsertShifts(tx, schedulerID, scheduler.GroupID, shifts, updatedBy)
 	if err != nil {
 		return scheduler, nil, fmt.Errorf("failed to create shifts: %w", err)
+	}
+
+	// =================================================================================
+	// RESTORE OVERRIDES: Re-attach overrides to new shifts
+	// =================================================================================
+	if len(preservedOverrides) > 0 && len(createdShifts) > 0 {
+		restoredCount := 0
+		for _, po := range preservedOverrides {
+			// Find a matching new shift
+			// Logic: The new shift must cover the override time range OR be the "primary" shift for that time
+			// For simplicity and robustness: Find the shift that overlaps most with the override
+			// or just the first shift that contains the override start time.
+
+			var bestMatchShiftID string
+
+			for _, newShift := range createdShifts {
+				// Check if override falls within this shift's time window
+				// Allow for some tolerance or exact match
+				if (po.OverrideStartTime.Equal(newShift.StartTime) || po.OverrideStartTime.After(newShift.StartTime)) &&
+					(po.OverrideStartTime.Before(newShift.EndTime)) {
+					bestMatchShiftID = newShift.ID
+					break
+				}
+			}
+
+			if bestMatchShiftID != "" {
+				// Re-create the override pointing to the new shift
+				_, err := tx.Exec(`
+					INSERT INTO schedule_overrides (
+						original_schedule_id, group_id, new_user_id, 
+						override_reason, override_type, 
+						override_start_time, override_end_time, 
+						is_active, created_at, updated_at, created_by
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				`, bestMatchShiftID, po.GroupID, po.NewUserID,
+					po.OverrideReason, po.OverrideType,
+					po.OverrideStartTime, po.OverrideEndTime,
+					true, time.Now(), time.Now(), po.CreatedBy)
+
+				if err != nil {
+					log.Printf("⚠️ Failed to restore override %s: %v", po.ID, err)
+				} else {
+					restoredCount++
+				}
+
+				// Deactivate the old override to avoid confusion (though it points to an inactive shift anyway)
+				tx.Exec(`UPDATE schedule_overrides SET is_active = false WHERE id = $1`, po.ID)
+			} else {
+				log.Printf("⚠️ Could not find matching shift for override %s (Time: %s - %s)",
+					po.ID, po.OverrideStartTime.Format(time.RFC3339), po.OverrideEndTime.Format(time.RFC3339))
+			}
+		}
+		log.Printf("✅ Restored %d/%d overrides", restoredCount, len(preservedOverrides))
 	}
 
 	// Commit transaction

@@ -37,7 +37,7 @@ const tabs = [
     name: 'Memory',
     icon: DocumentTextIcon,
     component: MemoryTab,
-    description: 'Manage AI agent memory and context (CLAUDE.md)'
+    description: 'Manage AI agent memory and context'
   },
 ];
 

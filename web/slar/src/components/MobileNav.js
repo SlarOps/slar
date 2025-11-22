@@ -10,7 +10,7 @@ const NAV_LINKS = [
   { href: '/incidents', label: 'Incidents' },
   { href: '/groups', label: 'Groups' },
   { href: '/monitors', label: 'Monitors' },
-  { href: '/integrations', label: 'Agent Config' },
+  { href: '/agent-config', label: 'Agent Config' },
 ];
 
 export default function MobileNav() {

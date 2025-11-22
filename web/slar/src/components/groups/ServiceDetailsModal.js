@@ -38,10 +38,10 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
         <div className="flex items-center gap-3">
           <span>Service Details</span>
           <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${status === 'healthy'
-              ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
-              : status === 'warning'
-                ? 'text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30'
-                : 'text-red-600 bg-red-100 dark:bg-red-900/30'
+            ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
+            : status === 'warning'
+              ? 'text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30'
+              : 'text-red-600 bg-red-100 dark:bg-red-900/30'
             }`}>
             {status}
           </span>
@@ -154,8 +154,8 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600 dark:text-gray-400">Email notifications</span>
                 <span className={`text-sm font-medium ${service.notification_settings?.email !== false
-                    ? 'text-green-600'
-                    : 'text-gray-400'
+                  ? 'text-green-600'
+                  : 'text-gray-400'
                   }`}>
                   {service.notification_settings?.email !== false ? 'Enabled' : 'Disabled'}
                 </span>
@@ -163,8 +163,8 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600 dark:text-gray-400">Push notifications</span>
                 <span className={`text-sm font-medium ${service.notification_settings?.fcm !== false
-                    ? 'text-green-600'
-                    : 'text-gray-400'
+                  ? 'text-green-600'
+                  : 'text-gray-400'
                   }`}>
                   {service.notification_settings?.fcm !== false ? 'Enabled' : 'Disabled'}
                 </span>
@@ -172,8 +172,8 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600 dark:text-gray-400">SMS notifications</span>
                 <span className={`text-sm font-medium ${service.notification_settings?.sms === true
-                    ? 'text-green-600'
-                    : 'text-gray-400'
+                  ? 'text-green-600'
+                  : 'text-gray-400'
                   }`}>
                   {service.notification_settings?.sms === true ? 'Enabled' : 'Disabled'}
                 </span>

@@ -65,7 +65,7 @@ export default function MarketplaceTab() {
           if (parsed) {
             // Check for known marketplaces
             if (m.url.toLowerCase().includes('anthropics/skills') ||
-                parsed.owner === 'anthropics' && parsed.repo === 'skills') {
+              parsed.owner === 'anthropics' && parsed.repo === 'skills') {
               needsUpdate = true;
               console.log('[MarketplaceTab] Migrating marketplace to add name: anthropic-agent-skills');
               return { ...m, name: 'anthropic-agent-skills' };
@@ -190,9 +190,10 @@ export default function MarketplaceTab() {
       setMarketplaceData(data);
       setCachedMarketplaces(cached);
 
-      if (Object.keys(data).length > 0) {
-        toast.success(`Loaded ${Object.keys(data).length} marketplace(s)`);
-      }
+      // Toast removed - UI already shows loaded marketplaces
+      // if (Object.keys(data).length > 0) {
+      //   toast.success(`Loaded ${Object.keys(data).length} marketplace(s)`);
+      // }
     } catch (error) {
       console.error('Failed to load marketplaces:', error);
       toast.error('Failed to load marketplaces');
@@ -436,7 +437,7 @@ export default function MarketplaceTab() {
 
     const filteredPlugins = data.plugins.filter(plugin => {
       return plugin.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-             plugin.description.toLowerCase().includes(searchTerm.toLowerCase());
+        plugin.description.toLowerCase().includes(searchTerm.toLowerCase());
     });
 
     if (filteredPlugins.length > 0) {
@@ -489,12 +490,6 @@ export default function MarketplaceTab() {
       {cachedMarketplaces.size > 0 && (
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-2 sm:p-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
-              <span className="text-xs sm:text-sm text-green-800 dark:text-green-200">
-                <strong>{cachedMarketplaces.size}</strong> marketplace(s) loaded from cache (no GitHub API usage)
-              </span>
-            </div>
             <button
               onClick={handleRefreshMarketplaces}
               className="text-xs text-green-700 dark:text-green-300 hover:underline text-left sm:text-right"
@@ -502,9 +497,6 @@ export default function MarketplaceTab() {
               Refresh
             </button>
           </div>
-          <p className="text-xs text-green-700 dark:text-green-300 mt-1">
-            💡 Tip: Check browser console (F12) for detailed loading logs
-          </p>
         </div>
       )}
 

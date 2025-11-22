@@ -40,7 +40,11 @@ from supabase_storage import (
     get_user_workspace_path,
     load_user_plugins,
     sync_all_from_bucket,
+    sync_marketplace_zip_to_local,
+    sync_mcp_config_to_local,
+    sync_memory_to_workspace,
     sync_user_skills,
+    unzip_installed_plugins,
 )
 
 # Configure logging
@@ -174,28 +178,19 @@ async def lifespan(app: FastAPI):
     global cleanup_worker_task
 
     # Startup
-    logger.info("🚀 Starting background workers...")
+    logger.info("🚀 Starting application...")
 
-    # Start marketplace cleanup worker
-    cleanup_worker_task = asyncio.create_task(
-        marketplace_cleanup_worker(), name="marketplace_cleanup_worker"
-    )
+    # No background workers needed anymore:
+    # - heartbeat_task is per-connection (called in websocket endpoint)
+    # - marketplace cleanup is now synchronous (no worker needed)
 
-    logger.info("✅ Background workers started")
+    logger.info("✅ Application started")
 
     yield
 
     # Shutdown
-    logger.info("🛑 Stopping background workers...")
-
-    if cleanup_worker_task and not cleanup_worker_task.done():
-        cleanup_worker_task.cancel()
-        try:
-            await cleanup_worker_task
-        except asyncio.CancelledError:
-            logger.info("✅ Marketplace cleanup worker stopped")
-
-    logger.info("✅ All background workers stopped")
+    logger.info("🛑 Stopping application...")
+    logger.info("✅ Application stopped")
 
 
 app = FastAPI(
@@ -236,19 +231,29 @@ user_mcp_cache: Dict[str, Dict[str, Any]] = {}
 user_plugin_locks: Dict[str, Lock] = {}
 
 
+from starlette.websockets import WebSocketState
+
 async def heartbeat_task(websocket: WebSocket, interval: int = 10):
     """Send periodic ping messages to keep the connection alive."""
     try:
         while True:
             await asyncio.sleep(interval)
+            
+            # Check if connection is still open before sending
+            if websocket.client_state != WebSocketState.CONNECTED:
+                print("🛑 Heartbeat task stopping: WebSocket not connected")
+                break
+                
             try:
                 await websocket.send_json({"type": "ping", "timestamp": time.time()})
-                print("📡 Sent heartbeat ping")
+                # print("📡 Sent heartbeat ping") # Reduce log noise
             except Exception as e:
-                print(f"❌ Heartbeat failed: {e}")
+                # Only log if it's not a normal disconnect
+                if "disconnect" not in str(e).lower() and "closed" not in str(e).lower():
+                    print(f"❌ Heartbeat failed: {e}")
                 break
     except asyncio.CancelledError:
-        print("🛑 Heartbeat task cancelled")
+        # print("🛑 Heartbeat task cancelled")
         raise
 
 
@@ -898,6 +903,13 @@ async def create_mcp_server(request: Request):
             f"✅ Saved MCP server ({server_type}): {server_name} for user {user_id}"
         )
 
+        # Sync to local .mcp.json file
+        sync_result = await sync_mcp_config_to_local(user_id)
+        if sync_result["success"]:
+            logger.info(f"✅ Synced MCP config to local file: {sync_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to sync MCP config to local: {sync_result['message']}")
+
         return {
             "success": True,
             "server": result.data[0] if result.data else server_record,
@@ -947,6 +959,13 @@ async def delete_mcp_server(server_name: str, request: Request):
         ).execute()
 
         logger.info(f"✅ Deleted MCP server: {server_name} for user {user_id}")
+
+        # Sync to local .mcp.json file
+        sync_result = await sync_mcp_config_to_local(user_id)
+        if sync_result["success"]:
+            logger.info(f"✅ Synced MCP config to local file: {sync_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to sync MCP config to local: {sync_result['message']}")
 
         return {
             "success": True,
@@ -1068,6 +1087,13 @@ async def update_memory(request: Request):
 
         logger.info(f"✅ Memory updated for user {user_id} ({len(content)} chars)")
 
+        # Sync to local CLAUDE.md file
+        sync_result = await sync_memory_to_workspace(user_id)
+        if sync_result["success"]:
+            logger.info(f"✅ Synced memory to local file: {sync_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to sync memory to local: {sync_result['message']}")
+
         return {
             "success": True,
             "content": result.data[0].get("content") if result.data else content,
@@ -1113,6 +1139,13 @@ async def delete_memory(request: Request):
         supabase.table("claude_memory").delete().eq("user_id", user_id).execute()
 
         logger.info(f"✅ Memory deleted for user {user_id}")
+
+        # Sync to local CLAUDE.md file (will create empty file or delete it)
+        sync_result = await sync_memory_to_workspace(user_id)
+        if sync_result["success"]:
+            logger.info(f"✅ Synced memory to local file: {sync_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to sync memory to local: {sync_result['message']}")
 
         return {"success": True, "message": "Memory deleted successfully"}
 
@@ -1350,6 +1383,16 @@ async def install_plugin_from_marketplace(request: Request):
         )
         logger.info("✅ Plugin marked as installed in PostgreSQL")
 
+        # Sync plugin to local workspace immediately (unzip from marketplace ZIP)
+        logger.info(f"📦 Unzipping plugin to local workspace for user {user_id}...")
+        unzip_result = await unzip_installed_plugins(user_id)
+
+        if unzip_result["success"]:
+            logger.info(f"✅ Plugin unzipped to local: {unzip_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to unzip plugin: {unzip_result['message']}")
+            # Don't fail the install - plugin is still in database
+
         return {
             "success": True,
             "message": f"Plugin '{plugin_name}' installed successfully",
@@ -1499,6 +1542,16 @@ async def install_plugin(request: Request):
             logger.info(f"✅ Plugin installed successfully: {plugin_key}")
 
         logger.info(f"🔓 Lock released for user {user_id}")
+
+        # Sync plugin to local workspace immediately (unzip from marketplace ZIP)
+        logger.info(f"📦 Unzipping plugin to local workspace for user {user_id}...")
+        unzip_result = await unzip_installed_plugins(user_id)
+
+        if unzip_result["success"]:
+            logger.info(f"✅ Plugin unzipped to local: {unzip_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to unzip plugin: {unzip_result['message']}")
+            # Don't fail the install - plugin is still in database
 
         return {
             "success": True,
@@ -1829,6 +1882,16 @@ async def download_repo_zip(request: Request):
         )
         logger.info("✅ Marketplace metadata saved to PostgreSQL")
 
+        # Sync marketplace ZIP to local workspace
+        logger.info(f"📦 Downloading marketplace ZIP to local workspace...")
+        sync_result = await sync_marketplace_zip_to_local(user_id, marketplace_name, storage_path)
+
+        if sync_result["success"]:
+            logger.info(f"✅ Marketplace ZIP synced to local: {sync_result['message']}")
+        else:
+            logger.warning(f"⚠️ Failed to sync marketplace ZIP: {sync_result['message']}")
+            # Don't fail the marketplace add - metadata is still in database
+
         # Return marketplace data immediately (no lag!)
         return {
             "success": True,
@@ -1846,11 +1909,10 @@ async def download_repo_zip(request: Request):
 @app.delete("/api/marketplace/{marketplace_name}")
 async def delete_marketplace(marketplace_name: str, request: Request):
     """
-    Delete marketplace asynchronously using PGMQ.
+    Delete marketplace and all associated files.
 
-    This endpoint marks the marketplace as "deleting" and enqueues a cleanup task
-    to PGMQ. The background worker will handle:
-    1. Cleanup workspace directories
+    This endpoint performs immediate cleanup:
+    1. Delete workspace directories
     2. Delete ZIP files from S3
     3. Delete installed plugins (cascade)
     4. Delete marketplace record from PostgreSQL
@@ -1865,7 +1927,7 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         {
             "success": bool,
             "message": str,
-            "job_id": int  # PGMQ message ID for tracking
+            "cleaned_items": list  # List of cleaned items
         }
     """
     try:
@@ -1902,53 +1964,27 @@ async def delete_marketplace(marketplace_name: str, request: Request):
 
         marketplace = marketplace_result.data[0]
 
-        # Update marketplace status to "deleting"
-        supabase.table("marketplaces").update({"status": "deleting"}).eq(
-            "user_id", user_id
-        ).eq("name", marketplace_name).execute()
+        # Perform cleanup directly (no PGMQ, no background worker)
+        cleanup_result = await cleanup_marketplace_task(
+            user_id=user_id,
+            marketplace_name=marketplace_name,
+            marketplace_id=marketplace["id"],
+            zip_path=marketplace.get("zip_path")
+        )
 
-        logger.info(f"✅ Marketplace status updated to 'deleting'")
-
-        # Enqueue cleanup task to PGMQ
-        # Message format: {"user_id": "...", "marketplace_name": "...", "marketplace_id": "..."}
-        cleanup_message = {
-            "user_id": user_id,
-            "marketplace_name": marketplace_name,
-            "marketplace_id": marketplace["id"],
-            "zip_path": marketplace.get("zip_path"),
-            "enqueued_at": datetime.now().isoformat(),
-        }
-
-        # Send to PGMQ queue using raw SQL
-        # pgmq.send(queue_name => TEXT, msg => JSONB)
-        import psycopg2
-
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            raise Exception("DATABASE_URL not configured")
-
-        conn = psycopg2.connect(db_url)
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM pgmq.send(queue_name => %s, msg => %s)",
-                    ("marketplace_cleanup_queue", json.dumps(cleanup_message)),
-                )
-                job_id = cur.fetchone()[0]  # Returns msg_id
-                conn.commit()
-
-            logger.info(
-                f"✅ Cleanup task enqueued to PGMQ (job_id: {job_id}, marketplace: {marketplace_name})"
-            )
-        finally:
-            conn.close()
-
-        return {
-            "success": True,
-            "message": f"Marketplace '{marketplace_name}' deletion initiated. Cleanup will run in background.",
-            "job_id": job_id,
-            "status": "deleting",
-        }
+        if cleanup_result["success"]:
+            logger.info(f"✅ Marketplace '{marketplace_name}' deleted successfully")
+            return {
+                "success": True,
+                "message": f"Marketplace '{marketplace_name}' deleted successfully",
+                "cleaned_items": cleanup_result.get("cleaned_items", [])
+            }
+        else:
+            logger.error(f"❌ Failed to delete marketplace: {cleanup_result.get('message')}")
+            return {
+                "success": False,
+                "error": cleanup_result.get("message", "Failed to delete marketplace")
+            }
 
     except Exception as e:
         return {
@@ -2008,14 +2044,26 @@ async def cleanup_marketplace_task(
         except Exception as e:
             logger.warning(f"⚠️  Failed to cleanup workspace: {e}")
 
-        # Step 2: Cleanup S3 storage (ZIP file)
-        if zip_path:
-            try:
-                supabase.storage.from_(user_id).remove([zip_path])
-                cleaned_items.append(f"s3:{zip_path}")
-                logger.info(f"✅ Deleted ZIP file from S3: {zip_path}")
-            except Exception as e:
-                logger.warning(f"⚠️  Failed to delete ZIP from S3: {e}")
+        # Step 2: Cleanup S3 storage (entire marketplace folder)
+        try:
+            # Delete entire marketplace folder, not just ZIP
+            marketplace_folder = f".claude/plugins/marketplaces/{marketplace_name}"
+            
+            # List all files in marketplace folder
+            file_list = supabase.storage.from_(user_id).list(marketplace_folder)
+            
+            if file_list:
+                # Build list of file paths to delete
+                files_to_delete = [f"{marketplace_folder}/{file['name']}" for file in file_list]
+                
+                # Delete all files
+                supabase.storage.from_(user_id).remove(files_to_delete)
+                cleaned_items.append(f"s3:{marketplace_folder} ({len(files_to_delete)} files)")
+                logger.info(f"✅ Deleted {len(files_to_delete)} files from S3: {marketplace_folder}")
+            else:
+                logger.info(f"ℹ️  No files found in S3: {marketplace_folder}")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to delete files from S3: {e}")
 
         # Step 3: Delete installed plugins (CASCADE will handle this, but let's be explicit)
         try:

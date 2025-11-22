@@ -18,7 +18,8 @@ const ScheduleTimeline = forwardRef(({
   onTimelineReady,
   onCurrentOnCallChange,
   isVisible = true, // New prop to control visibility
-  onShiftClick // New prop to handle shift clicks
+  onShiftClick, // New prop to handle shift clicks
+  onRemoveOverride // New prop to handle override removal
 }, ref) => {
   const timelineRef = useRef(null);
   const [timeline, setTimeline] = useState(null);
@@ -179,177 +180,259 @@ const ScheduleTimeline = forwardRef(({
       return { items, groups };
     }
 
+    // =================================================================================
+    // 1. Define Fixed Layers (Groups)
+    // =================================================================================
+    groups.add([
+      {
+        id: 'layer-config',
+        content: '<span class="font-medium text-sm">Original</span>',
+        className: 'layer-group-config',
+        order: 1
+      },
+      {
+        id: 'layer-override',
+        content: '<span class="font-medium text-sm">Override</span>',
+        className: 'layer-group-override',
+        order: 2
+      },
+      {
+        id: 'layer-final',
+        content: '<span class="font-medium text-sm">Final</span>',
+        className: 'layer-group-final',
+        order: 3
+      }
+    ]);
+
     // Track added item IDs to prevent duplicates
     const addedItemIds = new Set();
 
-    // Create groups for each member
-    selectedMembers.forEach((member, index) => {
-      groups.add({
-        id: member.user_id,
-        content: `
-          <div class="flex items-center gap-2 px-2 py-1">
-            <div class="w-3 h-3 rounded-full" style="background-color: ${MEMBER_COLORS[index % MEMBER_COLORS.length]}"></div>
-            <span class="font-medium text-sm">${member.user_name[0].toUpperCase()}</span>
-          </div>
-        `,
-        className: 'member-group'
-      });
-    });
-
-    // Check if data is schedule format (has start_time/end_time) or rotation format (has startDate/shiftLength)
+    // Check if data is schedule format (has start_time/end_time)
     const isScheduleFormat = rotations[0] && rotations[0].start_time;
 
     if (isScheduleFormat) {
       // Handle schedule data format
-      console.log(`[${componentIdRef.current}] Processing schedule format data`);
+      console.log(`[${componentIdRef.current}] Processing schedule format data for Layers`);
       const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
 
       rotations.forEach((schedule, scheduleIndex) => {
         const scheduleStart = new Date(schedule.start_time);
         const scheduleEnd = new Date(schedule.end_time);
-
-        // Check if this schedule has an override
-        const hasOverride = schedule.is_overridden || schedule.override_id;
-        
-        // IMPORTANT: Backend swaps user IDs when there's an override!
-        // - schedule.user_id = EFFECTIVE user (person actually on-call)
-        // - schedule.original_user_id = ORIGINAL user (person originally scheduled)
-        const effectiveUserId = schedule.user_id;
-        const originalUserId = schedule.original_user_id || schedule.user_id;
-
-        // Find member for this schedule (use effective user for display)
-        const member = selectedMembers.find(m => m.user_id === effectiveUserId) ||
-                      selectedMembers.find(m => m.user_id === originalUserId);
-
-        if (!member) {
-          console.warn(`[${componentIdRef.current}] Member not found for schedule:`, schedule);
-          return;
-        }
-
-        // Find original member if overridden
-        const originalMember = hasOverride && originalUserId !== effectiveUserId
-          ? selectedMembers.find(m => m.user_id === originalUserId)
-          : null;
-
-        // Use effective user for color assignment
-        const memberIndex = selectedMembers.findIndex(m => m.user_id === effectiveUserId);
         const isCurrentShift = typeof window !== 'undefined' && now >= scheduleStart && now < scheduleEnd;
 
-        // Create unique item ID
-        const itemId = `schedule-${schedule.id || scheduleIndex}`;
-        
-        // Skip if already added (prevents duplicate item error)
-        if (addedItemIds.has(itemId)) {
-          console.warn(`[${componentIdRef.current}] Skipping duplicate item ID: ${itemId}`);
-          return;
+        // Data extraction
+        // - schedule.user_id = EFFECTIVE user (Final)
+        // - schedule.original_user_id = ORIGINAL user (Configuration)
+        const effectiveUserId = schedule.user_id;
+        const originalUserId = schedule.original_user_id || schedule.user_id;
+        const hasOverride = schedule.is_overridden || schedule.override_id;
+
+        // Find members
+        const effectiveMember = selectedMembers.find(m => m.user_id === effectiveUserId);
+        const originalMember = selectedMembers.find(m => m.user_id === originalUserId);
+
+        if (!effectiveMember && !originalMember) {
+          return; // Skip if no member info found
         }
-        addedItemIds.add(itemId);
 
-        console.log(`[${componentIdRef.current}] Adding schedule item:`, {
-          id: itemId,
-          member: member.user_name,
-          hasOverride,
-          originalMember: originalMember?.user_name,
-          start: scheduleStart,
-          end: scheduleEnd,
-          isCurrent: isCurrentShift
-        });
+        // Helper to get color
+        const getMemberColor = (userId) => {
+          const idx = selectedMembers.findIndex(m => m.user_id === userId);
+          return idx >= 0 ? MEMBER_COLORS[idx % MEMBER_COLORS.length] : '#9ca3af';
+        };
 
-        // Build tooltip
-        const tooltipContent = hasOverride && originalMember
-          ? `Override: ${originalMember.user_name} → ${member.user_name}${schedule.override_reason ? `\nReason: ${schedule.override_reason}` : ''}`
-          : `${member.user_name}`;
+        // =================================================================================
+        // Layer 1: Configuration Layer (Original Schedule)
+        // =================================================================================
+        if (originalMember) {
+          const configItemId = `config-${schedule.id || scheduleIndex}`;
+          items.add({
+            id: configItemId,
+            group: 'layer-config',
+            start: scheduleStart,
+            end: scheduleEnd,
+            content: `
+                  <div class="timeline-shift-content">
+                    <div class="font-medium text-sm">${originalMember.user_name.split(' ')[0]}</div>
+                  </div>
+                `,
+            className: `shift-item`,
+            style: `background-color: ${getMemberColor(originalUserId)}; color: white; border-radius: 0px; opacity: 0.8;`,
+            editable: false // Prevent editing/deleting original schedule
+          });
+        }
 
-        items.add({
-          id: itemId,
-          group: effectiveUserId, // Use effective user ID for group assignment
-          start: scheduleStart,
-          end: scheduleEnd,
-          content: `
-            <div class="timeline-shift-content" title="${tooltipContent.replace(/\n/g, '&#10;')}">
-              <div style="font-weight: 500; font-size: 0.875rem; display: flex; align-items: center; gap: 0.25rem;">
-                ${hasOverride && originalMember ? `<span style="text-decoration: line-through; opacity: 0.6; font-size: 0.7em;">${originalMember.user_name.split(' ')[0]} </span> <small>override by </small>` : ''}
-                <span>${member.user_name.split(' ')[0]}</span>
-                ${hasOverride ? '<span style="font-size: 0.75rem;">✏️</span>' : ''}
-              </div>
-            </div>
-          `,
-          className: `shift-item ${isCurrentShift ? 'current-shift' : ''} ${hasOverride ? 'override-shift' : ''}`,
-          style: `
-            background-color: ${isCurrentShift ? '#f59e0b' : MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; 
-            color: white; 
-            border-radius: 0px; 
-            ${isCurrentShift ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}
-            ${hasOverride ? 'background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,.1) 10px, rgba(255,255,255,.1) 20px); border: 2px dashed rgba(255,255,255,0.5);' : ''}
-          `
-        });
+        // =================================================================================
+        // Layer 2: Override Layer (Only if overridden)
+        // =================================================================================
+        if (hasOverride && effectiveMember) {
+          const overrideItemId = `override-${schedule.id || scheduleIndex}`;
 
-        // Track current on-call member
-        if (isCurrentShift) {
-          setCurrentOnCall(member);
-          if (onCurrentOnCallChange) {
-            onCurrentOnCallChange(member);
+          // Use exact override times if available, otherwise fallback to shift times
+          const overrideStart = schedule.override_start_time ? new Date(schedule.override_start_time) : scheduleStart;
+          const overrideEnd = schedule.override_end_time ? new Date(schedule.override_end_time) : scheduleEnd;
+
+          items.add({
+            id: overrideItemId,
+            group: 'layer-override',
+            start: overrideStart,
+            end: overrideEnd,
+            content: `
+                  <div class="timeline-shift-content" title="${schedule.override_reason || 'Override'}">
+                    <div class="font-medium text-sm flex items-center gap-1">
+                        <span>${effectiveMember.user_name.split(' ')[0]}</span>
+                        <span style="font-size: 0.7rem">✏️</span>
+                    </div>
+                  </div>
+                `,
+            className: `shift-item override-shift`,
+            style: `
+                    background-color: ${getMemberColor(effectiveUserId)}; 
+                    color: white; 
+                    border-radius: 0px;
+                    background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,.1) 10px, rgba(255,255,255,.1) 20px);
+                    border: 2px dashed rgba(255,255,255,0.5);
+                `,
+            editable: true // Allow deleting overrides
+          });
+        }
+
+        // =================================================================================
+        // Layer 3: Final Schedule (Effective Schedule)
+        // =================================================================================
+        if (effectiveMember) {
+          // Logic to handle partial overrides in Final layer
+          // We need to split the shift into segments:
+          // 1. Pre-override (Original User)
+          // 2. Override (Effective User)
+          // 3. Post-override (Original User)
+
+          const segments = [];
+
+          if (hasOverride && schedule.override_start_time && schedule.override_end_time) {
+            const overrideStart = new Date(schedule.override_start_time);
+            const overrideEnd = new Date(schedule.override_end_time);
+
+            // 1. Pre-override segment
+            if (scheduleStart < overrideStart && originalMember) {
+              segments.push({
+                suffix: 'pre',
+                start: scheduleStart,
+                end: overrideStart,
+                member: originalMember,
+                isOverride: false
+              });
+            }
+
+            // 2. Override segment
+            segments.push({
+              suffix: 'main', // Keep 'main' or similar for the core override part
+              start: overrideStart,
+              end: overrideEnd,
+              member: effectiveMember,
+              isOverride: true
+            });
+
+            // 3. Post-override segment
+            if (overrideEnd < scheduleEnd && originalMember) {
+              segments.push({
+                suffix: 'post',
+                start: overrideEnd,
+                end: scheduleEnd,
+                member: originalMember,
+                isOverride: false
+              });
+            }
+          } else {
+            // No partial override logic needed, just one block
+            segments.push({
+              suffix: 'full',
+              start: scheduleStart,
+              end: scheduleEnd,
+              member: effectiveMember,
+              isOverride: hasOverride
+            });
           }
+
+          // Render segments
+          segments.forEach(segment => {
+            // Unique ID for each segment
+            // We use a composite ID but we need to ensure the click handler can parse it
+            // The click handler looks for "schedule-" prefix. 
+            // We can use "schedule-{id}-segment-{suffix}" and update the parser, 
+            // OR just use "schedule-{id}" for the main/full one and something else for others?
+            // Actually, all segments belong to the same shift logic-wise for clicking (editing the shift/override).
+            // So mapping back to the same shift ID is fine.
+
+            // Let's use a unique ID for vis-timeline but ensure our click handler can strip the suffix.
+            const segmentId = `schedule-${schedule.id || scheduleIndex}-${segment.suffix}`;
+
+            if (!addedItemIds.has(segmentId)) {
+              const isSegmentCurrent = typeof window !== 'undefined' && now >= segment.start && now < segment.end;
+
+              items.add({
+                id: segmentId,
+                group: 'layer-final',
+                start: segment.start,
+                end: segment.end,
+                content: `
+                        <div class="timeline-shift-content">
+                          <div class="font-medium text-sm">${segment.member.user_name.split(' ')[0]}</div>
+                        </div>
+                      `,
+                className: `shift-item ${isSegmentCurrent ? 'current-shift' : ''}`,
+                style: `
+                          background-color: ${getMemberColor(segment.member.user_id)}; 
+                          color: white; 
+                          border-radius: 0px;
+                          ${isSegmentCurrent ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}
+                      `,
+                editable: false // Prevent deleting final schedule items directly
+              });
+              addedItemIds.add(segmentId);
+
+              // Track current on-call member (only if this specific segment is active)
+              if (isSegmentCurrent) {
+                setCurrentOnCall(segment.member);
+                if (onCurrentOnCallChange) {
+                  onCurrentOnCallChange(segment.member);
+                }
+              }
+            }
+          });
         }
       });
     } else {
-      // Handle rotation format with handoff day/time logic
+      // Handle rotation format (fallback logic, rarely used in this view but good to keep)
+      // For rotation preview, we might not need layers, or we can just put everything in "Final".
+      // Let's put it in "Final" for simplicity.
       console.log(`[${componentIdRef.current}] Processing rotation format data`);
       const rotation = rotations[0];
-      if (!rotation.startDate || !rotation.shiftLength) {
-        console.warn(`[${componentIdRef.current}] Invalid rotation format:`, rotation);
-        return { items, groups };
-      }
+      if (rotation && rotation.startDate && rotation.shiftLength) {
+        const shiftDurationDays = getShiftDurationInDays(rotation.shiftLength);
+        const totalDays = 365;
+        const totalShifts = Math.ceil(totalDays / shiftDurationDays);
 
-      const shiftDurationDays = getShiftDurationInDays(rotation.shiftLength);
-      const now = typeof window !== 'undefined' ? new Date() : new Date('2024-01-01');
-      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-      // Generate shifts for the year using handoff logic
-      const totalDays = 365;
-      const totalShifts = Math.ceil(totalDays / shiftDurationDays);
-
-      for (let shiftIndex = 0; shiftIndex < totalShifts; shiftIndex++) {
-        const memberIndex = shiftIndex % selectedMembers.length;
-        const member = selectedMembers[memberIndex];
-
-        // Use calculateMemberTimes to get proper handoff times
-        const { memberStartTime, memberEndTime } = calculateMemberTimes(rotation, shiftIndex);
-        
-        const shiftStart = memberStartTime;
-        const shiftEnd = memberEndTime;
-
-        // Don't show shifts that are too far in the past
-        if (shiftEnd > oneWeekAgo) {
-          const isCurrentShift = typeof window !== 'undefined' && now >= shiftStart && now < shiftEnd;
+        for (let shiftIndex = 0; shiftIndex < totalShifts; shiftIndex++) {
+          const memberIndex = shiftIndex % selectedMembers.length;
+          const member = selectedMembers[memberIndex];
+          const { memberStartTime, memberEndTime } = calculateMemberTimes(rotation, shiftIndex);
 
           items.add({
             id: `shift-${shiftIndex}`,
-            group: member.user_id,
-            start: shiftStart,
-            end: shiftEnd,
-            content: `
-              <div class="timeline-shift-content">
-                <div class="font-medium text-sm">${member.user_name.split(' ')[0]}</div>
-              </div>
-            `,
-            className: `shift-item ${isCurrentShift ? 'current-shift' : ''}`,
-            style: `background-color: ${isCurrentShift ? '#f59e0b' : MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; color: white; border-radius: 0px; ${isCurrentShift ? 'border: 2px solid #fbbf24; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);' : ''}`
+            group: 'layer-final', // Put in Final layer
+            start: memberStartTime,
+            end: memberEndTime,
+            content: `<div class="font-medium text-sm">${member.user_name.split(' ')[0]}</div>`,
+            style: `background-color: ${MEMBER_COLORS[memberIndex % MEMBER_COLORS.length]}; color: white; border-radius: 0px;`,
+            editable: false
           });
-
-          // Track current on-call member
-          if (isCurrentShift) {
-            setCurrentOnCall(member);
-            if (onCurrentOnCallChange) {
-              onCurrentOnCallChange(member);
-            }
-          }
         }
       }
     }
 
     console.log(`[${componentIdRef.current}] Generated ${items.length} items and ${groups.length} groups`);
-    return { items };
+    return { items, groups };
   };
 
   // Get shift duration in days
@@ -402,7 +485,7 @@ const ScheduleTimeline = forwardRef(({
 
       // View configuration
       // orientation: 'top',
-      stack: true,
+      stack: false,
 
       // Time window - fixed window, don't auto-adjust
       start: start,
@@ -418,7 +501,7 @@ const ScheduleTimeline = forwardRef(({
       zoomMax: 1000 * 60 * 60 * 24 * 90, // 1 year
 
       // Height
-      minHeight: '300px',
+      // minHeight: '300px',
 
       // Margins
       margin: {
@@ -456,8 +539,29 @@ const ScheduleTimeline = forwardRef(({
       },
 
       // Group styling
-      groupOrder: function (a, b) {
-        return a.content.localeCompare(b.content);
+      groupOrder: 'order',
+
+      // Event Handlers
+      onRemove: function (item, callback) {
+        if (onRemoveOverride) {
+          // Identify the shift from the item ID
+          const itemId = item.id;
+          let shiftData = null;
+
+          if (itemId.startsWith('override-')) {
+            const scheduleId = itemId.replace('override-', '');
+            shiftData = rotations.find(s => s.id === scheduleId || s.id === parseInt(scheduleId));
+          }
+
+          if (shiftData) {
+            onRemoveOverride(shiftData);
+            callback(null); // Cancel immediate removal, let modal handle it
+          } else {
+            callback(null); // Cancel if not an override
+          }
+        } else {
+          callback(null);
+        }
       }
     };
   };
@@ -519,15 +623,18 @@ const ScheduleTimeline = forwardRef(({
             const itemId = properties.items[0];
             const item = items.get(itemId);
             console.log('Selected shift:', item);
-            
+
             // Find the actual shift data from rotations
             if (onShiftClick) {
-              // Extract shift index from item id (e.g., "schedule-123" or "shift-0")
+              // Extract shift index from item id (e.g., "schedule-123", "config-123", "override-123")
               let shiftData = null;
-              
-              if (itemId.startsWith('schedule-')) {
+
+              if (itemId.startsWith('schedule-') || itemId.startsWith('config-') || itemId.startsWith('override-')) {
                 // Schedule format data
-                const scheduleId = itemId.replace('schedule-', '');
+                // Remove prefixes to get the ID
+                // Handle segmented IDs for Final layer (e.g., schedule-123-pre, schedule-123-main)
+                // Regex: remove prefix, then optionally remove -pre/-main/-post/-full suffix
+                const scheduleId = itemId.replace(/^(schedule|config|override)-/, '').replace(/-(pre|main|post|full)$/, '');
                 shiftData = rotations.find(s => s.id === scheduleId || s.id === parseInt(scheduleId));
               } else if (itemId.startsWith('shift-')) {
                 // Rotation format data - need to reconstruct shift info
@@ -536,7 +643,7 @@ const ScheduleTimeline = forwardRef(({
                 if (rotation) {
                   const memberIndex = shiftIndex % selectedMembers.length;
                   const member = selectedMembers[memberIndex];
-                  
+
                   // Get shift times from item
                   shiftData = {
                     id: itemId,
@@ -549,7 +656,7 @@ const ScheduleTimeline = forwardRef(({
                   };
                 }
               }
-              
+
               if (shiftData) {
                 onShiftClick(shiftData);
               }

@@ -419,6 +419,78 @@ async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
         return {}
 
 
+async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
+    """
+    Sync MCP configuration from PostgreSQL to local .mcp.json file.
+    
+    This ensures the local workspace file matches the database state.
+    Should be called after any MCP server add/delete operation.
+    
+    Args:
+        user_id: User's UUID
+        
+    Returns:
+        {"success": bool, "message": str, "servers_count": int}
+    """
+    try:
+        from datetime import datetime
+        
+        # Get all active MCP servers from PostgreSQL
+        supabase = get_supabase_client()
+        result = supabase.table("user_mcp_servers").select("*").eq("user_id", user_id).eq("status", "active").execute()
+        
+        # Convert to .mcp.json format
+        mcp_servers = {}
+        for server in result.data or []:
+            server_name = server.get("server_name")
+            server_type = server.get("server_type", "stdio")
+            
+            if not server_name:
+                continue
+            
+            if server_type == "stdio":
+                mcp_servers[server_name] = {
+                    "command": server.get("command", ""),
+                    "args": server.get("args", []),
+                    "env": server.get("env", {})
+                }
+            elif server_type in ["sse", "http"]:
+                mcp_servers[server_name] = {
+                    "type": server_type,
+                    "url": server.get("url", ""),
+                    "headers": server.get("headers", {})
+                }
+        
+        # Build config object
+        config = {
+            "mcpServers": mcp_servers,
+            "metadata": {
+                "version": "1.0.0",
+                "updatedAt": datetime.now().isoformat(),
+                "syncedFrom": "postgresql"
+            }
+        }
+        
+        # Save to local .mcp.json file
+        save_config_to_file(user_id, config)
+        
+        logger.info(f"✅ Synced {len(mcp_servers)} MCP servers to local .mcp.json for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": f"Synced {len(mcp_servers)} servers to local file",
+            "servers_count": len(mcp_servers)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to sync MCP config to local for user {user_id}: {e}")
+        return {
+            "success": False,
+            "message": f"Sync failed: {str(e)}",
+            "servers_count": 0
+        }
+
+
 def get_user_id_from_token(auth_token: str) -> Optional[str]:
     """
     Convenience function to extract user_id from token.
@@ -510,6 +582,55 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"❌ Failed to load plugins for user {user_id}: {e}")
         return []
+
+
+async def sync_marketplace_zip_to_local(user_id: str, marketplace_name: str, zip_path: str) -> Dict[str, Any]:
+    """
+    Download marketplace ZIP from S3 to local workspace.
+    
+    This ensures marketplace ZIPs are available locally for plugin unzipping.
+    Should be called after uploading marketplace ZIP to S3.
+    
+    Args:
+        user_id: User's UUID
+        marketplace_name: Name of marketplace
+        zip_path: Path to ZIP in S3 (e.g., ".claude/plugins/marketplaces/...")
+        
+    Returns:
+        {"success": bool, "message": str, "local_path": str}
+    """
+    try:
+        logger.info(f"📦 Syncing marketplace ZIP to local for user {user_id}: {marketplace_name}")
+        
+        # Get workspace path
+        workspace_path = get_user_workspace_path(user_id)
+        
+        # Build local ZIP path
+        local_zip_path = workspace_path / zip_path
+        local_zip_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Download ZIP from S3
+        supabase = get_supabase_client()
+        zip_data = supabase.storage.from_(user_id).download(zip_path)
+        
+        # Write to local file
+        local_zip_path.write_bytes(zip_data)
+        
+        logger.info(f"✅ Marketplace ZIP synced to local: {local_zip_path} ({len(zip_data)} bytes)")
+        
+        return {
+            "success": True,
+            "message": f"Marketplace ZIP downloaded to {local_zip_path}",
+            "local_path": str(local_zip_path)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to sync marketplace ZIP to local: {e}")
+        return {
+            "success": False,
+            "message": f"Sync failed: {str(e)}",
+            "local_path": ""
+        }
 
 
 # ============================================================

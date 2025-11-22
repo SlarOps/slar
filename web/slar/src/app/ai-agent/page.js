@@ -48,7 +48,7 @@ export default function AIAgentPage() {
     approveTool,
     denyTool,
     connect: connectWebSocket,
-  } = useClaudeWebSocket(authToken, { autoConnect: true });
+  } = useClaudeWebSocket(authToken, { autoConnect: false });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
@@ -75,15 +75,20 @@ export default function AIAgentPage() {
     setInput(e.target.value);
   }, []);
 
-  // Sync-then-connect flow
+  // Trigger sync on mount (only once per auth token)
+  const hasSynced = useRef(false);
   useEffect(() => {
     if (!authToken) {
       console.log('No auth token, skipping sync');
       return;
     }
 
-    // Trigger sync on mount
-    syncBucket();
+    // Only sync once per session
+    if (!hasSynced.current) {
+      console.log('Triggering initial sync...');
+      syncBucket();
+      hasSynced.current = true;
+    }
   }, [authToken, syncBucket]);
 
   // Connect WebSocket after successful sync

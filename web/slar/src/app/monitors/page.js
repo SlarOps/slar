@@ -28,6 +28,7 @@ export default function MonitorsPage() {
     const [workerModalDeployment, setWorkerModalDeployment] = useState(null);
     const [deploymentToDelete, setDeploymentToDelete] = useState(null);
     const [monitorToEdit, setMonitorToEdit] = useState(null);
+    const [columnCount, setColumnCount] = useState(2);
 
     useEffect(() => {
         if (session?.access_token) {
@@ -164,14 +165,42 @@ export default function MonitorsPage() {
                         <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
                             Monitors for {selectedDeployment.name}
                         </h2>
-                        <button
-                            onClick={() => setShowMonitorModal(true)}
-                            className="w-full sm:w-auto px-3 sm:px-4 py-1.5 sm:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm"
-                        >
-                            Add Monitor
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                                <button
+                                    onClick={() => setColumnCount(1)}
+                                    className={`p-1.5 rounded-md transition-all ${columnCount === 1
+                                        ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                                        }`}
+                                    title="Single Column"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setColumnCount(2)}
+                                    className={`p-1.5 rounded-md transition-all ${columnCount === 2
+                                        ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                                        }`}
+                                    title="Two Columns"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4v16M15 4v16M4 4h16M4 20h16" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <button
+                                onClick={() => setShowMonitorModal(true)}
+                                className="w-full sm:w-auto px-3 sm:px-4 py-1.5 sm:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm"
+                            >
+                                Add Monitor
+                            </button>
+                        </div>
                     </div>
-                    <div className="grid gap-2 sm:gap-3">
+                    <div className={`grid gap-2 sm:gap-3 ${columnCount === 2 ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
                         {monitors
                             .filter(m => m.deployment_id === selectedDeployment.id)
                             .map((monitor) => (
@@ -350,18 +379,19 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
     const [responseTimes, setResponseTimes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expanded, setExpanded] = useState(false);
+    const [selectedPeriod, setSelectedPeriod] = useState('24h');
 
     useEffect(() => {
         loadMonitorStats();
     }, [monitor.id]);
 
-    const loadMonitorStats = async () => {
+    const loadMonitorStats = async (period = selectedPeriod) => {
         try {
             setLoading(true);
             const [statsData, historyData, responseData] = await Promise.all([
                 apiClient.getMonitorStats(monitor.id),
                 apiClient.getMonitorUptimeHistory(monitor.id),
-                apiClient.getMonitorResponseTimes(monitor.id, '24h') // Load for status bar
+                apiClient.getMonitorResponseTimes(monitor.id, period)
             ]);
             setStats(statsData);
             setHistory(historyData);
@@ -371,6 +401,11 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handlePeriodChange = async (period) => {
+        setSelectedPeriod(period);
+        await loadMonitorStats(period);
     };
 
 
@@ -508,9 +543,25 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                     {/* Response Time Chart */}
                     {responseTimes.length > 0 ? (
                         <div className="mt-3">
-                            <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-                                Response times (last 24 hours)
-                            </h4>
+                            <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                    Response times (last {selectedPeriod === '4h' ? '4 hours' : selectedPeriod === '24h' ? '24 hours' : selectedPeriod === '7d' ? '7 days' : '30 days'})
+                                </h4>
+                                <div className="flex gap-1">
+                                    {['4h', '24h', '7d', '30d'].map((period) => (
+                                        <button
+                                            key={period}
+                                            onClick={() => handlePeriodChange(period)}
+                                            className={`px-2 py-0.5 text-xs rounded transition-colors ${selectedPeriod === period
+                                                    ? 'bg-blue-600 text-white'
+                                                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                                }`}
+                                        >
+                                            {period}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                             <ResponseTimeChart data={responseTimes} height={120} />
                         </div>
                     ) : (

@@ -3,6 +3,7 @@ package monitor
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -473,16 +474,24 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 
 	period := c.DefaultQuery("period", "24h")
 	var duration int64
+	var bucketSize int64 // Downsampling bucket size in seconds
 
 	switch period {
+	case "4h":
+		duration = 4 * 3600
+		bucketSize = 0 // No aggregation
 	case "24h":
 		duration = 24 * 3600
+		bucketSize = 180 // 3 minutes
 	case "7d":
 		duration = 7 * 24 * 3600
+		bucketSize = 3600 // 1 hour
 	case "30d":
 		duration = 30 * 24 * 3600
+		bucketSize = 14400 // 4 hours
 	default:
 		duration = 24 * 3600
+		bucketSize = 180
 	}
 
 	// Get deployment info
@@ -502,17 +511,39 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 	cf := NewCloudflareClient(apiToken)
 
 	startTime := time.Now().Unix() - duration
-	results, err := cf.QueryD1SQL(accountID, dbID, `
-		SELECT 
-			created_at,
-			latency,
-			is_up,
-			status,
-			error
-		FROM monitor_logs
-		WHERE monitor_id = ? AND created_at >= ?
-		ORDER BY created_at ASC
-	`, []interface{}{id.String(), startTime})
+
+	// Build query based on bucket size
+	var query string
+	if bucketSize == 0 {
+		// No aggregation - return raw data
+		query = `
+			SELECT 
+				created_at,
+				latency,
+				is_up,
+				status,
+				error
+			FROM monitor_logs
+			WHERE monitor_id = ? AND created_at >= ?
+			ORDER BY created_at ASC
+		`
+	} else {
+		// Aggregate data into time buckets
+		query = fmt.Sprintf(`
+			SELECT 
+				(created_at / %d) * %d as created_at,
+				AVG(latency) as latency,
+				MAX(is_up) as is_up,
+				MAX(status) as status,
+				'' as error
+			FROM monitor_logs
+			WHERE monitor_id = ? AND created_at >= ?
+			GROUP BY (created_at / %d)
+			ORDER BY created_at ASC
+		`, bucketSize, bucketSize, bucketSize)
+	}
+
+	results, err := cf.QueryD1SQL(accountID, dbID, query, []interface{}{id.String(), startTime})
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

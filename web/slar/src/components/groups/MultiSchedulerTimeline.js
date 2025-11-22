@@ -60,7 +60,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
           }
         }
       }, 50);
-      
+
       return () => clearTimeout(timer);
     }
   }, [shifts, loading]);
@@ -90,11 +90,11 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
   const handleShiftClick = (shift) => {
     console.log('Shift clicked:', shift);
-    
+
     // If shift has override, show detail modal
     // Otherwise show create override modal
     const hasOverride = shift.is_overridden || shift.override_id;
-    
+
     if (hasOverride) {
       // IMPORTANT: Backend swaps user IDs when there's an override!
       // - shift.user_id = EFFECTIVE user (person actually on-call after override)
@@ -106,7 +106,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
       const originalMember = members.find(m => m.user_id === originalUserId);
       const currentMember = members.find(m => m.user_id === effectiveUserId);
-      
+
       setDetailModal({
         isOpen: true,
         shift: shift,
@@ -267,16 +267,16 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
       // Fetch schedulers and shifts for the group
       const [schedulersResponse, shiftsResponse] = await Promise.all([
         apiClient.getGroupSchedulers(groupId),
         apiClient.getGroupShifts(groupId)
       ]);
-      
+
       setSchedulers(schedulersResponse.schedulers || []);
       setShifts(shiftsResponse.shifts || []);
-      
+
       // Set default active tab to first scheduler
       if (schedulersResponse.schedulers && schedulersResponse.schedulers.length > 0) {
         setActiveTab(schedulersResponse.schedulers[0].id);
@@ -326,7 +326,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
             {schedulers.length} scheduler{schedulers.length !== 1 ? 's' : ''} • {shifts.length} shift{shifts.length !== 1 ? 's' : ''}
           </div>
         </div>
-        
+
         {/* Tabs */}
         <div className="px-6">
           <nav className="flex space-x-8" aria-label="Tabs">
@@ -335,11 +335,10 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
               <button
                 key={timeline.id}
                 onClick={() => setActiveTab(timeline.id)}
-                className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === timeline.id
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === timeline.id
                     ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
+                  }`}
               >
                 {timeline.displayName}
                 <span className="ml-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
@@ -358,7 +357,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
       <div className="p-6">
         {(() => {
           const currentTimeline = schedulerTimelines.find(t => t.id === activeTab);
-          
+
           if (!currentTimeline) {
             return (
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
@@ -411,11 +410,11 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                   <span>•</span>
                   <span>{currentTimeline.schedule_count} shift{currentTimeline.schedule_count !== 1 ? 's' : ''}</span>
                 </div>
-                
+
                 {/* Legend */}
                 <div className="mt-3 flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-4 rounded" style={{ 
+                    <div className="w-8 h-4 rounded" style={{
                       backgroundImage: 'repeating-linear-gradient(45deg, #3b82f6, #3b82f6 10px, rgba(59, 130, 246, 0.7) 10px, rgba(59, 130, 246, 0.7) 20px)',
                       border: '1px dashed rgba(255,255,255,0.5)'
                     }}></div>
@@ -423,13 +422,13 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                   </div>
                   <div className="flex items-center gap-2">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                     </svg>
                     <span>Override indicator</span>
                   </div>
                 </div>
               </div>
-              
+
               {currentTimeline.schedules.length === 0 ? (
                 <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                   <svg className="w-12 h-12 mx-auto mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -447,14 +446,14 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                     // Include both original users AND effective users (from overrides)
                     const uniqueMembers = [];
                     const seenIds = new Set();
-                    
+
                     currentTimeline.schedules.forEach(shift => {
                       // IMPORTANT: Backend swaps user IDs when there's an override!
                       // - shift.user_id = EFFECTIVE user (person actually on-call)
                       // - shift.original_user_id = ORIGINAL user (person originally scheduled)
                       const effectiveUserId = shift.user_id;
                       const originalUserId = shift.original_user_id;
-                      
+
                       // Add effective user (the one actually on-call)
                       if (effectiveUserId && !seenIds.has(effectiveUserId)) {
                         seenIds.add(effectiveUserId);
@@ -470,7 +469,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                           });
                         }
                       }
-                      
+
                       // Also add original user if different (for override context)
                       if (shift.is_overridden && originalUserId && originalUserId !== effectiveUserId && !seenIds.has(originalUserId)) {
                         seenIds.add(originalUserId);
@@ -489,12 +488,13 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
                         }
                       }
                     });
-                    
+
                     return uniqueMembers;
                   })()}
                   viewMode="2-week"
                   isVisible={true}
                   onShiftClick={handleShiftClick}
+                  onRemoveOverride={handleRemoveOverride}
                 />
               )}
             </div>
