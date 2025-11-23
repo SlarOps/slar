@@ -491,7 +491,7 @@ async def agent_task(
                 resume=session_id,
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
-                setting_sources=["project"],
+                setting_sources=["project","user"],
                 allowed_tools=allowed_tools,
             )
             async with ClaudeSDKClient(options) as client:

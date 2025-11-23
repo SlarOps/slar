@@ -5,24 +5,22 @@ services:
     container_name: slar-ai
     build:
       context: ../../api/ai
-      platforms:
-        - linux/amd64
-    image: ghcr.io/slarops/slar-ai:1.0.1
-    platform: linux/amd64
     expose:
       - "8002"
     ports:
       - "8002:8002"
+    volumes:
+      - claude_data:/root/.claude
     environment:
       - PORT=8002
       - HOST=0.0.0.0
       - API_BASE_URL=http://api:8080
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - AI_ALLOWED_ORIGINS=${AI_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
       - AI_RATE_LIMIT=${AI_RATE_LIMIT:-60}
+      - SLAR_API_URL=${SLAR_API_URL:-http://api:8080}
     restart: unless-stopped
     networks:
       - slar-network
@@ -37,10 +35,6 @@ services:
     container_name: slar-api
     build:
       context: ../../api
-      platforms:
-        - linux/amd64
-    image: ghcr.io/slarops/slar-api:1.0.1
-    platform: linux/amd64
     expose:
       - "8080"
     ports:
@@ -66,10 +60,6 @@ services:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
-      platforms:
-        - linux/amd64
-    image: ghcr.io/slarops/slar-slack-worker:1.0.1
-    platform: linux/amd64
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
@@ -89,10 +79,6 @@ services:
     build:
       context: ../../web/slar
       dockerfile: Dockerfile
-      # Note: Requires building Next.js locally first
-      # Run: cd ../../web/slar && npm run build
-      platforms:
-        - linux/amd64
     image: ghcr.io/slarops/slar-web:1.0.1
     expose:
       - "3000"
@@ -150,3 +136,6 @@ services:
 networks:
   slar-network:
     driver: bridge
+
+volumes:
+  claude_data:
