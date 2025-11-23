@@ -99,7 +99,7 @@ export default function IncidentDetailModal({
       onClose={onClose}
       size="5xl"
       scrollable={true}
-      maxHeight="calc(90vh - 120px)"
+      maxHeight="calc(100vh - 40px)"
     >
       <div className="space-y-4 md:space-y-6">
         <IncidentHeader
@@ -120,17 +120,17 @@ export default function IncidentDetailModal({
             </div>
           </div>
         ) : incident ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
             {/* Main Content - Alert Information */}
-            <div className="lg:col-span-2 space-y-6">
+            <div className="lg:col-span-2 space-y-4 md:space-y-6">
               {/* Alert Content */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
 
                 <div className="space-y-4">
                   {/* Alert Title and Description */}
                   <div>
-                    <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2">
+                    <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
                       {incident.title}
                     </h4>
                     {incident.description && (

@@ -16,13 +16,22 @@ import 'highlight.js/styles/github.css';
 import { useClaudeWebSocket } from '../../hooks/useClaudeWebSocket';
 import { useSyncBucket } from '../../hooks/useSyncBucket';
 
-export default function AIAgentPage() {
+function AIAgentContent() {
   const { session } = useAuth();
+  const searchParams = useSearchParams();
+  const incidentId = searchParams.get('incident');
   const [input, setInput] = useState("");
   const [isNavVisible, setIsNavVisible] = useState(true);
   const endRef = useRef(null);
   const messageAreaRef = useRef(null);
   const lastClickTime = useRef(0);
+
+  // Pre-fill input with incident context if available
+  useEffect(() => {
+    if (incidentId) {
+      setInput(`Analyze incident ${incidentId}`);
+    }
+  }, [incidentId]);
 
   // Extract auth token from session
   const authToken = session?.access_token || null;
@@ -318,5 +327,17 @@ export default function AIAgentPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function AIAgentPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    }>
+      <AIAgentContent />
+    </Suspense>
   );
 }

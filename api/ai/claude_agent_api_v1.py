@@ -1218,7 +1218,7 @@ async def update_memory(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         content = body.get("content", "")
         scope = body.get("scope", "local")  # default to 'local'
 
@@ -1338,7 +1338,7 @@ async def sync_skills(request: Request):
     """
     try:
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
 
         if not auth_token:
             logger.warning("⚠️  No auth token provided for skill sync")
@@ -1599,7 +1599,7 @@ async def install_plugin(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         plugin = body.get("plugin", {})
 
         if not auth_token:
@@ -1763,7 +1763,7 @@ async def fetch_marketplace_metadata(request: Request):
         from supabase_storage import extract_user_id_from_token, get_supabase_client
 
         body = await request.json()
-        auth_token = body.get("auth_token", "")
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
         owner = body.get("owner")
         repo = body.get("repo")
         branch = body.get("branch", "main")
