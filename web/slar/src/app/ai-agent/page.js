@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import { ChatInput } from '../../components/ui';
@@ -127,8 +127,7 @@ function AIAgentContent() {
   }, [messages, sendMessage]);
 
   // Handle incident analysis from URL
-  const searchParams = useSearchParams();
-  const incidentId = searchParams.get('incident');
+
   const hasSentAutoPrompt = useRef(false);
 
   useEffect(() => {

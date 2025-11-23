@@ -199,7 +199,7 @@ export default function MonitorsPage() {
                                 Add Monitor
                             </button>
                         </div>
-                    </div>
+                    </div >
                     <div className={`grid gap-2 sm:gap-3 ${columnCount === 2 ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
                         {monitors
                             .filter(m => m.deployment_id === selectedDeployment.id)
@@ -212,42 +212,51 @@ export default function MonitorsPage() {
                                 />
                             ))}
                     </div>
-                </div>
-            )}
+                </div >
+            )
+            }
 
             {/* Modals */}
-            {showDeployModal && (
-                <DeploymentModal onClose={() => setShowDeployModal(false)} onSuccess={loadData} />
-            )}
-            {showMonitorModal && selectedDeployment && (
-                <MonitorModal
-                    deploymentId={selectedDeployment.id}
-                    monitor={monitorToEdit}
-                    onClose={handleCloseMonitorModal}
-                    onSuccess={loadData}
-                />
-            )}
-            {showWorkerModal && workerModalDeployment && (
-                <WorkerDetailsModal
-                    deployment={workerModalDeployment}
-                    onClose={() => setShowWorkerModal(false)}
-                    onUpdate={loadData}
-                    onDeleteClick={handleWorkerModalDelete}
-                />
-            )}
-            {showDeleteModal && deploymentToDelete && (
-                <DeleteDeploymentModal
-                    deployment={deploymentToDelete}
-                    onClose={() => setShowDeleteModal(false)}
-                    onSuccess={() => {
-                        loadData();
-                        if (selectedDeployment?.id === deploymentToDelete.id) {
-                            setSelectedDeployment(null);
-                        }
-                    }}
-                />
-            )}
-        </div>
+            {
+                showDeployModal && (
+                    <DeploymentModal onClose={() => setShowDeployModal(false)} onSuccess={loadData} />
+                )
+            }
+            {
+                showMonitorModal && selectedDeployment && (
+                    <MonitorModal
+                        deploymentId={selectedDeployment.id}
+                        monitor={monitorToEdit}
+                        onClose={handleCloseMonitorModal}
+                        onSuccess={loadData}
+                    />
+                )
+            }
+            {
+                showWorkerModal && workerModalDeployment && (
+                    <WorkerDetailsModal
+                        deployment={workerModalDeployment}
+                        onClose={() => setShowWorkerModal(false)}
+                        onUpdate={loadData}
+                        onDeleteClick={handleWorkerModalDelete}
+                    />
+                )
+            }
+            {
+                showDeleteModal && deploymentToDelete && (
+                    <DeleteDeploymentModal
+                        deployment={deploymentToDelete}
+                        onClose={() => setShowDeleteModal(false)}
+                        onSuccess={() => {
+                            loadData();
+                            if (selectedDeployment?.id === deploymentToDelete.id) {
+                                setSelectedDeployment(null);
+                            }
+                        }}
+                    />
+                )
+            }
+        </div >
     );
 }
 
@@ -369,7 +378,7 @@ function DeploymentCard({ deployment, onSelect, onUpdate, onDelete, isSelected }
                     <div className="text-xs text-gray-400">Stats unavailable</div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
 
@@ -491,11 +500,12 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                 </div>
 
                 {/* Uptime Status Bar - Always Visible */}
-                {!loading && responseTimes.length > 0 && (
-                    <div className="mb-1.5">
-                        <UptimeStatusBar checks={responseTimes} />
-                    </div>
-                )}
+                {
+                    !loading && responseTimes.length > 0 && (
+                        <div className="mb-1.5">
+                            <UptimeStatusBar checks={responseTimes} />
+                        </div>
+                    )}
 
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                     <span>90 days ago</span>
@@ -505,78 +515,83 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
             </div>
 
             {/* Expanded View - Details */}
-            {expanded && (
-                <div className="border-t border-gray-200 dark:border-gray-700 p-3 sm:p-4 bg-gray-50 dark:bg-gray-800/50">
-                    {/* Monitor Details */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs mb-3">
-                        <div className="col-span-2">
-                            <span className="text-gray-500 dark:text-gray-400">
-                                {monitor.method === 'TCP_PING' ? 'Target:' : 'URL:'}
-                            </span>
-                            <p className="font-mono text-blue-600 dark:text-blue-400 truncate text-xs">
-                                {monitor.method === 'TCP_PING' ? (monitor.target || monitor.url) : monitor.url}
-                            </p>
-                        </div>
-                        <div>
-                            <span className="text-gray-500 dark:text-gray-400">Method:</span>
-                            <p className="font-medium">
-                                <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${monitor.method === 'TCP_PING'
-                                    ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400'
-                                    : 'bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
-                                    }`}>
-                                    {monitor.method}
+            {
+                expanded && (
+                    <div className="border-t border-gray-200 dark:border-gray-700 p-3 sm:p-4 bg-gray-50 dark:bg-gray-800/50">
+                        {/* Monitor Details */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs mb-3">
+                            <div className="col-span-2">
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    {monitor.method === 'TCP_PING' ? 'Target:' : 'URL:'}
                                 </span>
-                            </p>
-                        </div>
-                        <div>
-                            <span className="text-gray-500 dark:text-gray-400">Interval:</span>
-                            <p>{monitor.interval_seconds}s</p>
-                        </div>
-                        {stats && (
-                            <div>
-                                <span className="text-gray-500 dark:text-gray-400">Avg Latency:</span>
-                                <p>{stats.avg_latency_ms.toFixed(0)}ms</p>
+                                <p className="font-mono text-blue-600 dark:text-blue-400 truncate text-xs">
+                                    {monitor.method === 'TCP_PING' ? (monitor.target || monitor.url) : monitor.url}
+                                </p>
                             </div>
-                        )}
-                    </div>
+                            <div>
+                                <span className="text-gray-500 dark:text-gray-400">Method:</span>
+                                <p className="font-medium">
+                                    <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${monitor.method === 'TCP_PING'
+                                        ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400'
+                                        : 'bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
+                                        }`}>
+                                        {monitor.method}
+                                    </span>
+                                </p>
+                            </div>
+                            <div>
+                                <span className="text-gray-500 dark:text-gray-400">Interval:</span>
+                                <p>{monitor.interval_seconds}s</p>
+                            </div>
+                            {stats && (
+                                <div>
+                                    <span className="text-gray-500 dark:text-gray-400">Avg Latency:</span>
+                                    <p>{stats.avg_latency_ms.toFixed(0)}ms</p>
+                                </div>
+                            )}
+                        </div>
 
-                    {/* Response Time Chart */}
-                    {responseTimes.length > 0 ? (
-                        <div className="mt-3">
-                            <div className="flex items-center justify-between mb-2">
-                                <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                                    Response times (last {selectedPeriod === '4h' ? '4 hours' : selectedPeriod === '24h' ? '24 hours' : selectedPeriod === '7d' ? '7 days' : '30 days'})
-                                </h4>
-                                <div className="flex gap-1">
-                                    {['4h', '24h', '7d', '30d'].map((period) => (
-                                        <button
-                                            key={period}
-                                            onClick={() => handlePeriodChange(period)}
-                                            className={`px-2 py-0.5 text-xs rounded transition-colors ${selectedPeriod === period
+                        {/* Response Time Chart */}
+                        {responseTimes.length > 0 ? (
+                            <div className="mt-3">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                        Response times (last {selectedPeriod === '4h' ? '4 hours' : selectedPeriod === '24h' ? '24 hours' : selectedPeriod === '7d' ? '7 days' : '30 days'})
+                                    </h4>
+                                    <div className="flex gap-1">
+                                        {['4h', '24h', '7d', '30d'].map((period) => (
+                                            <button
+                                                key={period}
+                                                onClick={() => handlePeriodChange(period)}
+                                                className={`px-2 py-0.5 text-xs rounded transition-colors ${selectedPeriod === period
                                                     ? 'bg-blue-600 text-white'
                                                     : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                                                }`}
-                                        >
-                                            {period}
-                                        </button>
-                                    ))}
+                                                    }`}
+                                            >
+                                                {period}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
+                                <ResponseTimeChart data={responseTimes} height={120} />
+                            </div >
+                        ) : (
+                            <div className="flex items-center justify-center py-6">
+                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
                             </div>
-                            <ResponseTimeChart data={responseTimes} height={120} />
-                        </div>
-                    ) : (
-                        <div className="flex items-center justify-center py-6">
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                        </div>
-                    )}
-                </div>
-            )}
+                        )
+                        }
+                    </div >
+                )
+            }
 
-            {loading && !expanded && (
-                <div className="px-4 pb-4">
-                    <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
-                </div>
-            )}
-        </div>
+            {
+                loading && !expanded && (
+                    <div className="px-4 pb-4">
+                        <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                    </div>
+                )
+            }
+        </div >
     )
 }

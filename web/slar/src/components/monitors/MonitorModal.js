@@ -163,179 +163,191 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                                 { value: 'CERT_CHECK', label: 'Certificate Check', description: 'Validate SSL/TLS certificates' },
                             ]}
                         />
-                        {isTCPPing && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                TCP_PING checks if a TCP port is reachable
-                            </p>
-                        )}
-                        {isDNS && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                DNS monitors domain name resolution and validates IP addresses
-                            </p>
-                        )}
-                        {isCertCheck && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Certificate check validates SSL/TLS certificates for HTTPS sites
-                            </p>
-                        )}
-                    </div>
+                        {
+                            isTCPPing && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    TCP_PING checks if a TCP port is reachable
+                                </p>
+                            )
+                        }
+                        {
+                            isDNS && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    DNS monitors domain name resolution and validates IP addresses
+                                </p>
+                            )
+                        }
+                        {
+                            isCertCheck && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Certificate check validates SSL/TLS certificates for HTTPS sites
+                                </p>
+                            )
+                        }
+                    </div >
 
                     {/* URL (for HTTP) or Target (for TCP/DNS/CERT) */}
-                    {isTCPPing ? (
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Target (host:port) *
-                            </label>
-                            <input
-                                type="text"
-                                required
-                                value={formData.target}
-                                onChange={(e) => setFormData({ ...formData, target: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                placeholder="db.example.com:5432"
-                            />
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Examples: github.com:22 (SSH), db.example.com:3306 (MySQL)
-                            </p>
-                        </div>
-                    ) : isDNS ? (
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Domain Name *
-                            </label>
-                            <input
-                                type="text"
-                                required
-                                value={formData.target}
-                                onChange={(e) => setFormData({ ...formData, target: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                placeholder="example.com"
-                            />
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Domain to resolve (without http://)
-                            </p>
-                        </div>
-                    ) : isCertCheck ? (
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                HTTPS URL *
-                            </label>
-                            <input
-                                type="text"
-                                required
-                                value={formData.target}
-                                onChange={(e) => setFormData({ ...formData, target: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                placeholder="https://example.com"
-                            />
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                HTTPS URL to check certificate
-                            </p>
-                        </div>
-                    ) : (
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                URL *
-                            </label>
-                            <input
-                                type="url"
-                                required
-                                value={formData.url}
-                                onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                placeholder="https://api.example.com/health"
-                            />
-                        </div>
-                    )}
-
-                    {/* DNS-specific fields */}
-                    {isDNS && (
-                        <>
-                            <div>
+                    {
+                        isTCPPing ? (
+                            <div className="col-span-2">
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    DNS Record Type *
-                                </label>
-                                <select
-                                    value={formData.dns_record_type}
-                                    onChange={(e) => setFormData({ ...formData, dns_record_type: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                                >
-                                    <option value="A">A (IPv4)</option>
-                                    <option value="AAAA">AAAA (IPv6)</option>
-                                    <option value="CNAME">CNAME</option>
-                                    <option value="MX">MX (Mail)</option>
-                                    <option value="TXT">TXT</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Expected Values (optional)
+                                    Target (host:port) *
                                 </label>
                                 <input
                                     type="text"
-                                    value={formData.expected_values}
-                                    onChange={(e) => setFormData({ ...formData, expected_values: e.target.value })}
+                                    required
+                                    value={formData.target}
+                                    onChange={(e) => setFormData({ ...formData, target: e.target.value })}
                                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                    placeholder="1.2.3.4, 5.6.7.8"
+                                    placeholder="db.example.com:5432"
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Comma-separated IPs or values to validate
+                                    Examples: github.com:22 (SSH), db.example.com:3306 (MySQL)
                                 </p>
                             </div>
-                        </>
-                    )}
-
-                    {/* HTTP-only fields */}
-                    {isHTTP && (
-                        <>
-                            {/* Headers */}
+                        ) : isDNS ? (
                             <div className="col-span-2">
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Headers (JSON)
-                                </label>
-                                <textarea
-                                    value={formData.headers}
-                                    onChange={(e) => setFormData({ ...formData, headers: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                    placeholder='{"Content-Type": "application/json"}'
-                                    rows={2}
-                                />
-                            </div>
-
-                            {/* Body (for POST/PUT/PATCH) */}
-                            {supportsBody && (
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                        Request Body
-                                    </label>
-                                    <textarea
-                                        value={formData.body}
-                                        onChange={(e) => setFormData({ ...formData, body: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                        placeholder='{"test": true}'
-                                        rows={3}
-                                    />
-                                </div>
-                            )}
-
-                            {/* Expected Status */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Expected Status
+                                    Domain Name *
                                 </label>
                                 <input
-                                    type="number"
-                                    value={formData.expect_status}
-                                    onChange={(e) => setFormData({ ...formData, expect_status: parseInt(e.target.value) || 200 })}
-                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                                    placeholder="200"
+                                    type="text"
+                                    required
+                                    value={formData.target}
+                                    onChange={(e) => setFormData({ ...formData, target: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                    placeholder="example.com"
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Leave as 200 for any 2xx status
+                                    Domain to resolve (without http://)
                                 </p>
                             </div>
-                        </>
-                    )}
+                        ) : isCertCheck ? (
+                            <div className="col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    HTTPS URL *
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={formData.target}
+                                    onChange={(e) => setFormData({ ...formData, target: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                    placeholder="https://example.com"
+                                />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    HTTPS URL to check certificate
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    URL *
+                                </label>
+                                <input
+                                    type="url"
+                                    required
+                                    value={formData.url}
+                                    onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                    placeholder="https://api.example.com/health"
+                                />
+                            </div>
+                        )
+                    }
+
+                    {/* DNS-specific fields */}
+                    {
+                        isDNS && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        DNS Record Type *
+                                    </label>
+                                    <select
+                                        value={formData.dns_record_type}
+                                        onChange={(e) => setFormData({ ...formData, dns_record_type: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                    >
+                                        <option value="A">A (IPv4)</option>
+                                        <option value="AAAA">AAAA (IPv6)</option>
+                                        <option value="CNAME">CNAME</option>
+                                        <option value="MX">MX (Mail)</option>
+                                        <option value="TXT">TXT</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        Expected Values (optional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={formData.expected_values}
+                                        onChange={(e) => setFormData({ ...formData, expected_values: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                        placeholder="1.2.3.4, 5.6.7.8"
+                                    />
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                        Comma-separated IPs or values to validate
+                                    </p>
+                                </div>
+                            </>
+                        )
+                    }
+
+                    {/* HTTP-only fields */}
+                    {
+                        isHTTP && (
+                            <>
+                                {/* Headers */}
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        Headers (JSON)
+                                    </label>
+                                    <textarea
+                                        value={formData.headers}
+                                        onChange={(e) => setFormData({ ...formData, headers: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                        placeholder='{"Content-Type": "application/json"}'
+                                        rows={2}
+                                    />
+                                </div>
+
+                                {/* Body (for POST/PUT/PATCH) */}
+                                {supportsBody && (
+                                    <div className="col-span-2">
+                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                            Request Body
+                                        </label>
+                                        <textarea
+                                            value={formData.body}
+                                            onChange={(e) => setFormData({ ...formData, body: e.target.value })}
+                                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                            placeholder='{"test": true}'
+                                            rows={3}
+                                        />
+                                    </div>
+                                )}
+
+                                {/* Expected Status */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        Expected Status
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={formData.expect_status}
+                                        onChange={(e) => setFormData({ ...formData, expect_status: parseInt(e.target.value) || 200 })}
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                        placeholder="200"
+                                    />
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                        Leave as 200 for any 2xx status
+                                    </p>
+                                </div>
+                            </>
+                        )
+                    }
 
                     {/* Interval */}
                     <div>
@@ -366,22 +378,24 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                     </div>
 
                     {/* Follow Redirects */}
-                    {!isTCPPing && (
-                        <div className="flex items-center mt-6">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={formData.follow_redirect}
-                                    onChange={(e) => setFormData({ ...formData, follow_redirect: e.target.checked })}
-                                    className="w-4 h-4 text-blue-600 rounded"
-                                />
-                                <span className="text-sm text-gray-700 dark:text-gray-300">
-                                    Follow Redirects
-                                </span>
-                            </label>
-                        </div>
-                    )}
-                </div>
+                    {
+                        !isTCPPing && (
+                            <div className="flex items-center mt-6">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.follow_redirect}
+                                        onChange={(e) => setFormData({ ...formData, follow_redirect: e.target.checked })}
+                                        className="w-4 h-4 text-blue-600 rounded"
+                                    />
+                                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                                        Follow Redirects
+                                    </span>
+                                </label>
+                            </div>
+                        )
+                    }
+                </div >
 
                 <ModalFooter>
                     <ModalButton variant="secondary" onClick={onClose}>
@@ -391,7 +405,7 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
                         Create Monitor
                     </ModalButton>
                 </ModalFooter>
-            </form>
-        </Modal>
+            </form >
+        </Modal >
     );
 }
