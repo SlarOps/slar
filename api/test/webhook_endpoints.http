@@ -134,15 +134,15 @@ Content-Type: application/json
 ###
 
 # Test Generic webhook
-POST http://localhost:8080/webhook/webhook/550e8400-e29b-41d4-a716-446655440004
+POST https://c2d7fa85c1ff.ngrok-free.app/webhook/webhook/960c9a58-4d11-4789-a9d2-e061a637018c
 Content-Type: application/json
 
 {
-  "alert_name": "Custom Alert",
+  "alert_name": "API Unreachable Alert",
   "severity": "warning",
   "status": "firing",
-  "summary": "Custom monitoring system detected an issue",
-  "description": "Detailed description of the custom alert",
+  "summary": "API has unreachable",
+  "description": "API has unreachable",
   "labels": {
     "service": "api-server",
     "environment": "production",

@@ -1,6 +1,6 @@
 // API client for SLAR backend
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-const AI_BASE_URL =  process.env.NEXT_PUBLIC_AI_API_URL || '/ai'
+const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai'
 
 class APIClient {
   constructor() {
@@ -46,28 +46,28 @@ class APIClient {
     return this.request('/dashboard');
   }
 
-    // Incident endpoints (PagerDuty-style)
+  // Incident endpoints (PagerDuty-style)
   async getIncidents(queryString = '', filters = {}) {
     // Build query parameters from filters object
     const params = new URLSearchParams();
-    
+
     // Add legacy queryString support
     if (queryString) {
       params.append('status', queryString.replace('status=', ''));
     }
-    
+
     // Add filters
     Object.entries(filters).forEach(([key, value]) => {
       if (value && value !== '') {
         // Map frontend filter keys to backend parameter names
-        const paramKey = key === 'service' ? 'service_id' : 
-                        key === 'group' ? 'group_id' : 
-                        key === 'assignedTo' ? 'assigned_to' : 
-                        key === 'timeRange' ? 'time_range' : key;
+        const paramKey = key === 'service' ? 'service_id' :
+          key === 'group' ? 'group_id' :
+            key === 'assignedTo' ? 'assigned_to' :
+              key === 'timeRange' ? 'time_range' : key;
         params.append(paramKey, value);
       }
     });
-    
+
     const queryStr = params.toString();
     return this.request(`/incidents${queryStr ? `?${queryStr}` : ''}`);
   }
@@ -143,7 +143,7 @@ class APIClient {
     if (filters.severity) params.append('severity', filters.severity);
     if (filters.status) params.append('status', filters.status);
     if (filters.sort) params.append('sort', filters.sort);
-    
+
     // Add label filters
     if (filters.labels) {
       Object.entries(filters.labels).forEach(([key, value]) => {
@@ -194,7 +194,7 @@ class APIClient {
     if (filters.status === 'active') params.append('active_only', 'true');
     if (filters.status === 'inactive') params.append('active_only', 'false');
     if (filters.sort) params.append('sort', filters.sort);
-    
+
     const queryString = params.toString();
     return this.request(`/groups${queryString ? `?${queryString}` : ''}`);
   }
@@ -203,7 +203,7 @@ class APIClient {
   async getMyGroups(filters = {}) {
     const params = new URLSearchParams();
     if (filters.type) params.append('type', filters.type);
-    
+
     const queryString = params.toString();
     return this.request(`/groups/my${queryString ? `?${queryString}` : ''}`);
   }
@@ -212,7 +212,7 @@ class APIClient {
   async getPublicGroups(filters = {}) {
     const params = new URLSearchParams();
     if (filters.type) params.append('type', filters.type);
-    
+
     const queryString = params.toString();
     return this.request(`/groups/public${queryString ? `?${queryString}` : ''}`);
   }
@@ -225,7 +225,7 @@ class APIClient {
     if (filters.status === 'active') params.append('active_only', 'true');
     if (filters.status === 'inactive') params.append('active_only', 'false');
     if (filters.sort) params.append('sort', filters.sort);
-    
+
     const queryString = params.toString();
     return this.request(`/groups/all${queryString ? `?${queryString}` : ''}`);
   }
@@ -285,13 +285,13 @@ class APIClient {
   // Simple GitHub-style user search
   async searchUsers(filters = {}) {
     const params = new URLSearchParams();
-    
+
     if (filters.query) params.append('q', filters.query);
     if (filters.excludeUserIds?.length) {
       params.append('exclude', filters.excludeUserIds.join(','));
     }
     if (filters.limit) params.append('limit', filters.limit.toString());
-    
+
     const queryString = params.toString();
     return this.request(`/users/search${queryString ? `?${queryString}` : ''}`);
   }
@@ -358,7 +358,7 @@ class APIClient {
   async getUpcomingSchedules(groupId, days = 7) {
     const params = new URLSearchParams();
     if (days !== 7) params.append('days', days.toString());
-    
+
     const queryString = params.toString();
     return this.request(`/groups/${groupId}/schedules/upcoming${queryString ? `?${queryString}` : ''}`);
   }
@@ -402,7 +402,7 @@ class APIClient {
   async getRotationPreview(rotationId, weeks = 4) {
     const params = new URLSearchParams();
     if (weeks !== 4) params.append('weeks', weeks.toString());
-    
+
     const queryString = params.toString();
     return this.request(`/rotations/${rotationId}/preview${queryString ? `?${queryString}` : ''}`);
   }
@@ -449,7 +449,7 @@ class APIClient {
     if (filters.type) params.append('type', filters.type);
     if (filters.status) params.append('status', filters.status);
     if (filters.sort) params.append('sort', filters.sort);
-    
+
     const queryString = params.toString();
     return this.request(`/services${queryString ? `?${queryString}` : ''}`);
   }
@@ -561,7 +561,7 @@ class APIClient {
     Object.entries(labels).forEach(([key, value]) => {
       params.append(`label_${key}`, value);
     });
-    
+
     const queryString = params.toString();
     return this.request(`/alerts/by-labels${queryString ? `?${queryString}` : ''}`);
   }
@@ -623,7 +623,7 @@ class APIClient {
     const params = new URLSearchParams();
     if (filters.type) params.append('type', filters.type);
     if (filters.active_only) params.append('active_only', 'true');
-    
+
     const queryString = params.toString();
     return this.request(`/integrations${queryString ? `?${queryString}` : ''}`);
   }
@@ -667,7 +667,7 @@ class APIClient {
   async getIntegrationTemplates(type = null) {
     const params = new URLSearchParams();
     if (type) params.append('type', type);
-    
+
     const queryString = params.toString();
     return this.request(`/integrations/templates${queryString ? `?${queryString}` : ''}`);
   }
@@ -779,7 +779,7 @@ class APIClient {
     const params = new URLSearchParams();
     params.append('scope', scope);
     if (serviceId) params.append('service_id', serviceId);
-    
+
     const queryString = params.toString();
     return this.request(`/groups/${groupId}/schedules-by-scope${queryString ? `?${queryString}` : ''}`);
   }
@@ -955,6 +955,177 @@ class APIClient {
     }, this.aiBaseURL);
   }
 
+  // ===========================
+  // UPTIME MONITOR APIs
+  // ===========================
+
+  /**
+   * Get all monitors, optionally filtered by deployment
+   * @param {string} deploymentId - Optional deployment ID to filter by
+   * @returns {Promise<Array>} List of monitors
+   */
+  async getMonitors(deploymentId = null) {
+    const url = deploymentId
+      ? `/monitors?deployment_id=${deploymentId}`
+      : '/monitors';
+    return this.request(url);
+  }
+
+  /**
+   * Get all monitor deployments
+   * @returns {Promise<Array>} List of deployments
+   */
+  async getMonitorDeployments() {
+    return this.request('/monitors/deployments');
+  }
+
+  /**
+   * Get worker deployment statistics
+   * @param {string} deploymentId - Deployment ID
+   * @returns {Promise<object>} Worker stats
+   */
+  async getDeploymentStats(deploymentId) {
+    return this.request(`/monitors/deployments/${deploymentId}/stats`);
+  }
+
+  /**
+   * Create a new monitor
+   * @param {object} monitorData - Monitor configuration
+   * @returns {Promise<object>} Created monitor
+   */
+  async createMonitor(monitorData) {
+    return this.request('/monitors', {
+      method: 'POST',
+      body: JSON.stringify(monitorData)
+    });
+  }
+
+  /**
+   * Delete a monitor
+   * @param {string} monitorId - Monitor ID
+   * @returns {Promise<object>} Deletion result
+   */
+  async deleteMonitor(monitorId) {
+    return this.request(`/monitors/${monitorId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  /**
+   * Update a monitor
+   * @param {string} monitorId - Monitor ID
+   * @param {object} monitorData - Monitor configuration
+   * @returns {Promise<object>} Updated monitor
+   */
+  async updateMonitor(monitorId, monitorData) {
+    return this.request(`/monitors/${monitorId}`, {
+      method: 'PUT',
+      body: JSON.stringify(monitorData)
+    });
+  }
+
+  /**
+   * Deploy a Cloudflare Worker for monitoring
+   * @param {object} deploymentData - Deployment configuration
+   * @returns {Promise<object>} Deployment result
+   */
+  async deployMonitorWorker(deploymentData) {
+    return this.request('/monitors/deploy', {
+      method: 'POST',
+      body: JSON.stringify(deploymentData)
+    });
+  }
+
+  /**
+   * Get monitor statistics
+   * @param {string} monitorId - Monitor ID
+   * @returns {Promise<object>} Statistics (uptime %, avg latency, total checks)
+   */
+  async getMonitorStats(monitorId) {
+    return this.request(`/monitors/${monitorId}/stats`);
+  }
+
+  /**
+   * Get 90-day uptime history
+   * @param {string} monitorId - Monitor ID
+   * @returns {Promise<Array>} Daily uptime status
+   */
+  async getMonitorUptimeHistory(monitorId) {
+    return this.request(`/monitors/${monitorId}/uptime-history`);
+  }
+
+  /**
+   * Get response times for charting
+   * @param {string} monitorId - Monitor ID
+   * @param {string} period - Time period (24h, 7d, 30d)
+   * @returns {Promise<Array>} Response time data
+   */
+  async getMonitorResponseTimes(monitorId, period = '24h') {
+    return this.request(`/monitors/${monitorId}/response-times?period=${period}`);
+  }
+
+  /**
+   * Redeploy a monitor worker with latest code
+   * @param {string} deploymentId - Deployment ID
+   * @returns {Promise<object>} Redeploy result
+   */
+  async redeployMonitorWorker(deploymentId) {
+    return this.request(`/monitors/deployments/${deploymentId}/redeploy`, {
+      method: 'POST'
+    });
+  }
+
+  /**
+   * Delete a monitor deployment
+   * @param {string} deploymentId - Deployment ID
+   * @param {boolean} keepDatabase - Whether to keep the D1 database
+   * @returns {Promise<object>} Delete result
+   */
+  async deleteMonitorDeployment(deploymentId, keepDatabase = true) {
+    return this.request(`/monitors/deployments/${deploymentId}?keep_database=${keepDatabase}`, {
+      method: 'DELETE'
+    });
+  }
+
+  /**
+   * Get deployment integration info
+   * @param {string} deploymentId - Deployment ID
+   * @returns {Promise<object>} Integration info
+   */
+  async getDeploymentIntegration(deploymentId) {
+    return this.request(`/monitors/deployments/${deploymentId}/integration`);
+  }
+
+  /**
+   * Update deployment integration link
+   * @param {string} deploymentId - Deployment ID
+   * @param {string|null} integrationId - Integration ID to link (null to unlink)
+   * @returns {Promise<object>} Update result
+   */
+  async updateDeploymentIntegration(deploymentId, integrationId) {
+    return this.request(`/monitors/deployments/${deploymentId}/integration`, {
+      method: 'PUT',
+      body: JSON.stringify({ integration_id: integrationId })
+    });
+  }
+
+  // AI Agent endpoints
+  async addAllowedTool(toolName) {
+    return this.request('/api/allowed-tools', {
+      method: 'POST',
+      body: JSON.stringify({ tool_name: toolName })
+    }, this.aiBaseURL);
+  }
+
+  async getAllowedTools() {
+    return this.request('/api/allowed-tools', {}, this.aiBaseURL);
+  }
+
+  async removeAllowedTool(toolName) {
+    return this.request(`/api/allowed-tools?tool_name=${encodeURIComponent(toolName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
 }
 
 export const apiClient = new APIClient();

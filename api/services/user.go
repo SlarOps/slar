@@ -100,12 +100,16 @@ func (s *UserService) GetCurrentOnCallUser() (db.User, error) {
 	var u db.User
 	now := time.Now()
 
+	// Use effective_shifts view to get the actual on-call user (handling overrides)
 	err := s.PG.QueryRow(`
-		SELECT u.id, u.name, u.email, COALESCE(u.phone, '') as phone, u.role, u.team, COALESCE(u.fcm_token, '') as fcm_token, u.is_active, u.created_at, u.updated_at 
-		FROM users u 
-		JOIN on_call_schedules ocs ON u.id = ocs.user_id 
-		WHERE ocs.start_time <= $1 AND ocs.end_time >= $1 AND ocs.is_active = true AND u.is_active = true
-		ORDER BY ocs.start_time DESC 
+		SELECT 
+			u.id, u.name, u.email, COALESCE(u.phone, '') as phone, 
+			u.role, u.team, COALESCE(u.fcm_token, '') as fcm_token, 
+			u.is_active, u.created_at, u.updated_at 
+		FROM effective_shifts es
+		JOIN users u ON es.effective_user_id = u.id
+		WHERE es.start_time <= $1 AND es.end_time >= $1 
+		ORDER BY es.start_time DESC 
 		LIMIT 1`, now).
 		Scan(&u.ID, &u.Name, &u.Email, &u.Phone, &u.Role, &u.Team, &u.FCMToken, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
 
@@ -117,10 +121,11 @@ func (s *UserService) IsUserOnCall(userID string) (bool, error) {
 	now := time.Now()
 	var count int
 
+	// Use effective_shifts to check if user is effectively on call (including overrides)
 	err := s.PG.QueryRow(`
 		SELECT COUNT(*) 
-		FROM shifts ocs 
-		WHERE ocs.user_id = $1 AND ocs.start_time <= $2 AND ocs.end_time >= $2 AND ocs.is_active = true`,
+		FROM effective_shifts es
+		WHERE es.effective_user_id = $1 AND es.start_time <= $2 AND es.end_time >= $2`,
 		userID, now).Scan(&count)
 
 	if err != nil {

@@ -419,6 +419,78 @@ async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
         return {}
 
 
+async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
+    """
+    Sync MCP configuration from PostgreSQL to local .mcp.json file.
+    
+    This ensures the local workspace file matches the database state.
+    Should be called after any MCP server add/delete operation.
+    
+    Args:
+        user_id: User's UUID
+        
+    Returns:
+        {"success": bool, "message": str, "servers_count": int}
+    """
+    try:
+        from datetime import datetime
+        
+        # Get all active MCP servers from PostgreSQL
+        supabase = get_supabase_client()
+        result = supabase.table("user_mcp_servers").select("*").eq("user_id", user_id).eq("status", "active").execute()
+        
+        # Convert to .mcp.json format
+        mcp_servers = {}
+        for server in result.data or []:
+            server_name = server.get("server_name")
+            server_type = server.get("server_type", "stdio")
+            
+            if not server_name:
+                continue
+            
+            if server_type == "stdio":
+                mcp_servers[server_name] = {
+                    "command": server.get("command", ""),
+                    "args": server.get("args", []),
+                    "env": server.get("env", {})
+                }
+            elif server_type in ["sse", "http"]:
+                mcp_servers[server_name] = {
+                    "type": server_type,
+                    "url": server.get("url", ""),
+                    "headers": server.get("headers", {})
+                }
+        
+        # Build config object
+        config = {
+            "mcpServers": mcp_servers,
+            "metadata": {
+                "version": "1.0.0",
+                "updatedAt": datetime.now().isoformat(),
+                "syncedFrom": "postgresql"
+            }
+        }
+        
+        # Save to local .mcp.json file
+        save_config_to_file(user_id, config)
+        
+        logger.info(f"✅ Synced {len(mcp_servers)} MCP servers to local .mcp.json for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": f"Synced {len(mcp_servers)} servers to local file",
+            "servers_count": len(mcp_servers)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to sync MCP config to local for user {user_id}: {e}")
+        return {
+            "success": False,
+            "message": f"Sync failed: {str(e)}",
+            "servers_count": 0
+        }
+
+
 def get_user_id_from_token(auth_token: str) -> Optional[str]:
     """
     Convenience function to extract user_id from token.
@@ -510,6 +582,55 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"❌ Failed to load plugins for user {user_id}: {e}")
         return []
+
+
+async def sync_marketplace_zip_to_local(user_id: str, marketplace_name: str, zip_path: str) -> Dict[str, Any]:
+    """
+    Download marketplace ZIP from S3 to local workspace.
+    
+    This ensures marketplace ZIPs are available locally for plugin unzipping.
+    Should be called after uploading marketplace ZIP to S3.
+    
+    Args:
+        user_id: User's UUID
+        marketplace_name: Name of marketplace
+        zip_path: Path to ZIP in S3 (e.g., ".claude/plugins/marketplaces/...")
+        
+    Returns:
+        {"success": bool, "message": str, "local_path": str}
+    """
+    try:
+        logger.info(f"📦 Syncing marketplace ZIP to local for user {user_id}: {marketplace_name}")
+        
+        # Get workspace path
+        workspace_path = get_user_workspace_path(user_id)
+        
+        # Build local ZIP path
+        local_zip_path = workspace_path / zip_path
+        local_zip_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Download ZIP from S3
+        supabase = get_supabase_client()
+        zip_data = supabase.storage.from_(user_id).download(zip_path)
+        
+        # Write to local file
+        local_zip_path.write_bytes(zip_data)
+        
+        logger.info(f"✅ Marketplace ZIP synced to local: {local_zip_path} ({len(zip_data)} bytes)")
+        
+        return {
+            "success": True,
+            "message": f"Marketplace ZIP downloaded to {local_zip_path}",
+            "local_path": str(local_zip_path)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to sync marketplace ZIP to local: {e}")
+        return {
+            "success": False,
+            "message": f"Sync failed: {str(e)}",
+            "local_path": ""
+        }
 
 
 # ============================================================
@@ -1622,15 +1743,17 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
         }
 
 
-async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
+async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[str, Any]:
     """
     Sync CLAUDE.md content from PostgreSQL to workspace file.
 
-    Fetches memory content from claude_memory table and writes to
-    .claude/CLAUDE.md in user's workspace.
+    Fetches memory content from claude_memory table and writes to:
+    - Local scope: .claude/CLAUDE.md in user's workspace
+    - User scope: ~/.claude/CLAUDE.md (global user directory)
 
     Args:
         user_id: User's UUID
+        scope: Memory scope ('local' or 'user', default: 'local')
 
     Returns:
         Dictionary with sync results:
@@ -1641,28 +1764,37 @@ async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
         }
     """
     try:
-        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}")
-
-        # Get workspace path
-        workspace_path = get_user_workspace_path(user_id)
-
-        # Ensure .claude directory exists
-        claude_dir = workspace_path / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}, scope: {scope}")
 
         # Get Supabase client
         supabase = get_supabase_client()
 
-        # Fetch memory from PostgreSQL
-        result = supabase.table("claude_memory").select("content").eq("user_id", user_id).execute()
+        # Fetch memory from PostgreSQL with scope filter
+        result = supabase.table("claude_memory").select("content").eq("user_id", user_id).eq("scope", scope).execute()
 
         # Get content (empty string if no memory)
         content = ""
         if result.data and len(result.data) > 0:
             content = result.data[0].get("content", "")
 
-        # Write to .claude/CLAUDE.md
-        claude_md_path = claude_dir / "CLAUDE.md"
+        # Determine target path based on scope
+        if scope == "user":
+            # User memory: ~/.claude/CLAUDE.md (global)
+            import os
+            home_dir = Path(os.path.expanduser("~"))
+            claude_dir = home_dir / ".claude"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            claude_md_path = claude_dir / "CLAUDE.md"
+            target_description = "~/.claude/CLAUDE.md"
+        else:
+            # Local memory: workspaces/{user_id}/.claude/CLAUDE.md
+            workspace_path = get_user_workspace_path(user_id)
+            claude_dir = workspace_path / ".claude"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            claude_md_path = claude_dir / "CLAUDE.md"
+            target_description = ".claude/CLAUDE.md"
+
+        # Write to CLAUDE.md
         claude_md_path.write_text(content, encoding="utf-8")
 
         logger.info(f"✅ CLAUDE.md synced ({len(content)} chars) to: {claude_md_path}")
@@ -1670,7 +1802,7 @@ async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
         return {
             "success": True,
             "content_length": len(content),
-            "message": f"Memory synced to .claude/CLAUDE.md ({len(content)} chars)"
+            "message": f"Memory synced to {target_description} ({len(content)} chars)"
         }
 
     except Exception as e:
@@ -1919,3 +2051,103 @@ async def handle_bucket_sync_on_connect(auth_token: str, websocket) -> bool:
         except:
             pass  # Already logged, connection likely closed
         return False
+
+
+async def get_user_allowed_tools(user_id: str) -> List[str]:
+    """
+    Get list of allowed tools for user from PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        
+    Returns:
+        List of tool names that are allowed to run without permission
+    """
+    if not user_id:
+        return []
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Query user_allowed_tools table
+        # Schema: id, user_id, tool_name, created_at
+        result = supabase.table("user_allowed_tools").select("tool_name").eq("user_id", user_id).execute()
+        
+        if not result.data:
+            return []
+            
+        allowed_tools = [item.get("tool_name") for item in result.data if item.get("tool_name")]
+        logger.info(f"✅ Loaded {len(allowed_tools)} allowed tools for user {user_id}")
+        return allowed_tools
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to load allowed tools for user {user_id}: {e}")
+        return []
+
+
+async def add_user_allowed_tool(user_id: str, tool_name: str) -> bool:
+    """
+    Add a tool to the user's allowed tools list in PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        tool_name: Name of the tool to allow
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not user_id or not tool_name:
+        return False
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Check if already exists
+        existing = supabase.table("user_allowed_tools").select("id").eq("user_id", user_id).eq("tool_name", tool_name).execute()
+        
+        if existing.data:
+            logger.info(f"ℹ️ Tool {tool_name} already allowed for user {user_id}")
+            return True
+            
+        # Insert new record
+        data = {
+            "user_id": user_id,
+            "tool_name": tool_name
+        }
+        
+        supabase.table("user_allowed_tools").insert(data).execute()
+        logger.info(f"✅ Added {tool_name} to allowed tools for user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to add allowed tool {tool_name} for user {user_id}: {e}")
+        return False
+
+
+async def delete_user_allowed_tool(user_id: str, tool_name: str) -> bool:
+    """
+    Remove a tool from the user's allowed tools list in PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        tool_name: Name of the tool to remove
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not user_id or not tool_name:
+        return False
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Delete record
+        supabase.table("user_allowed_tools").delete().eq("user_id", user_id).eq("tool_name", tool_name).execute()
+        
+        logger.info(f"✅ Removed {tool_name} from allowed tools for user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to remove allowed tool {tool_name} for user {user_id}: {e}")
+        return False
+

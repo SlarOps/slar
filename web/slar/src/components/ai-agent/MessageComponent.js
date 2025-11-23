@@ -103,7 +103,7 @@ const summarizeToolResult = (content, maxLength = 300) => {
 };
 
 // Memoized Message Component để tránh re-render không cần thiết
-const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendingApprovalId }) => {
+const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlways, onDeny, pendingApprovals = [] }) => {
   // State for expandable tool results and thought
   const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
   const [isThoughtExpanded, setIsThoughtExpanded] = useState(false);
@@ -262,14 +262,14 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
         console.error('Error parsing tool info:', e);
       }
 
-      const isPending = message.approval_id === pendingApprovalId;
+      const isPending = pendingApprovals.some(a => a.request_id === message.request_id);
 
       return (
         <div className="border border-gray-500/20 rounded-lg p-3 my-2">
           <div className="">
             {/* Warning icon */}
             <div className="flex-shrink-0 mt-1">
-              
+
             </div>
 
             <div className="flex-1">
@@ -302,27 +302,40 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
 
               {/* Action buttons */}
               {isPending && onApprove && onDeny ? (
-                <div className="flex flex-row gap-2 mt-3">
+                <div className="flex flex-row gap-2 mt-2">
                   <button
-                    onClick={() => onDeny(message.approval_id)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors touch-manipulation"
+                    onClick={() => onDeny(message.request_id)}
+                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    title="Deny"
                   >
-                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
-                    <span className="hidden sm:inline">Deny</span>
-                    <span className="sm:hidden">Deny</span>
+                    <span>Deny</span>
                   </button>
                   <button
-                    onClick={() => onApprove(message.approval_id)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-transparent rounded-lg hover:bg-blue-700 transition-colors shadow-sm touch-manipulation"
+                    onClick={() => onApprove(message.request_id)}
+                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700 transition-colors shadow-sm"
+                    title="Approve once"
                   >
-                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span className="hidden sm:inline">Approve & Execute</span>
-                    <span className="sm:hidden">Approve</span>
+                    <span>Approve</span>
                   </button>
+
+                  {onApproveAlways && (
+                    <button
+                      onClick={() => onApproveAlways(message.request_id, toolName)}
+                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                      title="Approve and don't ask again for this tool"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Always Allow</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5 text-xs italic">
@@ -402,11 +415,10 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${
-          message.role === "user"
-            ? "bg-gray-100 text-gray-800"
-            : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-        }`}
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
+          ? "bg-gray-100 text-gray-800"
+          : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          }`}
       >
         {/* Thought display - expandable */}
         {message.role !== "user" && message.thought && (
@@ -443,8 +455,8 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
               </svg>
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="9" y="9" width="13" height="13" rx="2"/>
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
               </svg>
             )}
           </button>
@@ -455,8 +467,8 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onDeny, pendi
               className="p-2 sm:p-1 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-manipulation"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 10-3.51 7.06"/>
-                <path d="M21 12h-4"/>
+                <path d="M21 12a9 9 0 10-3.51 7.06" />
+                <path d="M21 12h-4" />
               </svg>
             </button>
           )}

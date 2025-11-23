@@ -983,6 +983,8 @@ func parseDatadogTimestamp(payload map[string]interface{}) time.Time {
 
 // Priority mapping functions
 func mapDatadogPriority(priority string) string {
+	// Datadog uses P1-P5 priority levels
+	// P1 = critical, P2 = high, P3 = medium/warning, P4 = low, P5 = info
 	switch strings.ToUpper(priority) {
 	case "P1":
 		return "critical"
@@ -991,9 +993,30 @@ func mapDatadogPriority(priority string) string {
 	case "P3":
 		return "warning"
 	case "P4":
+		return "low"
+	case "P5":
 		return "info"
 	default:
 		return "warning"
+	}
+}
+
+// mapSeverityToPriority converts severity levels to priority format (P1-P5)
+func mapSeverityToPriority(severity string) string {
+	// Map severity to Datadog-style priority
+	switch strings.ToLower(severity) {
+	case "critical", "crit":
+		return "P1"
+	case "high", "error":
+		return "P2"
+	case "warning", "warn", "medium":
+		return "P3"
+	case "low":
+		return "P4"
+	case "info", "informational":
+		return "P5"
+	default:
+		return "P3" // Default to warning/medium
 	}
 }
 

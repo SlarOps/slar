@@ -20,7 +20,7 @@ export default function OverrideDetailModal({ isOpen, onClose, shift, originalMe
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
               <svg className="w-6 h-6 text-blue-600 dark:text-blue-300" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
               </svg>
             </div>
             <div>
@@ -43,217 +43,192 @@ export default function OverrideDetailModal({ isOpen, onClose, shift, originalMe
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Shift Time */}
+        <div className="p-6 space-y-8">
+
+          {/* Layer 1: Original Schedule */}
           <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Shift Schedule</h4>
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-2">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-8 bg-gray-400 rounded-sm"></div>
+              <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Original Schedule</h4>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Start</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {shiftStartDate.toLocaleString('en-US', { 
-                    weekday: 'short', 
-                    month: 'short', 
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    hour12: true 
-                  })}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-400">End</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {shiftEndDate.toLocaleString('en-US', { 
-                    weekday: 'short', 
-                    month: 'short', 
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    hour12: true 
-                  })}
-                </span>
-              </div>
-              <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Duration: {Math.round((shiftEndDate - shiftStartDate) / (1000 * 60 * 60 * 24))} days
-                </span>
+                <div className="flex items-center gap-3">
+                  {originalMember ? (
+                    <>
+                      <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+                          {originalMember.user_name[0].toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-white">
+                          {originalMember.user_name}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Original Assignee
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Unknown Original User</div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                    {shiftStartDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} - {shiftEndDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {shiftStartDate.toLocaleDateString()}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Override Information */}
-          {hasOverride ? (
-            <>
-              {/* Users */}
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Assignment Change</h4>
-                <div className="flex items-center gap-4">
-                  {/* Original User */}
-                  <div className="flex-1 bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">Original</div>
-                    {originalMember ? (
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                          <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
-                            {originalMember.user_name[0].toUpperCase()}
-                          </span>
-                        </div>
-                        <div>
-                          <div className="font-medium text-gray-900 dark:text-white line-through opacity-60">
-                            {originalMember.user_name}
-                          </div>
-                          {originalMember.user_email && (
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {originalMember.user_email}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500 dark:text-gray-400">Unknown</div>
-                    )}
-                  </div>
-
-                  {/* Arrow */}
-                  <div className="flex-shrink-0">
-                    <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                  </div>
-
-                  {/* Override User */}
-                  <div className="flex-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border-2 border-blue-200 dark:border-blue-800">
-                    <div className="text-xs text-blue-600 dark:text-blue-400 mb-2">Override</div>
-                    {currentMember ? (
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-                          <span className="text-sm font-medium text-blue-600 dark:text-blue-300">
-                            {currentMember.user_name[0].toUpperCase()}
-                          </span>
-                        </div>
-                        <div>
-                          <div className="font-medium text-gray-900 dark:text-white">
-                            {currentMember.user_name}
-                          </div>
-                          {currentMember.user_email && (
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {currentMember.user_email}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500 dark:text-gray-400">Unknown</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Override Details */}
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Override Details</h4>
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
-                  {shift.override_type && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600 dark:text-gray-400">Type</span>
-                      <span className={`px-2 py-1 text-xs font-medium rounded ${
-                        shift.override_type === 'permanent' 
-                          ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
-                          : shift.override_type === 'emergency'
-                          ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                          : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-                      }`}>
-                        {shift.override_type.charAt(0).toUpperCase() + shift.override_type.slice(1)}
-                      </span>
-                    </div>
-                  )}
-
-                  {shift.override_reason && (
-                    <div>
-                      <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Reason</div>
-                      <div className="text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-800 p-2 rounded">
-                        {shift.override_reason}
-                      </div>
-                    </div>
-                  )}
-
-                  {overrideStartDate && overrideEndDate && (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Override Start</span>
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {overrideStartDate.toLocaleString('en-US', { 
-                            month: 'short', 
-                            day: 'numeric',
-                            hour: '2-digit', 
-                            minute: '2-digit',
-                            hour12: true 
-                          })}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Override End</span>
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {overrideEndDate.toLocaleString('en-US', { 
-                            month: 'short', 
-                            day: 'numeric',
-                            hour: '2-digit', 
-                            minute: '2-digit',
-                            hour12: true 
-                          })}
-                        </span>
-                      </div>
-                    </>
-                  )}
-
-                  {shift.created_at && (
-                    <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        Created: {new Date(shift.created_at).toLocaleString('en-US', { 
-                          month: 'short', 
-                          day: 'numeric',
-                          year: 'numeric',
-                          hour: '2-digit', 
-                          minute: '2-digit'
-                        })}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            /* No Override */
+          {/* Layer 2: Override */}
+          {hasOverride && (
             <div>
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Assigned To</h4>
-              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                {currentMember ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-                      <span className="text-lg font-medium text-blue-600 dark:text-blue-300">
-                        {currentMember.user_name[0].toUpperCase()}
-                      </span>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-8 bg-blue-500 rounded-sm"></div>
+                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Override</h4>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border-2 border-dashed border-blue-300 dark:border-blue-700 relative overflow-hidden">
+                {/* Background pattern */}
+                <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #3b82f6 0, #3b82f6 10px, transparent 10px, transparent 20px)' }}></div>
+
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      {currentMember ? (
+                        <>
+                          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-800 flex items-center justify-center border-2 border-white dark:border-gray-600 shadow-sm">
+                            <span className="text-sm font-medium text-blue-600 dark:text-blue-200">
+                              {currentMember.user_name[0].toUpperCase()}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="font-medium text-gray-900 dark:text-white">
+                              {currentMember.user_name}
+                            </div>
+                            <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                              Override Assignee
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-sm text-gray-500 dark:text-gray-400">Unknown Override User</div>
+                      )}
                     </div>
-                    <div>
-                      <div className="font-medium text-gray-900 dark:text-white">
-                        {currentMember.user_name}
+                    <div className="text-right">
+                      <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                        {overrideStartDate ? overrideStartDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : 'Full Shift'}
+                        {overrideEndDate ? ` - ${overrideEndDate.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : ''}
                       </div>
-                      {currentMember.user_email && (
-                        <div className="text-sm text-gray-500 dark:text-gray-400">
-                          {currentMember.user_email}
+                      {shift.override_reason && (
+                        <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded inline-block">
+                          Reason: {shift.override_reason}
                         </div>
                       )}
                     </div>
                   </div>
-                ) : (
-                  <div className="text-sm text-gray-500 dark:text-gray-400">No one assigned</div>
-                )}
+
+                  {/* Override Type Badge */}
+                  {shift.override_type && (
+                    <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100">
+                      {shift.override_type.charAt(0).toUpperCase() + shift.override_type.slice(1)} Override
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
+
+          {/* Layer 3: Final Schedule */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-8 bg-green-500 rounded-sm"></div>
+              <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Final Schedule</h4>
+            </div>
+
+            <div className="space-y-2">
+              {(() => {
+                // Logic to split segments (same as timeline)
+                const segments = [];
+
+                if (hasOverride && overrideStartDate && overrideEndDate) {
+                  // 1. Pre-override
+                  if (shiftStartDate < overrideStartDate && originalMember) {
+                    segments.push({
+                      type: 'original',
+                      start: shiftStartDate,
+                      end: overrideStartDate,
+                      member: originalMember
+                    });
+                  }
+                  // 2. Override
+                  segments.push({
+                    type: 'override',
+                    start: overrideStartDate,
+                    end: overrideEndDate,
+                    member: currentMember
+                  });
+                  // 3. Post-override
+                  if (overrideEndDate < shiftEndDate && originalMember) {
+                    segments.push({
+                      type: 'original',
+                      start: overrideEndDate,
+                      end: shiftEndDate,
+                      member: originalMember
+                    });
+                  }
+                } else {
+                  // Full shift (either fully overridden or no override)
+                  segments.push({
+                    type: hasOverride ? 'override' : 'original',
+                    start: shiftStartDate,
+                    end: shiftEndDate,
+                    member: currentMember || originalMember
+                  });
+                }
+
+                return segments.map((segment, idx) => (
+                  <div key={idx} className={`flex items-center p-3 rounded-lg border ${segment.type === 'override'
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                      : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 opacity-75'
+                    }`}>
+                    <div className="w-24 text-xs text-gray-500 dark:text-gray-400 font-mono shrink-0">
+                      {segment.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                      <br />
+                      ↓
+                      <br />
+                      {segment.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                    </div>
+
+                    <div className="w-px h-10 bg-gray-300 dark:bg-gray-600 mx-3"></div>
+
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${segment.type === 'override'
+                          ? 'bg-green-100 text-green-700 dark:bg-green-800 dark:text-green-100'
+                          : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                        }`}>
+                        {segment.member ? segment.member.user_name[0].toUpperCase() : '?'}
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          {segment.member ? segment.member.user_name : 'Unknown'}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {segment.type === 'override' ? 'Effective On-Call' : 'Original On-Call'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+
         </div>
 
         {/* Footer */}

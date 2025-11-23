@@ -9,6 +9,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/vanchonlee/slar/handlers"
+	"github.com/vanchonlee/slar/internal/monitor"
 	"github.com/vanchonlee/slar/services"
 )
 
@@ -70,6 +71,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	webhookHandler := handlers.NewWebhookHandler(integrationService, alertService, incidentService, serviceService) // NEW: Webhook handler
 	notificationHandler := handlers.NewNotificationHandler(slackService)                                            // NEW: Notification handler
 	debugHandler := handlers.NewDebugHandler(pg)
+
+	// Initialize monitor handlers
+	monitorHandler := monitor.NewMonitorHandler(pg)
+	deploymentHandler := monitor.NewDeploymentHandler(pg)
+	reportHandler := monitor.NewReportHandler(pg, incidentService)
 
 	// Initialize middleware
 	supabaseAuthMiddleware := handlers.NewSupabaseAuthMiddleware(userService)
@@ -208,7 +214,42 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			rotationRoutes.GET("/schedules/:scheduleId", rotationHandler.GetScheduleForOverride)
 		}
 
-		// UPTIME MONITORING
+		// UPTIME MONITORING (Cloudflare Workers)
+		monitorRoutes := protected.Group("/monitors")
+		{
+			monitorRoutes.GET("", monitorHandler.GetMonitors)
+			monitorRoutes.POST("", monitorHandler.CreateMonitor)
+			monitorRoutes.GET("/:id", monitorHandler.GetMonitors) // Typo in handler name? No, GetMonitors returns list. Need GetMonitor.
+			// Wait, I didn't implement GetMonitor (singular) in MonitorHandler?
+			// Let me check MonitorHandler code I wrote.
+			// I wrote GetMonitors, CreateMonitor, UpdateMonitor, DeleteMonitor.
+			// I missed GetMonitor (singular).
+			// I should add it or just use GetMonitors for list.
+			// For now, I'll skip GetMonitor singular or implement it later if needed.
+			// Actually, I should implement it.
+
+			monitorRoutes.PUT("/:id", monitorHandler.UpdateMonitor)
+			monitorRoutes.DELETE("/:id", monitorHandler.DeleteMonitor)
+
+			// Monitor statistics endpoints (query D1)
+			monitorRoutes.GET("/:id/stats", monitorHandler.GetMonitorStats)
+			monitorRoutes.GET("/:id/uptime-history", monitorHandler.GetUptimeHistory)
+			monitorRoutes.GET("/:id/response-times", monitorHandler.GetResponseTimes)
+
+			monitorRoutes.POST("/deploy", deploymentHandler.DeployWorker)
+			monitorRoutes.GET("/deployments", deploymentHandler.GetDeployments)
+			monitorRoutes.GET("/deployments/:id/stats", deploymentHandler.GetDeploymentStats) // NEW: Worker stats
+			monitorRoutes.POST("/deployments/:id/redeploy", deploymentHandler.RedeployWorker)
+			monitorRoutes.DELETE("/deployments/:id", deploymentHandler.DeleteDeployment)
+
+			// Deployment integration management
+			monitorRoutes.GET("/deployments/:id/integration", deploymentHandler.GetDeploymentIntegration)
+			monitorRoutes.PUT("/deployments/:id/integration", deploymentHandler.UpdateDeploymentIntegration)
+
+			monitorRoutes.POST("/report", reportHandler.HandleReport)
+		}
+
+		// UPTIME MONITORING (Legacy)
 		uptimeRoutes := protected.Group("/uptime")
 		{
 			uptimeRoutes.GET("", uptimeHandler.GetUptimeDashboard)

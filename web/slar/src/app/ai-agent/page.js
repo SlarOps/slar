@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, Suspense } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 import { ChatInput } from '../../components/ui';
 import {
   ChatHeader,
   MessagesList,
+  TodoList,
   statusColor,
   severityColor,
   useAutoScroll,
@@ -53,11 +54,13 @@ function AIAgentContent() {
     stopStreaming,
     sessionId,
     resetSession,
-    pendingApproval,
+    pendingApprovals,
     approveTool,
+    approveToolAlways,
     denyTool,
+    todos,
     connect: connectWebSocket,
-  } = useClaudeWebSocket(authToken, { autoConnect: true });
+  } = useClaudeWebSocket(authToken, { autoConnect: false });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
@@ -84,15 +87,20 @@ function AIAgentContent() {
     setInput(e.target.value);
   }, []);
 
-  // Sync-then-connect flow
+  // Trigger sync on mount (only once per auth token)
+  const hasSynced = useRef(false);
   useEffect(() => {
     if (!authToken) {
       console.log('No auth token, skipping sync');
       return;
     }
 
-    // Trigger sync on mount
-    syncBucket();
+    // Only sync once per session
+    if (!hasSynced.current) {
+      console.log('Triggering initial sync...');
+      syncBucket();
+      hasSynced.current = true;
+    }
   }, [authToken, syncBucket]);
 
   // Connect WebSocket after successful sync
@@ -117,6 +125,31 @@ function AIAgentContent() {
       }
     }
   }, [messages, sendMessage]);
+
+  // Handle incident analysis from URL
+  const searchParams = useSearchParams();
+  const incidentId = searchParams.get('incident');
+  const hasSentAutoPrompt = useRef(false);
+
+  useEffect(() => {
+    if (
+      incidentId &&
+      connectionStatus === 'connected' &&
+      syncStatus === 'ready' &&
+      !hasSentAutoPrompt.current
+    ) {
+      // Short delay to ensure UI is ready
+      const timer = setTimeout(() => {
+        sendMessage(`Analyze incident ${incidentId} and provide a summary and potential root causes.`);
+        hasSentAutoPrompt.current = true;
+
+        // Optional: Clear the query param to prevent re-sending on refresh
+        // window.history.replaceState({}, '', '/ai-agent');
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [incidentId, connectionStatus, syncStatus, sendMessage]);
 
   // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
@@ -255,20 +288,25 @@ function AIAgentContent() {
             </div>
           )}
 
+
           <div
             ref={messageAreaRef}
             onClick={handleMessageAreaClick}
-            className="flex-1 relative"
+            className="flex-1 relative overflow-auto"
           >
-            <MessagesList
-              messages={messages}
-              isSending={isSending}
-              endRef={endRef}
-              onRegenerate={handleRegenerate}
-              onApprove={approveTool}
-              onDeny={denyTool}
-              pendingApprovalId={pendingApproval?.approval_id}
-            />
+            <div className={`max-w-4xl mx-auto px-4 pb-4 transition-all duration-300 ${isNavVisible ? 'pt-20' : 'pt-4'}`}>
+              {/* Messages List */}
+              <MessagesList
+                messages={messages}
+                isSending={isSending}
+                endRef={endRef}
+                onRegenerate={handleRegenerate}
+                onApprove={approveTool}
+                onApproveAlways={approveToolAlways}
+                onDeny={denyTool}
+                pendingApprovals={pendingApprovals}
+              />
+            </div>
           </div>
 
           <ChatInput
@@ -284,6 +322,7 @@ function AIAgentContent() {
             sessionId={sessionId}
             onSessionReset={handleSessionReset}
             syncStatus={syncStatus}
+            todos={todos}
           />
         </>
       )}

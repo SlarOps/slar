@@ -126,7 +126,7 @@ export default function MemoryTab() {
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="text-xs sm:text-sm font-medium text-blue-900 dark:text-blue-100">
-              AI Agent Memory (CLAUDE.md)
+              AI Agent Memory
             </h3>
             <p className="text-xs sm:text-sm text-blue-700 dark:text-blue-300 mt-1">
               This content will be available to your AI agent as context. Use it to store:

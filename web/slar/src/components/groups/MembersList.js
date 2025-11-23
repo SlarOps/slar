@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Input from '../ui/Input';
 
 export default function MembersList({ members, selectedMembers, onMembersChange }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -8,12 +9,12 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
   const [draggedIndex, setDraggedIndex] = useState(null);
 
   // Available members (not yet selected)
-  const availableMembers = members?.filter(member => 
+  const availableMembers = members?.filter(member =>
     !selectedMembers.find(sm => sm.user_id === member.user_id)
   ) || [];
 
   // Filtered members based on search
-  const filteredMembers = availableMembers.filter(member => 
+  const filteredMembers = availableMembers.filter(member =>
     member.user_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     member.user_email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -36,7 +37,7 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
     const draggedMember = newMembers[draggedIndex];
     newMembers.splice(draggedIndex, 1);
     newMembers.splice(dropIndex, 0, draggedMember);
-    
+
     onMembersChange(newMembers);
     setDraggedIndex(null);
   };
@@ -56,11 +57,10 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
         Members <span className="text-red-500">*</span>
       </label>
-      
+
       {/* Search Input */}
       <div className="relative mb-3">
-        <input
-          type="text"
+        <Input
           placeholder="Search for members"
           value={searchTerm}
           onChange={(e) => {
@@ -72,17 +72,18 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
             // Delay hide to allow click on dropdown items
             setTimeout(() => setShowDropdown(false), 200);
           }}
-          className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          rightElement={
+            <button
+              type="button"
+              onClick={() => setShowDropdown(!showDropdown)}
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          }
         />
-        <button
-          type="button"
-          onClick={() => setShowDropdown(!showDropdown)}
-          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
       </div>
 
       {/* Available Members Dropdown */}
@@ -158,7 +159,7 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
             >
               <div className="flex items-center gap-2 text-gray-400">
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z"/>
+                  <path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z" />
                 </svg>
                 <span className="text-sm font-medium">{index + 1}.</span>
               </div>

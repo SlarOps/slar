@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 import { SHIFT_LENGTHS, HANDOFF_DAYS } from './scheduleConstants';
+import Select from '../ui/Select';
+import Input from '../ui/Input';
 
 export default function RotationCard({ rotation, onUpdate, onDelete, members }) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -53,20 +55,13 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
       {isExpanded && (
         <div className="p-4 space-y-4">
           {/* Shift Length */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Shift Length <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={rotation.shiftLength}
-              onChange={(e) => updateRotation('shiftLength', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-            >
-              {SHIFT_LENGTHS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </div>
+          <Select
+            label="Shift Length"
+            value={rotation.shiftLength}
+            onChange={(value) => updateRotation('shiftLength', value)}
+            options={SHIFT_LENGTHS}
+            required
+          />
 
           {/* Handoff Time */}
           <div>
@@ -74,21 +69,20 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
               Handoff Day & Time
             </label>
             <div className="flex gap-2">
-              <select
-                value={rotation.handoffDay}
-                onChange={(e) => updateRotation('handoffDay', e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              >
-                {HANDOFF_DAYS.map(day => (
-                  <option key={day.value} value={day.value}>{day.label}</option>
-                ))}
-              </select>
-              <input
-                type="time"
-                value={rotation.handoffTime}
-                onChange={(e) => updateRotation('handoffTime', e.target.value)}
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
+              <div className="flex-1">
+                <Select
+                  value={rotation.handoffDay}
+                  onChange={(value) => updateRotation('handoffDay', value)}
+                  options={HANDOFF_DAYS}
+                />
+              </div>
+              <div className="w-32">
+                <Input
+                  type="time"
+                  value={rotation.handoffTime}
+                  onChange={(e) => updateRotation('handoffTime', e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
@@ -98,18 +92,20 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
               Starts <span className="text-red-500">*</span>
             </label>
             <div className="flex gap-2">
-              <input
-                type="date"
-                value={rotation.startDate}
-                onChange={(e) => updateRotation('startDate', e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-              <input
-                type="time"
-                value={rotation.startTime}
-                onChange={(e) => updateRotation('startTime', e.target.value)}
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
+              <div className="flex-1">
+                <Input
+                  type="date"
+                  value={rotation.startDate}
+                  onChange={(e) => updateRotation('startDate', e.target.value)}
+                />
+              </div>
+              <div className="w-32">
+                <Input
+                  type="time"
+                  value={rotation.startTime}
+                  onChange={(e) => updateRotation('startTime', e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
@@ -130,18 +126,20 @@ export default function RotationCard({ rotation, onUpdate, onDelete, members }) 
             </div>
             {rotation.hasEndDate && (
               <div className="flex gap-2">
-                <input
-                  type="date"
-                  value={rotation.endDate}
-                  onChange={(e) => updateRotation('endDate', e.target.value)}
-                  className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-                <input
-                  type="time"
-                  value={rotation.endTime}
-                  onChange={(e) => updateRotation('endTime', e.target.value)}
-                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
+                <div className="flex-1">
+                  <Input
+                    type="date"
+                    value={rotation.endDate}
+                    onChange={(e) => updateRotation('endDate', e.target.value)}
+                  />
+                </div>
+                <div className="w-32">
+                  <Input
+                    type="time"
+                    value={rotation.endTime}
+                    onChange={(e) => updateRotation('endTime', e.target.value)}
+                  />
+                </div>
               </div>
             )}
           </div>

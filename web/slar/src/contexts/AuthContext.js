@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { auth, initSupabase } from '../lib/supabase';
+import apiClient from '../lib/api';
 
 const AuthContext = createContext({});
 
@@ -34,8 +35,8 @@ export const AuthProvider = ({ children }) => {
           console.error('Session error:', error);
           // Clear invalid session from storage
           if (error.message?.includes('session_id claim') ||
-              error.message?.includes('JWT') ||
-              error.message?.includes('does not exist')) {
+            error.message?.includes('JWT') ||
+            error.message?.includes('does not exist')) {
             console.log('Clearing invalid session from storage');
             localStorage.removeItem('slar-auth-token');
             setSession(null);
@@ -56,6 +57,9 @@ export const AuthProvider = ({ children }) => {
             // Session is valid
             setSession(session);
             setUser(validUser);
+            if (session.access_token) {
+              apiClient.setToken(session.access_token);
+            }
           }
         } else {
           // No session
@@ -73,12 +77,19 @@ export const AuthProvider = ({ children }) => {
               localStorage.removeItem('slar-auth-token');
               setSession(null);
               setUser(null);
+              apiClient.setToken(null);
             } else if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
               setSession(session);
               setUser(session?.user || null);
+              if (session?.access_token) {
+                apiClient.setToken(session.access_token);
+              }
             } else {
               setSession(session);
               setUser(session?.user || null);
+              if (session?.access_token) {
+                apiClient.setToken(session.access_token);
+              }
             }
           }
         );

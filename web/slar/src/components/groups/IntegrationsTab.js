@@ -7,6 +7,7 @@ import { toast, ConfirmationModal } from '../ui';
 import IntegrationModal from '../integrations/IntegrationModal';
 import IntegrationDetailModal from '../integrations/IntegrationDetailModal';
 import SkillUploadModal from '../SkillUploadModal';
+import MonitorIntegrationModal from '../monitors/MonitorIntegrationModal';
 import { uploadSkillFile } from '../../lib/mcpStorage';
 import {
   PlusIcon,
@@ -22,7 +23,8 @@ import {
   CloudIcon,
   BoltIcon,
   CubeIcon,
-  DocumentPlusIcon
+  DocumentPlusIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline';
 
 export default function IntegrationsTab({ groupId }) {
@@ -42,14 +44,20 @@ export default function IntegrationsTab({ groupId }) {
   // Skill upload modal state
   const [showSkillUploadModal, setShowSkillUploadModal] = useState(false);
 
+  // Monitor deployments state
+  const [deployments, setDeployments] = useState([]);
+  const [showMonitorIntegrationModal, setShowMonitorIntegrationModal] = useState(false);
+  const [selectedDeployment, setSelectedDeployment] = useState(null);
+
   useEffect(() => {
     loadIntegrations();
+    loadDeployments();
   }, []);
 
   const loadIntegrations = async () => {
     try {
       if (!session?.access_token) return;
-      
+
       apiClient.setToken(session.access_token);
       const response = await apiClient.getIntegrations({ active_only: true });
       setIntegrations(response.integrations || []);
@@ -97,7 +105,7 @@ export default function IntegrationsTab({ groupId }) {
     try {
       apiClient.setToken(session.access_token);
       await apiClient.deleteIntegration(integrationToDelete.id);
-      
+
       await loadIntegrations();
       toast.success('Integration deleted successfully');
     } catch (error) {
@@ -162,9 +170,31 @@ export default function IntegrationsTab({ groupId }) {
     }
   };
 
+  // Monitor deployment handlers
+  const loadDeployments = async () => {
+    try {
+      if (!session?.access_token) return;
+
+      apiClient.setToken(session.access_token);
+      const deploymentsList = await apiClient.getMonitorDeployments();
+      setDeployments(deploymentsList || []);
+    } catch (error) {
+      console.error('Failed to load deployments:', error);
+    }
+  };
+
+  const handleLinkIntegration = (deployment) => {
+    setSelectedDeployment(deployment);
+    setShowMonitorIntegrationModal(true);
+  };
+
+  const handleIntegrationLinked = async () => {
+    await loadDeployments();
+  };
+
   const getIntegrationTypeIcon = (type) => {
     const iconProps = "h-6 w-6";
-    
+
     switch (type) {
       case 'prometheus':
         return <FireIcon className={`${iconProps} text-orange-600 dark:text-orange-400`} />;
@@ -226,151 +256,212 @@ export default function IntegrationsTab({ groupId }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Agent Skills Section */}
-      <div className="border-b border-gray-200 dark:border-gray-700 pb-4 sm:pb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
-              Agent Skills
-            </h2>
-            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Upload custom skills (.skill or .zip) for your AI agent
-            </p>
-          </div>
-          <button
-            onClick={handleOpenSkillUpload}
-            className="inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 border border-transparent rounded-lg transition-colors flex-shrink-0"
-          >
-            <DocumentPlusIcon className="h-4 w-4 flex-shrink-0" />
-            <span>Upload Skill</span>
-          </button>
-        </div>
-        <div className="p-3 sm:p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-          <p className="text-xs sm:text-sm text-blue-800 dark:text-blue-200">
-            Skills are custom commands and tools that extend your AI agent's capabilities.
-            Upload .skill files or .zip archives containing multiple skills.
-            They will be automatically extracted to your agent workspace and available in your next chat session.
+      {/* Integrations Section */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
+            Integrations
+          </h2>
+          <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Manage external monitoring integrations for alert routing
           </p>
         </div>
+        <button
+          onClick={handleCreateIntegration}
+          className="inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 border border-transparent rounded-lg transition-colors flex-shrink-0"
+        >
+          <PlusIcon className="h-4 w-4 flex-shrink-0" />
+          <span>Add Integration</span>
+        </button>
       </div>
 
-      {/* Integrations Section */}
+      {integrations.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          {integrations.map((integration) => (
+            <div
+              key={integration.id}
+              className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
+              onClick={() => handleViewDetails(integration)}
+            >
+              {/* Integration Header */}
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  <div className="p-1.5 sm:p-2 rounded-lg bg-gray-50 dark:bg-gray-700 flex-shrink-0">
+                    {getIntegrationTypeIcon(integration.type)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-medium text-sm sm:text-base text-gray-900 dark:text-white truncate">
+                      {integration.name}
+                    </h3>
+                    <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 capitalize">
+                      {integration.type}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditIntegration(integration);
+                    }}
+                    className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    title="Edit integration"
+                  >
+                    <Cog6ToothIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteIntegration(integration);
+                    }}
+                    className="p-1 sm:p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                    title="Delete integration"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Health Status */}
+              <div className="flex items-center gap-2 mb-3">
+                {getHealthStatusIcon(integration.health_status)}
+                <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {integration.health_status || 'Unknown'}
+                </span>
+              </div>
+
+              {/* Description */}
+              {integration.description && (
+                <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-3 line-clamp-2">
+                  {integration.description}
+                </p>
+              )}
+
+              {/* Stats */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-3">
+                <span>{integration.services_count || 0} services</span>
+                {integration.last_heartbeat && (
+                  <span className="text-xs">
+                    {new Date(integration.last_heartbeat).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+
+              {/* Webhook URL */}
+              <div className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-xs font-mono text-gray-600 dark:text-gray-400 break-all">
+                {integration.webhook_url}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-8 sm:py-12 px-4 text-gray-500 dark:text-gray-400">
+          <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">⚡</div>
+          <h3 className="text-base sm:text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+            No integrations configured
+          </h3>
+          <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md mx-auto">
+            Add integrations to receive alerts from external monitoring tools like Prometheus, Datadog, or custom webhooks.
+          </p>
+          <button
+            onClick={handleCreateIntegration}
+            className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          >
+            <PlusIcon className="h-4 w-4 flex-shrink-0" />
+            <span>Add Your First Integration</span>
+          </button>
+        </div>
+      )}
+
+      {/* Monitor Workers Section */}
+      <div className="mt-8 sm:mt-12">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
           <div className="flex-1 min-w-0">
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
-              Integrations
+              Monitor Workers
             </h2>
             <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Manage external monitoring integrations for alert routing
+              Link monitor workers to integrations for webhook-based incident reporting
             </p>
           </div>
-          <button
-            onClick={handleCreateIntegration}
-            className="inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 border border-transparent rounded-lg transition-colors flex-shrink-0"
-          >
-            <PlusIcon className="h-4 w-4 flex-shrink-0" />
-            <span>Add Integration</span>
-          </button>
         </div>
 
-        {integrations.length > 0 ? (
+        {deployments.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            {integrations.map((integration) => (
+            {deployments.map((deployment) => (
               <div
-                key={integration.id}
-                className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
-                onClick={() => handleViewDetails(integration)}
+                key={deployment.id}
+                className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
               >
-                {/* Integration Header */}
+                {/* Deployment Header */}
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                     <div className="p-1.5 sm:p-2 rounded-lg bg-gray-50 dark:bg-gray-700 flex-shrink-0">
-                      {getIntegrationTypeIcon(integration.type)}
+                      <ServerIcon className="h-6 w-6 text-gray-600 dark:text-gray-400" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <h3 className="font-medium text-sm sm:text-base text-gray-900 dark:text-white truncate">
-                        {integration.name}
+                        {deployment.name}
                       </h3>
-                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 capitalize">
-                        {integration.type}
+                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                        {deployment.worker_name}
                       </p>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditIntegration(integration);
-                      }}
-                      className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                      title="Edit integration"
-                    >
-                      <Cog6ToothIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteIntegration(integration);
-                      }}
-                      className="p-1 sm:p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
-                      title="Delete integration"
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </button>
-                  </div>
                 </div>
 
-                {/* Health Status */}
-                <div className="flex items-center gap-2 mb-3">
-                  {getHealthStatusIcon(integration.health_status)}
-                  <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {integration.health_status || 'Unknown'}
-                  </span>
+                {/* Integration Status */}
+                <div className="mb-3">
+                  {deployment.integration_id ? (
+                    <div className="flex items-center gap-2 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded">
+                      <LinkIcon className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                      <span className="text-xs text-green-700 dark:text-green-300 truncate">
+                        Linked to integration
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded">
+                      <ExclamationTriangleIcon className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                      <span className="text-xs text-gray-600 dark:text-gray-400">
+                        No integration linked
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Description */}
-                {integration.description && (
-                  <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-3 line-clamp-2">
-                    {integration.description}
-                  </p>
-                )}
-
-                {/* Stats */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-3">
-                  <span>{integration.services_count || 0} services</span>
-                  {integration.last_heartbeat && (
-                    <span className="text-xs">
-                      {new Date(integration.last_heartbeat).toLocaleDateString()}
+                {/* Deployment Info */}
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  {deployment.last_deployed_at && (
+                    <span>
+                      Last deployed: {new Date(deployment.last_deployed_at).toLocaleDateString()}
                     </span>
                   )}
                 </div>
 
-                {/* Webhook URL */}
-                <div className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-xs font-mono text-gray-600 dark:text-gray-400 break-all">
-                  {integration.webhook_url}
-                </div>
+                {/* Link Integration Button */}
+                <button
+                  onClick={() => handleLinkIntegration(deployment)}
+                  className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs sm:text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg transition-colors"
+                >
+                  <LinkIcon className="h-4 w-4" />
+                  {deployment.integration_id ? 'Manage Integration' : 'Link Integration'}
+                </button>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 sm:py-12 px-4 text-gray-500 dark:text-gray-400">
-            <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">⚡</div>
+          <div className="text-center py-8 sm:py-12 px-4 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <ServerIcon className="h-12 w-12 mx-auto mb-3 text-gray-400" />
             <h3 className="text-base sm:text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-              No integrations configured
+              No monitor workers deployed
             </h3>
-            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md mx-auto">
-              Add integrations to receive alerts from external monitoring tools like Prometheus, Datadog, or custom webhooks.
+            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
+              Deploy a monitor worker from the Monitors page to link it to an integration.
             </p>
-            <button
-              onClick={handleCreateIntegration}
-              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-            >
-              <PlusIcon className="h-4 w-4 flex-shrink-0" />
-              <span>Add Your First Integration</span>
-            </button>
           </div>
         )}
+      </div>
 
       {/* Integration Modal */}
       <IntegrationModal
@@ -406,6 +497,14 @@ export default function IntegrationsTab({ groupId }) {
         isOpen={showSkillUploadModal}
         onClose={() => setShowSkillUploadModal(false)}
         onSkillUploaded={handleSkillUploaded}
+      />
+
+      {/* Monitor Integration Modal */}
+      <MonitorIntegrationModal
+        isOpen={showMonitorIntegrationModal}
+        onClose={() => setShowMonitorIntegrationModal(false)}
+        deployment={selectedDeployment}
+        onIntegrationUpdated={handleIntegrationLinked}
       />
     </div>
   );

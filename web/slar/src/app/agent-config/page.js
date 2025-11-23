@@ -6,13 +6,17 @@ import {
   CubeIcon,
   ShoppingBagIcon,
   ServerIcon,
-  DocumentTextIcon
+  DocumentTextIcon,
+  CheckCircleIcon,
+  GlobeAltIcon
 } from '@heroicons/react/24/outline';
 
 import InstalledPluginsTab from '../../components/integrations/InstalledPluginsTab';
 import MarketplaceTab from '../../components/integrations/MarketplaceTab';
 import MCPServersTab from '../../components/integrations/MCPServersTab';
-import MemoryTab from '../../components/integrations/MemoryTab';
+import LocalMemoryTab from '../../components/integrations/LocalMemoryTab';
+import UserMemoryTab from '../../components/integrations/UserMemoryTab';
+import AllowedToolsTab from '../../components/integrations/AllowedToolsTab';
 
 const tabs = [
   {
@@ -34,10 +38,22 @@ const tabs = [
     description: 'Configure Model Context Protocol servers'
   },
   {
-    name: 'Memory',
+    name: 'Allowed Tools',
+    icon: CheckCircleIcon,
+    component: AllowedToolsTab,
+    description: 'Manage tools that are always allowed to run'
+  },
+  {
+    name: 'Local Memory',
     icon: DocumentTextIcon,
-    component: MemoryTab,
-    description: 'Manage AI agent memory and context (CLAUDE.md)'
+    component: LocalMemoryTab,
+    description: 'Manage project-specific AI agent memory (./.claude/CLAUDE.md)'
+  },
+  {
+    name: 'User Memory',
+    icon: GlobeAltIcon,
+    component: UserMemoryTab,
+    description: 'Manage global user memory shared across all projects (~/.claude/CLAUDE.md)'
   },
 ];
 

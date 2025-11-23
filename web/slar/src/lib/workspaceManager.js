@@ -370,9 +370,10 @@ export async function deleteMCPServerFromDB(userId, serverName) {
 /**
  * Get CLAUDE.md content from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
+ * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
  * @returns {Promise<{success: boolean, content: string, updated_at?: string, error?: string}>}
  */
-export async function getMemoryFromDB(userId) {
+export async function getMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 📂 Loading CLAUDE.md from PostgreSQL');
 
@@ -385,7 +386,7 @@ export async function getMemoryFromDB(userId) {
 
     const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
     const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
+      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
       { method: 'GET' }
     );
 
@@ -412,9 +413,10 @@ export async function getMemoryFromDB(userId) {
  * Update CLAUDE.md content in PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} content - Markdown content for CLAUDE.md
+ * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
  * @returns {Promise<{success: boolean, content?: string, updated_at?: string, error?: string}>}
  */
-export async function saveMemoryToDB(userId, content) {
+export async function saveMemoryToDB(userId, content, scope = 'local') {
   try {
     console.log('[workspaceManager] 💾 Saving CLAUDE.md to PostgreSQL');
 
@@ -427,7 +429,8 @@ export async function saveMemoryToDB(userId, content) {
 
     const requestBody = {
       auth_token: 'Bearer ' + session.access_token,
-      content
+      content,
+      scope
     };
 
     const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
@@ -457,9 +460,10 @@ export async function saveMemoryToDB(userId, content) {
 /**
  * Delete CLAUDE.md content from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
+ * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
  * @returns {Promise<{success: boolean, message?: string, error?: string}>}
  */
-export async function deleteMemoryFromDB(userId) {
+export async function deleteMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 🗑️ Deleting CLAUDE.md from PostgreSQL');
 
@@ -472,7 +476,7 @@ export async function deleteMemoryFromDB(userId) {
 
     const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
     const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
+      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
       { method: 'DELETE' }
     );
 

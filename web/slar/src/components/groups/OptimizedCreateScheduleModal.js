@@ -20,7 +20,7 @@ const transformShiftsToRotations = (shifts) => {
   }
 
   // Sort shifts by start time
-  const sortedShifts = [...shifts].sort((a, b) => 
+  const sortedShifts = [...shifts].sort((a, b) =>
     new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
 
@@ -28,20 +28,20 @@ const transformShiftsToRotations = (shifts) => {
   const firstShift = sortedShifts[0];
   const startDate = new Date(firstShift.start_time).toISOString().split('T')[0];
   const startTime = new Date(firstShift.start_time).toISOString().split('T')[1].substring(0, 5);
-  
+
   // Calculate shift duration
   const shiftStart = new Date(firstShift.start_time);
   const shiftEnd = new Date(firstShift.end_time);
   const shiftDurationMs = shiftEnd.getTime() - shiftStart.getTime();
   const shiftDurationHours = Math.round(shiftDurationMs / (1000 * 60 * 60));
-  
+
   // Get rotation days for logic below
   const rotationDays = firstShift.rotation_days || 7;
-  
+
   // For rotation schedules, endTime is usually the same as startTime (handoff time)
   // Unless it's a partial day shift
   let endTime = startTime; // Default: handoff at same time
-  
+
   // If shift is less than 1 day, calculate actual end time
   if (rotationDays < 1 || shiftDurationHours < 24) {
     endTime = new Date(shiftEnd).toISOString().split('T')[1].substring(0, 5);
@@ -81,19 +81,19 @@ const transformShiftsToRotations = (shifts) => {
   // Check if there's an end date by looking at the last shift
   const lastShift = sortedShifts[sortedShifts.length - 1];
   const lastEndDate = new Date(lastShift.end_time);
-  
+
   // Calculate expected end date based on rotation pattern
   // If last shift end is significantly in the future, we have an end date
   const now = new Date();
   const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
   const hasEndDate = lastEndDate < oneYearFromNow && sortedShifts.length > 1;
-  
+
   const endDate = hasEndDate ? lastEndDate.toISOString().split('T')[0] : '';
 
   // Extract all unique participants in rotation order
   // Group shifts by member and find their first occurrence
   const memberFirstShift = new Map();
-  
+
   sortedShifts.forEach(shift => {
     if (!memberFirstShift.has(shift.user_id)) {
       memberFirstShift.set(shift.user_id, {
@@ -103,7 +103,7 @@ const transformShiftsToRotations = (shifts) => {
       });
     }
   });
-  
+
   // Sort members by their first shift start time to get rotation order
   const participants = Array.from(memberFirstShift.values())
     .sort((a, b) => a.start_time.getTime() - b.start_time.getTime())
@@ -163,7 +163,7 @@ const extractSelectedMembers = (shifts) => {
     if (s.original_user_email || s.original_user_name || s.original_user_team) {
       add({
         // original_user_id may not exist; fall back to email as stable key
-        user_id: s.original_user_id || s.user_id, 
+        user_id: s.original_user_id || s.user_id,
         user_name: s.original_user_name,
         user_email: s.original_user_email,
         user_team: s.original_user_team
@@ -182,13 +182,13 @@ const extractSelectedMembers = (shifts) => {
   return Array.from(unique.values());
 };
 
-export default function OptimizedCreateScheduleModal({ 
-  isOpen, 
-  onClose, 
-  members, 
-  groupId, 
-  session, 
-  onSubmit, 
+export default function OptimizedCreateScheduleModal({
+  isOpen,
+  onClose,
+  members,
+  groupId,
+  session,
+  onSubmit,
   existingSchedules = [],
   schedulerData = null, // NEW: For edit mode
   mode = 'create' // NEW: 'create' or 'edit'
@@ -204,22 +204,28 @@ export default function OptimizedCreateScheduleModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState('');
 
+  // Track if form has been modified (to switch from Live View to Preview)
+  const [isDirty, setIsDirty] = useState(false);
+
   // Initialize with default rotation or edit data
   useEffect(() => {
     if (isOpen) {
+      // Reset dirty state when opening
+      setIsDirty(false);
+
       if (mode === 'edit' && schedulerData) {
         // Skip initialization if still loading
         if (schedulerData.loading) {
           console.log('⏳ Waiting for scheduler data to load...');
           return;
         }
-        
+
         // Edit mode: populate form with existing scheduler data
         console.log('📝 Edit mode - Loading scheduler data:', schedulerData);
-        
+
         // Transform scheduler shifts back to rotation format
         const rotations = transformShiftsToRotations(schedulerData.shifts || []);
-        
+
         setFormData({
           name: schedulerData.display_name || schedulerData.name || '',
           rotations: rotations,
@@ -231,10 +237,10 @@ export default function OptimizedCreateScheduleModal({
         const today = new Date();
         setFormData(prev => ({
           ...prev,
-          name: `Datajet - New Schedule - ${today.toLocaleDateString('en-US', { 
-            weekday: 'short', 
-            month: 'short', 
-            day: 'numeric', 
+          name: `Datajet - New Schedule - ${today.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit'
@@ -255,19 +261,22 @@ export default function OptimizedCreateScheduleModal({
     if (!isOpen) {
       setIsSubmitting(false);
       setSubmitProgress('');
+      setIsDirty(false);
     }
   }, [isOpen]);
 
   const updateRotation = useCallback((id, updatedRotation) => {
+    setIsDirty(true);
     setFormData(prev => ({
       ...prev,
-      rotations: prev.rotations.map(rotation => 
+      rotations: prev.rotations.map(rotation =>
         rotation.id === id ? updatedRotation : rotation
       )
     }));
   }, []);
 
   const deleteRotation = useCallback((id) => {
+    setIsDirty(true);
     setFormData(prev => ({
       ...prev,
       rotations: prev.rotations.filter(rotation => rotation.id !== id)
@@ -276,22 +285,22 @@ export default function OptimizedCreateScheduleModal({
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
-    
+
     if (isSubmitting) return; // Prevent double submission
-    
+
     setIsSubmitting(true);
     setSubmitProgress('Preparing schedule data...');
-    
+
     try {
       // Add small delay to show progress
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       if (mode === 'edit') {
         setSubmitProgress('Updating scheduler...');
       } else {
         setSubmitProgress('Creating scheduler...');
       }
-      
+
       // Convert to API format with scheduler information
       const scheduleData = {
         name: formData.name,
@@ -305,14 +314,14 @@ export default function OptimizedCreateScheduleModal({
         // For edit mode
         schedulerId: mode === 'edit' ? schedulerData?.id : undefined
       };
-      
+
       setSubmitProgress('Saving to database...');
-      
+
       // Call the onSubmit prop (parent handles create vs edit)
       await onSubmit(scheduleData);
-      
+
       // Success handled by parent component
-      
+
     } catch (error) {
       console.error(`Failed to ${mode === 'edit' ? 'update' : 'create'} schedule:`, error);
       toast.error(error.message || `Failed to ${mode === 'edit' ? 'update' : 'create'} schedule`);
@@ -321,6 +330,19 @@ export default function OptimizedCreateScheduleModal({
       setSubmitProgress('');
     }
   }, [formData, isSubmitting, onSubmit, mode, schedulerData]);
+
+  // Helper to handle member changes
+  const handleMembersChange = (members) => {
+    setIsDirty(true);
+    setFormData(prev => ({ ...prev, selectedMembers: members }));
+  };
+
+  // Determine what to show in preview
+  // In Edit Mode + Not Dirty -> Show actual shifts (Live View with Overrides)
+  // Otherwise -> Show rotation preview (Configuration View)
+  const previewData = (mode === 'edit' && !isDirty && schedulerData?.shifts)
+    ? schedulerData.shifts
+    : formData.rotations;
 
   // Prevent closing modal while submitting
   const handleClose = useCallback(() => {
@@ -410,8 +432,6 @@ export default function OptimizedCreateScheduleModal({
 
               {/* Schedule Rotations */}
               <div>
-                
-                
                 <div className="space-y-4">
                   {formData.rotations.map(rotation => (
                     <RotationCard
@@ -430,7 +450,7 @@ export default function OptimizedCreateScheduleModal({
               <MembersList
                 members={members}
                 selectedMembers={formData.selectedMembers}
-                onMembersChange={(members) => setFormData(prev => ({ ...prev, selectedMembers: members }))}
+                onMembersChange={handleMembersChange}
                 disabled={isSubmitting}
               />
             </form>
@@ -438,8 +458,18 @@ export default function OptimizedCreateScheduleModal({
 
           {/* Right Panel - Preview */}
           <div className="w-2/3 p-6 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+            <div className="mb-4 flex items-center justify-between">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {mode === 'edit' && !isDirty ? 'Live Schedule (Current)' : 'Schedule Preview (New Configuration)'}
+              </h4>
+              {mode === 'edit' && !isDirty && (
+                <span className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800">
+                  Showing actual shifts including overrides
+                </span>
+              )}
+            </div>
             <SchedulePreview
-              rotations={formData.rotations}
+              rotations={previewData}
               members={members}
               selectedMembers={formData.selectedMembers}
             />
@@ -464,8 +494,8 @@ export default function OptimizedCreateScheduleModal({
             {isSubmitting && (
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
             )}
-            {isSubmitting 
-              ? (mode === 'edit' ? 'Updating...' : 'Creating...') 
+            {isSubmitting
+              ? (mode === 'edit' ? 'Updating...' : 'Creating...')
               : (mode === 'edit' ? 'Update Schedule' : 'Create Schedule')
             }
           </button>

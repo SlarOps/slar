@@ -87,7 +87,7 @@ export default function Modal({
               >
                 {/* Header */}
                 {(title || showCloseButton) && (
-                  <div className="flex items-center justify-between p-4 md:p-6 pb-4">
+                  <div className="flex items-center justify-between p-3 pb-4">
                     {title && (
                       <DialogTitle as="h3" className="text-xl font-semibold leading-6 text-gray-900 dark:text-white">
                         {title}
@@ -107,14 +107,14 @@ export default function Modal({
                 )}
 
                 {/* Content */}
-                <div className={`px-4 md:px-6 ${scrollable ? 'overflow-y-auto' : ''} ${footer ? 'pb-4' : 'pb-6'}`}
+                <div className={`px-2 ${scrollable ? 'overflow-y-auto' : ''} ${footer ? 'pb-4' : 'pb-6'}`}
                   style={scrollable ? { maxHeight } : {}}>
                   {children}
                 </div>
 
                 {/* Footer */}
                 {footer && (
-                  <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-600">
+                  <div className="px-2 py-4 border-t border-gray-200 dark:border-gray-600">
                     {footer}
                   </div>
                 )}
