@@ -1,4 +1,5 @@
 import "./globals.css";
+
 import MobileNav from "../components/MobileNav";
 import PWAInstallPrompt from "../components/PWAInstallPrompt";
 import { AuthProvider } from "../contexts/AuthContext";

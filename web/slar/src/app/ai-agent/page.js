@@ -128,27 +128,9 @@ function AIAgentContent() {
 
   // Handle incident analysis from URL
 
-  const hasSentAutoPrompt = useRef(false);
 
-  useEffect(() => {
-    if (
-      incidentId &&
-      connectionStatus === 'connected' &&
-      syncStatus === 'ready' &&
-      !hasSentAutoPrompt.current
-    ) {
-      // Short delay to ensure UI is ready
-      const timer = setTimeout(() => {
-        sendMessage(`Analyze incident ${incidentId} and provide a summary and potential root causes.`);
-        hasSentAutoPrompt.current = true;
 
-        // Optional: Clear the query param to prevent re-sending on refresh
-        // window.history.replaceState({}, '', '/ai-agent');
-      }, 500);
 
-      return () => clearTimeout(timer);
-    }
-  }, [incidentId, connectionStatus, syncStatus, sendMessage]);
 
   // Auto-scroll to bottom
   useAutoScroll(messages, endRef);
