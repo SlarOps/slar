@@ -1109,6 +1109,23 @@ class APIClient {
     });
   }
 
+  // AI Agent endpoints
+  async addAllowedTool(toolName) {
+    return this.request('/api/allowed-tools', {
+      method: 'POST',
+      body: JSON.stringify({ tool_name: toolName })
+    }, this.aiBaseURL);
+  }
+
+  async getAllowedTools() {
+    return this.request('/api/allowed-tools', {}, this.aiBaseURL);
+  }
+
+  async removeAllowedTool(toolName) {
+    return this.request(`/api/allowed-tools?tool_name=${encodeURIComponent(toolName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
 }
 
 export const apiClient = new APIClient();

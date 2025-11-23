@@ -7,6 +7,7 @@ import { ChatInput } from '../../components/ui';
 import {
   ChatHeader,
   MessagesList,
+  TodoList,
   statusColor,
   severityColor,
   useAutoScroll,
@@ -44,9 +45,11 @@ export default function AIAgentPage() {
     stopStreaming,
     sessionId,
     resetSession,
-    pendingApproval,
+    pendingApprovals,
     approveTool,
+    approveToolAlways,
     denyTool,
+    todos,
     connect: connectWebSocket,
   } = useClaudeWebSocket(authToken, { autoConnect: false });
 
@@ -276,20 +279,25 @@ export default function AIAgentPage() {
             </div>
           )}
 
+
           <div
             ref={messageAreaRef}
             onClick={handleMessageAreaClick}
-            className="flex-1 relative"
+            className="flex-1 relative overflow-auto"
           >
-            <MessagesList
-              messages={messages}
-              isSending={isSending}
-              endRef={endRef}
-              onRegenerate={handleRegenerate}
-              onApprove={approveTool}
-              onDeny={denyTool}
-              pendingApprovalId={pendingApproval?.approval_id}
-            />
+            <div className={`max-w-4xl mx-auto px-4 pb-4 transition-all duration-300 ${isNavVisible ? 'pt-20' : 'pt-4'}`}>
+              {/* Messages List */}
+              <MessagesList
+                messages={messages}
+                isSending={isSending}
+                endRef={endRef}
+                onRegenerate={handleRegenerate}
+                onApprove={approveTool}
+                onApproveAlways={approveToolAlways}
+                onDeny={denyTool}
+                pendingApprovals={pendingApprovals}
+              />
+            </div>
           </div>
 
           <ChatInput
@@ -305,6 +313,7 @@ export default function AIAgentPage() {
             sessionId={sessionId}
             onSessionReset={handleSessionReset}
             syncStatus={syncStatus}
+            todos={todos}
           />
         </>
       )}

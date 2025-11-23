@@ -29,6 +29,8 @@ from claude_agent_sdk import (
     ThinkingBlock,
     ToolPermissionContext,
     ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
 )
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,6 +47,9 @@ from supabase_storage import (
     sync_memory_to_workspace,
     sync_user_skills,
     unzip_installed_plugins,
+    get_user_allowed_tools,
+    add_user_allowed_tool,
+    delete_user_allowed_tool,
 )
 
 # Configure logging
@@ -465,6 +470,19 @@ async def agent_task(
                 else:
                     logger.debug(f"ℹ️  No plugins installed for user {user_id}")
 
+            # Load allowed tools
+            allowed_tools = [
+                "mcp__incident_tools__get_incidents_by_time",
+                "mcp__incident_tools__get_incidents_by_id",
+                "mcp__incident_tools__get_current_time",
+                "mcp__incident_tools__get_incident_stats"
+            ]
+            if user_id:
+                user_allowed = await get_user_allowed_tools(user_id)
+                if user_allowed:
+                    allowed_tools.extend(user_allowed)
+                    logger.info(f"✅ Loaded {len(user_allowed)} allowed tools from DB")
+
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
@@ -474,8 +492,8 @@ async def agent_task(
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
                 setting_sources=["project"],
+                allowed_tools=allowed_tools,
             )
-
             async with ClaudeSDKClient(options) as client:
                 logger.info("\n📝 Sending query to Claude...")
 
@@ -506,6 +524,8 @@ async def agent_task(
                         except Exception as e:
                             logger.error(f"❌ Error interrupting: {e}", exc_info=True)
 
+
+
                     # Process message normally
                     logger.debug(f"Received message: {message}")
                     if isinstance(message, AssistantMessage):
@@ -527,6 +547,26 @@ async def agent_task(
                                         "is_error": block.is_error,
                                     }
                                 )
+                            elif isinstance(block, ToolUseBlock):
+                                # Detect TodoWrite tool usage for task tracking
+                                if block.name == "TodoWrite":
+                                    try:
+                                        todos = block.input.get("todos", [])
+                                        logger.info(f"📝 Todo update detected: {len(todos)} tasks")
+                                        await output_queue.put(
+                                            {
+                                                "type": "todo_update",
+                                                "todos": todos
+                                            }
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
+
+                    # Handle UserMessage (tool results from SDK)
+                    if isinstance(message, UserMessage):
+                        logger.debug(f"UserMessage received with {len(message.content)} blocks")
+                        # UserMessage typically contains tool results, we can log but don't need to send to frontend
+                        # The SDK will process these internally and generate AssistantMessage responses
 
                     if isinstance(message, SystemMessage):
                         if isinstance(message.data, dict):
@@ -547,6 +587,7 @@ async def agent_task(
                         await output_queue.put(
                             {"type": message.subtype, "result": message.result}
                         )
+
 
     except asyncio.CancelledError:
         logger.info("🤖 Agent task: Cancelled")
@@ -797,6 +838,115 @@ async def get_mcp_servers(request: Request):
         }
 
 
+@app.post("/api/allowed-tools")
+async def add_allowed_tool(request: Request):
+    """
+    Add a tool to the user's allowed tools list.
+    
+    Request body:
+        {
+            "auth_token": "Bearer ...",
+            "tool_name": "tool_name"
+        }
+        
+    Returns:
+        {"success": bool, "message": str}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+        tool_name = body.get("tool_name")
+        
+        if not auth_token:
+            return {"success": False, "message": "Missing auth_token"}
+            
+        if not tool_name:
+            return {"success": False, "message": "Missing tool_name"}
+            
+        # Extract user_id
+        user_id = extract_user_id_from_token(auth_token)
+        
+        if not user_id:
+            return {"success": False, "message": "Invalid auth_token"}
+            
+        success = await add_user_allowed_tool(user_id, tool_name)
+        
+        if success:
+            return {"success": True, "message": f"Tool {tool_name} added to allowed list"}
+        else:
+            return {"success": False, "message": "Failed to add tool to allowed list"}
+            
+    except Exception as e:
+        return {"success": False, "message": sanitize_error_message(e, "adding allowed tool")}
+
+
+@app.get("/api/allowed-tools")
+async def get_allowed_tools(request: Request):
+    """
+    Get list of allowed tools for the user.
+    
+    Query params:
+        auth_token: Bearer token
+        
+    Returns:
+        {"success": bool, "tools": [str]}
+    """
+    try:
+        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+            
+        user_id = extract_user_id_from_token(auth_token)
+        
+        if not user_id:
+            return {"success": False, "error": "Invalid auth_token"}
+            
+        allowed_tools = await get_user_allowed_tools(user_id)
+        return {"success": True, "tools": allowed_tools}
+        
+    except Exception as e:
+        return {"success": False, "error": sanitize_error_message(e, "getting allowed tools")}
+
+
+@app.delete("/api/allowed-tools")
+async def remove_allowed_tool(request: Request):
+    """
+    Remove a tool from the user's allowed tools list.
+    
+    Query params:
+        auth_token: Bearer token
+        tool_name: Name of tool to remove
+        
+    Returns:
+        {"success": bool, "message": str}
+    """
+    try:
+        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        tool_name = request.query_params.get("tool_name")
+        
+        if not auth_token:
+            return {"success": False, "message": "Missing auth_token"}
+            
+        if not tool_name:
+            return {"success": False, "message": "Missing tool_name"}
+            
+        user_id = extract_user_id_from_token(auth_token)
+        
+        if not user_id:
+            return {"success": False, "message": "Invalid auth_token"}
+            
+        success = await delete_user_allowed_tool(user_id, tool_name)
+        
+        if success:
+            return {"success": True, "message": f"Tool {tool_name} removed from allowed list"}
+        else:
+            return {"success": False, "message": "Failed to remove tool from allowed list"}
+            
+    except Exception as e:
+        return {"success": False, "message": sanitize_error_message(e, "removing allowed tool")}
+
+
 @app.post("/api/mcp-servers")
 async def create_mcp_server(request: Request):
     """
@@ -986,6 +1136,7 @@ async def get_memory(request: Request):
 
     Query params:
         auth_token: Bearer token (or from Authorization header)
+        scope: Memory scope ('local' or 'user', default: 'local')
 
     Returns:
         {
@@ -1001,6 +1152,7 @@ async def get_memory(request: Request):
         auth_token = request.query_params.get("auth_token") or request.headers.get(
             "authorization", ""
         )
+        scope = request.query_params.get("scope", "local")  # default to 'local'
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -1016,6 +1168,7 @@ async def get_memory(request: Request):
             supabase.table("claude_memory")
             .select("*")
             .eq("user_id", user_id)
+            .eq("scope", scope)
             .single()
             .execute()
         )
@@ -1050,7 +1203,8 @@ async def update_memory(request: Request):
     Request body:
         {
             "auth_token": "Bearer ...",
-            "content": "## My Context\\n\\n..."
+            "content": "## My Context\\n\\n...",
+            "scope": "local" or "user" (optional, default: "local")
         }
 
     Returns:
@@ -1066,6 +1220,7 @@ async def update_memory(request: Request):
         body = await request.json()
         auth_token = body.get("auth_token", "")
         content = body.get("content", "")
+        scope = body.get("scope", "local")  # default to 'local'
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -1077,22 +1232,22 @@ async def update_memory(request: Request):
 
         # Upsert to PostgreSQL (instant, no S3 lag!)
         supabase = get_supabase_client()
-        memory_record = {"user_id": user_id, "content": content}
+        memory_record = {"user_id": user_id, "content": content, "scope": scope}
 
         result = (
             supabase.table("claude_memory")
-            .upsert(memory_record, on_conflict="user_id")
+            .upsert(memory_record, on_conflict="user_id,scope")
             .execute()
         )
 
         logger.info(f"✅ Memory updated for user {user_id} ({len(content)} chars)")
 
-        # Sync to local CLAUDE.md file
-        sync_result = await sync_memory_to_workspace(user_id)
+        # Sync to CLAUDE.md file (path depends on scope)
+        sync_result = await sync_memory_to_workspace(user_id, scope)
         if sync_result["success"]:
-            logger.info(f"✅ Synced memory to local file: {sync_result['message']}")
+            logger.info(f"✅ Synced memory to file: {sync_result['message']}")
         else:
-            logger.warning(f"⚠️ Failed to sync memory to local: {sync_result['message']}")
+            logger.warning(f"⚠️ Failed to sync memory: {sync_result['message']}")
 
         return {
             "success": True,
@@ -1114,6 +1269,7 @@ async def delete_memory(request: Request):
 
     Query params:
         auth_token: Bearer token
+        scope: Memory scope ('local' or 'user', default: 'local')
 
     Returns:
         {"success": bool, "message": str}
@@ -1125,6 +1281,7 @@ async def delete_memory(request: Request):
         auth_token = request.query_params.get("auth_token") or request.headers.get(
             "authorization", ""
         )
+        scope = request.query_params.get("scope", "local")  # default to 'local'
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -1136,16 +1293,16 @@ async def delete_memory(request: Request):
 
         # Delete from PostgreSQL
         supabase = get_supabase_client()
-        supabase.table("claude_memory").delete().eq("user_id", user_id).execute()
+        supabase.table("claude_memory").delete().eq("user_id", user_id).eq("scope", scope).execute()
 
         logger.info(f"✅ Memory deleted for user {user_id}")
 
-        # Sync to local CLAUDE.md file (will create empty file or delete it)
-        sync_result = await sync_memory_to_workspace(user_id)
+        # Sync to CLAUDE.md file (will create empty file or delete it)
+        sync_result = await sync_memory_to_workspace(user_id, scope)
         if sync_result["success"]:
-            logger.info(f"✅ Synced memory to local file: {sync_result['message']}")
+            logger.info(f"✅ Synced memory to file: {sync_result['message']}")
         else:
-            logger.warning(f"⚠️ Failed to sync memory to local: {sync_result['message']}")
+            logger.warning(f"⚠️ Failed to sync memory: {sync_result['message']}")
 
         return {"success": True, "message": "Memory deleted successfully"}
 
@@ -2388,7 +2545,7 @@ async def websocket_chat(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        # Cancel all tasks
+        # Cancel all tasks immediately
         logger.info("🧹 Cleaning up tasks...")
 
         # Signal end of messages to output queue
@@ -2397,28 +2554,43 @@ async def websocket_chat(websocket: WebSocket):
         except Exception:
             pass
 
-        # Get all running tasks
+        # Get all running tasks and cancel them immediately
         all_tasks = [
             t for t in [heartbeat, router, sender, interrupt, agent] if not t.done()
         ]
 
         for task in all_tasks:
-            task.cancel()
+            if not task.done():
+                task.cancel()
 
-        # Wait for all tasks to finish with timeout
+        # Wait for all tasks to finish with shorter timeout
         if all_tasks:
-            done, pending = await asyncio.wait(
-                all_tasks, timeout=5.0, return_when=asyncio.ALL_COMPLETED
-            )
+            try:
+                done, pending = await asyncio.wait(
+                    all_tasks, timeout=2.0, return_when=asyncio.ALL_COMPLETED
+                )
 
-            if pending:
-                logger.warning(f"⚠️ {len(pending)} tasks did not finish within timeout")
-                for task in pending:
-                    logger.warning(f"   - {task.get_name()} still pending")
+                if pending:
+                    logger.warning(f"⚠️ {len(pending)} tasks did not finish within timeout, force cancelling")
+                    for task in pending:
+                        logger.warning(f"   - {task.get_name()} still pending")
+                        # Force cancel again
+                        task.cancel()
+                    
+                    # Give one more brief chance to finish
+                    try:
+                        await asyncio.wait(pending, timeout=0.5)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"Error during task cleanup: {e}")
 
         # Clean up stop events
-        for session_id in list(stop_events.keys()):
-            del stop_events[session_id]
+        try:
+            for session_id in list(stop_events.keys()):
+                del stop_events[session_id]
+        except Exception:
+            pass
 
         logger.info("🧹 All tasks cleaned up")
 

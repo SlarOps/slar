@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import apiClient from '../lib/api';
 
 const HOST = window.location.host;
 const PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -32,7 +33,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isSending, setIsSending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
-  const [pendingApproval, setPendingApproval] = useState(null);
+  const [pendingApprovals, setPendingApprovals] = useState([]); // Changed to array for multiple approvals
+  const [todos, setTodos] = useState([]);
 
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -262,23 +264,28 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               }]);
               break;
 
+
             case 'permission_request':
               // Tool approval request
               console.log('Tool approval requested:', data.tool_name);
-              const approvalId = data.approval_id || Date.now();
-              setPendingApproval({
-                approval_id: approvalId,
+              const requestId = data.request_id || Date.now(); // Backend sends request_id
+              const newApproval = {
+                request_id: requestId, // Use request_id to match backend
                 tool_name: data.tool_name,
                 tool_input: data.input_data || data.tool_input,
                 suggestions: data.suggestions || []
-              });
+              };
+
+              // Add to pending approvals array (support multiple concurrent requests)
+              setPendingApprovals(prev => [...prev, newApproval]);
+
               // Add approval request message with all necessary data
               setMessages(prev => [...prev, {
                 role: 'assistant',
                 source: 'assistant',
                 content: '',
                 type: 'permission_request',
-                approval_id: approvalId,
+                request_id: requestId, // Use request_id for consistency
                 tool_name: data.tool_name,
                 tool_input: data.input_data || data.tool_input,
                 timestamp: new Date().toISOString()
@@ -319,6 +326,12 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               }]);
               setIsSending(false);
               setConnectionStatus('error');
+              break;
+
+            case 'todo_update':
+              // Todo list update from TodoWrite tool
+              console.log('Todo list updated:', data.todos);
+              setTodos(data.todos || []);
               break;
 
             default:
@@ -474,54 +487,94 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   }, [sessionId, isSending, connect]);
 
   // Approve tool
-  const approveTool = useCallback((approvalId, reason = 'Approved by user') => {
+  const approveTool = useCallback((requestId, reason = 'Approved by user') => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
       return;
     }
 
     try {
-      // Claude Agent API v1 expects { allow: "yes" } or { allow: "y" }
+      // Send approval with request_id so SDK knows which request to approve
       wsRef.current.send(JSON.stringify({
+        type: 'permission_response',
+        request_id: requestId, // Use request_id to match backend
         allow: 'yes'
       }));
 
       // Mark the message as approved
       setMessages(prev => prev.map(msg =>
-        msg.approval_id === approvalId
+        msg.request_id === requestId
           ? { ...msg, approved: true, denied: false }
           : msg
       ));
 
-      setPendingApproval(null);
-      console.log('Tool approved:', approvalId, reason);
+      // Remove from pending approvals array
+      setPendingApprovals(prev => prev.filter(a => a.request_id !== requestId));
+
+      console.log('Tool approved:', requestId, reason);
     } catch (error) {
       console.error('Error approving tool:', error);
     }
   }, []);
 
-  // Deny tool
-  const denyTool = useCallback((approvalId, reason = 'Denied by user') => {
+  // Approve tool always
+  const approveToolAlways = useCallback(async (requestId, toolName) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
       return;
     }
 
     try {
-      // Claude Agent API v1 expects { allow: "no" } or any non-yes value
+      // 1. Save preference to backend
+      if (authTokenRef.current && toolName) {
+        try {
+          // Set token for API client if not already set
+          if (!apiClient.token) {
+            apiClient.setToken(authTokenRef.current);
+          }
+
+          await apiClient.addAllowedTool(toolName);
+          console.log('Tool added to allowed list:', toolName);
+        } catch (err) {
+          console.error('Failed to save allowed tool preference:', err);
+          // Continue to approve anyway
+        }
+      }
+
+      // 2. Approve current request
+      approveTool(requestId, 'Approved always by user');
+
+    } catch (error) {
+      console.error('Error approving tool always:', error);
+    }
+  }, [approveTool]);
+
+  // Deny tool
+  const denyTool = useCallback((requestId, reason = 'Denied by user') => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not connected');
+      return;
+    }
+
+    try {
+      // Send denial with request_id so SDK knows which request to deny
       wsRef.current.send(JSON.stringify({
+        type: 'permission_response',
+        request_id: requestId, // Use request_id to match backend
         allow: 'no'
       }));
 
       // Mark the message as denied
       setMessages(prev => prev.map(msg =>
-        msg.approval_id === approvalId
+        msg.request_id === requestId
           ? { ...msg, approved: false, denied: true }
           : msg
       ));
 
-      setPendingApproval(null);
-      console.log('Tool denied:', approvalId, reason);
+      // Remove from pending approvals array
+      setPendingApprovals(prev => prev.filter(a => a.request_id !== requestId));
+
+      console.log('Tool denied:', requestId, reason);
     } catch (error) {
       console.error('Error denying tool:', error);
     }
@@ -617,9 +670,11 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     sendInterrupt,
     sessionId,
     resetSession,
-    pendingApproval,
+    pendingApprovals, // Changed from pendingApproval to array
     approveTool,
+    approveToolAlways,
     denyTool,
+    todos,
     connect,
     disconnect
   };

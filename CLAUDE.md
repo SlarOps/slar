@@ -287,3 +287,5 @@ Critical environment variables (see `.env.example`):
 - Check `air` is installed: `go install github.com/cosmtrek/air@latest`
 - Verify `.air.toml` configuration in `api/` directory
 - Check `tmp/` directory permissions
+
+Database migrations are in the supabase/migrations/ directory

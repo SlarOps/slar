@@ -1743,15 +1743,17 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
         }
 
 
-async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
+async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[str, Any]:
     """
     Sync CLAUDE.md content from PostgreSQL to workspace file.
 
-    Fetches memory content from claude_memory table and writes to
-    .claude/CLAUDE.md in user's workspace.
+    Fetches memory content from claude_memory table and writes to:
+    - Local scope: .claude/CLAUDE.md in user's workspace
+    - User scope: ~/.claude/CLAUDE.md (global user directory)
 
     Args:
         user_id: User's UUID
+        scope: Memory scope ('local' or 'user', default: 'local')
 
     Returns:
         Dictionary with sync results:
@@ -1762,28 +1764,37 @@ async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
         }
     """
     try:
-        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}")
-
-        # Get workspace path
-        workspace_path = get_user_workspace_path(user_id)
-
-        # Ensure .claude directory exists
-        claude_dir = workspace_path / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}, scope: {scope}")
 
         # Get Supabase client
         supabase = get_supabase_client()
 
-        # Fetch memory from PostgreSQL
-        result = supabase.table("claude_memory").select("content").eq("user_id", user_id).execute()
+        # Fetch memory from PostgreSQL with scope filter
+        result = supabase.table("claude_memory").select("content").eq("user_id", user_id).eq("scope", scope).execute()
 
         # Get content (empty string if no memory)
         content = ""
         if result.data and len(result.data) > 0:
             content = result.data[0].get("content", "")
 
-        # Write to .claude/CLAUDE.md
-        claude_md_path = claude_dir / "CLAUDE.md"
+        # Determine target path based on scope
+        if scope == "user":
+            # User memory: ~/.claude/CLAUDE.md (global)
+            import os
+            home_dir = Path(os.path.expanduser("~"))
+            claude_dir = home_dir / ".claude"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            claude_md_path = claude_dir / "CLAUDE.md"
+            target_description = "~/.claude/CLAUDE.md"
+        else:
+            # Local memory: workspaces/{user_id}/.claude/CLAUDE.md
+            workspace_path = get_user_workspace_path(user_id)
+            claude_dir = workspace_path / ".claude"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            claude_md_path = claude_dir / "CLAUDE.md"
+            target_description = ".claude/CLAUDE.md"
+
+        # Write to CLAUDE.md
         claude_md_path.write_text(content, encoding="utf-8")
 
         logger.info(f"✅ CLAUDE.md synced ({len(content)} chars) to: {claude_md_path}")
@@ -1791,7 +1802,7 @@ async def sync_memory_to_workspace(user_id: str) -> Dict[str, Any]:
         return {
             "success": True,
             "content_length": len(content),
-            "message": f"Memory synced to .claude/CLAUDE.md ({len(content)} chars)"
+            "message": f"Memory synced to {target_description} ({len(content)} chars)"
         }
 
     except Exception as e:
@@ -2040,3 +2051,103 @@ async def handle_bucket_sync_on_connect(auth_token: str, websocket) -> bool:
         except:
             pass  # Already logged, connection likely closed
         return False
+
+
+async def get_user_allowed_tools(user_id: str) -> List[str]:
+    """
+    Get list of allowed tools for user from PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        
+    Returns:
+        List of tool names that are allowed to run without permission
+    """
+    if not user_id:
+        return []
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Query user_allowed_tools table
+        # Schema: id, user_id, tool_name, created_at
+        result = supabase.table("user_allowed_tools").select("tool_name").eq("user_id", user_id).execute()
+        
+        if not result.data:
+            return []
+            
+        allowed_tools = [item.get("tool_name") for item in result.data if item.get("tool_name")]
+        logger.info(f"✅ Loaded {len(allowed_tools)} allowed tools for user {user_id}")
+        return allowed_tools
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to load allowed tools for user {user_id}: {e}")
+        return []
+
+
+async def add_user_allowed_tool(user_id: str, tool_name: str) -> bool:
+    """
+    Add a tool to the user's allowed tools list in PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        tool_name: Name of the tool to allow
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not user_id or not tool_name:
+        return False
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Check if already exists
+        existing = supabase.table("user_allowed_tools").select("id").eq("user_id", user_id).eq("tool_name", tool_name).execute()
+        
+        if existing.data:
+            logger.info(f"ℹ️ Tool {tool_name} already allowed for user {user_id}")
+            return True
+            
+        # Insert new record
+        data = {
+            "user_id": user_id,
+            "tool_name": tool_name
+        }
+        
+        supabase.table("user_allowed_tools").insert(data).execute()
+        logger.info(f"✅ Added {tool_name} to allowed tools for user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to add allowed tool {tool_name} for user {user_id}: {e}")
+        return False
+
+
+async def delete_user_allowed_tool(user_id: str, tool_name: str) -> bool:
+    """
+    Remove a tool from the user's allowed tools list in PostgreSQL.
+    
+    Args:
+        user_id: User's UUID
+        tool_name: Name of the tool to remove
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not user_id or not tool_name:
+        return False
+        
+    try:
+        supabase = get_supabase_client()
+        
+        # Delete record
+        supabase.table("user_allowed_tools").delete().eq("user_id", user_id).eq("tool_name", tool_name).execute()
+        
+        logger.info(f"✅ Removed {tool_name} from allowed tools for user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to remove allowed tool {tool_name} for user {user_id}: {e}")
+        return False
+
