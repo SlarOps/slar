@@ -24,6 +24,8 @@
 </p>
 
 ---
+<img width="1366" height="768" alt="Slar - AI Incident Management" src="https://github.com/user-attachments/assets/951dfd50-7038-4e7f-989a-e4574a96e4fc" />
+
 
 ## 🚀 Quick Start
 
