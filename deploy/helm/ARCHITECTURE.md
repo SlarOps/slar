@@ -113,7 +113,7 @@ This document describes the Kubernetes architecture deployed by the SLAR Helm ch
 - Real-time AI responses
 
 **Environment Variables:**
-- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
 
 ### 5. Worker
 

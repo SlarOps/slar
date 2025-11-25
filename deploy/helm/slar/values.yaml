@@ -124,6 +124,23 @@ tolerations: []
 # Affinity rules
 affinity: {}
 
+# Migration job configuration
+migration:
+  enabled: true
+  image:
+    repository: migration:latest
+    name: slar-migration
+    tag: 1.0.1
+    pullPolicy: Always
+  backoffLimit: 3
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+
 # Components configuration with persistent storage
 components:
   ai:
@@ -157,11 +174,11 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-service-role-key
-      - name: OPENAI_API_KEY
+      - name: ANTHROPIC_API_KEY
         valueFrom:
           secretKeyRef:
             name: slar-secrets
-            key: openai-api-key
+            key: anthropic-api-key
 
       # Optional environment variables
       - name: SLAR_API_URL

@@ -1,10 +1,28 @@
 # version: "3.9"
 
 services:
+  # Database migration service - runs first to apply schema changes
+  migration:
+    container_name: slar-migration
+    build:
+      context: ../..
+      dockerfile: deploy/migration/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    networks:
+      - slar-network
+    restart: "no"  # Only run once
+
+
   ai:
     container_name: slar-ai
     build:
       context: ../../api/ai
+    depends_on:
+      migration:
+        condition: service_completed_successfully
     expose:
       - "8002"
     ports:
@@ -21,6 +39,7 @@ services:
       - AI_ALLOWED_ORIGINS=${AI_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
       - AI_RATE_LIMIT=${AI_RATE_LIMIT:-60}
       - SLAR_API_URL=${SLAR_API_URL:-http://api:8080}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     restart: unless-stopped
     networks:
       - slar-network
@@ -35,6 +54,9 @@ services:
     container_name: slar-api
     build:
       context: ../../api
+    depends_on:
+      migration:
+        condition: service_completed_successfully
     expose:
       - "8080"
     ports:
@@ -60,6 +82,9 @@ services:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
+    depends_on:
+      migration:
+        condition: service_completed_successfully
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
@@ -89,9 +114,6 @@ services:
       - NEXT_TELEMETRY_DISABLED=1
       - PORT=3000
       - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:8000}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-your-supabase-anon-key}
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - api
     restart: unless-stopped

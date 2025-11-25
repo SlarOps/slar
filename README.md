@@ -29,7 +29,7 @@
 
 ## 🚀 Quick Start
 
-Get SLAR running in 3 minutes:
+Get SLAR running in 5 minutes with automatic database migrations:
 
 ### Prerequisites
 
@@ -37,40 +37,154 @@ Get SLAR running in 3 minutes:
 - [Supabase](https://supabase.com) account (free tier works)
 - Anthropic Claude API key (for AI features) - get from [console.anthropic.com](https://console.anthropic.com)
 
-### 1. Clone & Configure
+### Step 1: Clone Repository
 
 ```bash
 git clone https://github.com/slarops/slar.git
 cd slar
-
-# Copy and edit environment file
-cp .env.example .env
-# Edit .env with your credentials:
-# - OPENAI_API_KEY: Your Anthropic Claude API key (starts with sk-ant-)
-# - DATABASE_URL: Your Supabase PostgreSQL connection string
-# - SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET: From Supabase dashboard
-# - SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional for Slack integration)
 ```
 
-### 2. Setup Database
+### Step 2: Setup Environment Variables
 
 ```bash
-# Install Supabase CLI
-brew install supabase/tap/supabase  # macOS
-# or: npm install -g supabase        # npm
+# Copy environment template
+cp deploy/docker/.env.example deploy/docker/.env
 
-# Link and migrate
-supabase link
-cd supabase && supabase db push
+# Edit the .env file
+vim deploy/docker/.env  # or use your preferred editor
 ```
 
-### 3. Launch
+**Required Environment Variables:**
+
+Get these from your [Supabase Dashboard](https://supabase.com/dashboard):
+
+1. **Database Connection** (Settings → Database):
+   ```bash
+   DATABASE_URL=postgresql://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres
+   ```
+   > ⚠️ **Important**: If your password contains special characters like `?`, `&`, `@`, you must URL-encode them:
+   > - `?` → `%3F`
+   > - `&` → `%26`
+   > - `@` → `%40`
+
+2. **Supabase Credentials** (Settings → API):
+   ```bash
+   SUPABASE_URL=https://[PROJECT-REF].supabase.co
+   SUPABASE_ANON_KEY=eyJhbGc...  # Project API keys → anon public
+   SUPABASE_SERVICE_ROLE_KEY=eyJhbGc...  # Project API keys → service_role (keep secret!)
+   SUPABASE_JWT_SECRET=your-super-secret-jwt-token  # Settings → API → JWT Settings
+   ```
+
+3. **AI Configuration**:
+   ```bash
+   ANTHROPIC_API_KEY=sk-ant-...  # Your Anthropic Claude API key
+   ```
+
+4. **Optional - Slack Integration**:
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-...
+   SLACK_APP_TOKEN=xapp-...
+   ```
+
+### Step 3: Deploy with Automatic Migrations
 
 ```bash
+# Start all services (migrations run automatically!)
 docker compose -f deploy/docker/docker-compose.yaml up -d
 ```
 
-**Access**: http://localhost:8000
+**What happens:**
+1. 🔄 Migration container builds and starts
+2. 📦 Applies all database migrations from `supabase/migrations/` (25 files)
+3. ✅ Migration completes successfully
+4. 🚀 Application services start (api, ai, web, kong, slack-worker)
+
+**View migration progress:**
+```bash
+# Watch migration logs
+docker compose -f deploy/docker/docker-compose.yaml logs -f migration
+
+# Expected output:
+# =========================================
+# SLAR Database Migration Runner
+# =========================================
+# ✓ Environment variables validated
+# Found 25 migration files
+# Starting database migration...
+# Applying: 20250925091841_remote_schema.sql
+# ...
+# ✅ Database migrations completed successfully
+```
+
+### Step 4: Verify Deployment
+
+```bash
+# Check all services are running
+docker compose -f deploy/docker/docker-compose.yaml ps
+
+# Expected output:
+# NAME               STATUS
+# slar-ai            Up (healthy)
+# slar-api           Up (healthy)
+# slar-web           Up (healthy)
+# kong               Up (healthy)
+# slar-slack-worker  Up
+```
+
+### Step 5: Access Dashboard
+
+Open your browser and navigate to:
+
+**🌐 http://localhost:8000**
+
+**Default Login:**
+- Create your first account through the signup page
+- Or use Supabase Auth if configured
+
+**Available Endpoints:**
+- **Dashboard**: http://localhost:8000
+- **API**: http://localhost:8000/api
+- **AI Agent**: http://localhost:8002
+- **Kong Admin**: http://localhost:8001
+
+### Troubleshooting
+
+**Migration Failed?**
+```bash
+# View migration logs
+docker compose -f deploy/docker/docker-compose.yaml logs migration
+
+# Common issues:
+# 1. DATABASE_URL has special characters → URL encode them
+# 2. Wrong credentials → Check Supabase dashboard
+# 3. Network issues → Check database connectivity
+```
+
+**API Not Starting?**
+```bash
+# Check API logs
+docker compose -f deploy/docker/docker-compose.yaml logs api
+
+# Common issues:
+# 1. DATABASE_URL format error
+# 2. Missing environment variables
+```
+
+**Need to Add New Migrations?**
+```bash
+# Create new migration
+supabase migration new your_migration_name
+
+# Edit the file
+vim supabase/migrations/YYYYMMDDHHMMSS_your_migration_name.sql
+
+# Rebuild and restart (migrations run automatically)
+docker compose -f deploy/docker/docker-compose.yaml up -d --build migration
+```
+
+For detailed migration guide, see [deploy/MIGRATION.md](deploy/MIGRATION.md)
+
+
 
 ---
 
@@ -152,7 +266,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Set environment variables (or add to .env)
-export OPENAI_API_KEY="sk-ant-..."  # Anthropic API key
+export ANTHROPIC_API_KEY="sk-ant-..."  # Anthropic API key
 export SUPABASE_URL="https://your-project.supabase.co"
 export SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 export SUPABASE_JWT_SECRET="your-jwt-secret"
@@ -196,42 +310,6 @@ python slack_worker.py
 
 ---
 
-## 📐 Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         SLAR Platform                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────┐      ┌──────────────┐     ┌──────────────┐  │
-│  │   Next.js    │──────│   Go API     │─────│  PostgreSQL  │  │
-│  │   Frontend   │      │   (Gin)      │     │  (Supabase)  │  │
-│  └──────────────┘      └──────┬───────┘     └──────────────┘  │
-│         │                     │                                 │
-│         │                     │                                 │
-│         │              ┌──────┴───────┐                        │
-│         │              │              │                         │
-│         │        ┌─────▼─────┐  ┌────▼─────┐                  │
-│         │        │    PGMQ   │  │  Redis   │                  │
-│         │        │   Queue   │  │  Cache   │                  │
-│         │        └─────┬─────┘  └──────────┘                  │
-│         │              │                                        │
-│         │        ┌─────▼─────────────┐                        │
-│         │        │                    │                        │
-│  ┌──────▼────────▼─────┐      ┌──────▼──────┐                │
-│  │   Python AI Agent   │      │  Go Workers │                 │
-│  │ (FastAPI/Claude SDK)│      │  (Escalation)│                │
-│  └─────────────────────┘      └─────────────┘                 │
-│         │                             │                         │
-│         │                             │                         │
-│  ┌──────▼─────────────────────────────▼─────────────────────┐ │
-│  │              External Integrations                        │ │
-│  │  Slack │ FCM │ Alertmanager │ Datadog │ Anthropic       │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
 ### Component Overview
 
 | Component | Purpose | Technology |
@@ -263,15 +341,20 @@ python slack_worker.py
 cp .env.example .env
 # Edit .env with your credentials
 
-# Build and start all services
+# Build and start all services (migrations run automatically)
 docker compose -f deploy/docker/docker-compose.yaml up -d
 
 # View logs
 docker compose -f deploy/docker/docker-compose.yaml logs -f
 
+# View migration logs
+docker compose -f deploy/docker/docker-compose.yaml logs migration
+
 # Stop services
 docker compose -f deploy/docker/docker-compose.yaml down
 ```
+
+**Note**: Database migrations are applied automatically before services start. No manual Supabase CLI setup required.
 
 **Services**:
 - **Web**: http://localhost:8000
@@ -292,16 +375,18 @@ kubectl create secret generic slar-secrets \
   --from-literal=slack-bot-token=xoxb-xxx \
   --from-literal=slack-app-token=xapp-xxx
 
-# Install with Helm
+# Install with Helm (migrations run automatically via pre-install hook)
 cd deploy/helm/slar
 helm install slar . -f values.yaml
 
-# Upgrade
+# Upgrade (migrations run automatically via pre-upgrade hook)
 helm upgrade slar .
 
 # Uninstall
 helm uninstall slar
 ```
+
+**Note**: Database migrations are applied automatically before install/upgrade via Kubernetes Jobs with Helm hooks.
 
 **Note**: Check [deploy/helm/slar/](deploy/helm/slar/) directory for Helm chart values and configuration options.
 
