@@ -39,6 +39,7 @@ services:
       - AI_ALLOWED_ORIGINS=${AI_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
       - AI_RATE_LIMIT=${AI_RATE_LIMIT:-60}
       - SLAR_API_URL=${SLAR_API_URL:-http://api:8080}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     restart: unless-stopped
     networks:
       - slar-network

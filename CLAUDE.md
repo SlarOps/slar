@@ -188,7 +188,7 @@ Critical environment variables (see `.env.example`):
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET` (required)
 
 **AI Agent**:
-- `OPENAI_API_KEY` - Anthropic API key (required for AI features)
+- `ANTHROPIC_API_KEY` - Anthropic API key (required for AI features)
 - `AI_PORT` - AI service port (default: 8002)
 - `AI_RATE_LIMIT` - Rate limit per minute (default: 60)
 

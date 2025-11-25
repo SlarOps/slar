@@ -66,8 +66,8 @@ Create a `custom-values.yaml` file to override default values:
 components:
   ai:
     env:
-      - name: OPENAI_API_KEY
-        value: "your-openai-api-key"
+      - name: ANTHROPIC_API_KEY
+        value: "your-anthropic-api-key"
   
   api:
     env:
@@ -106,7 +106,7 @@ For production, use Kubernetes secrets instead of plain text values:
 ```bash
 # Create secrets
 kubectl create secret generic slar-secrets \
-  --from-literal=openai-api-key=your-key \
+  --from-literal=anthropic-api-key=your-key \
   --from-literal=database-url=your-db-url \
   --from-literal=supabase-anon-key=your-key \
   --from-literal=supabase-jwt-secret=your-secret \
@@ -120,11 +120,11 @@ Then reference them in your values:
 components:
   ai:
     env:
-      - name: OPENAI_API_KEY
+      - name: ANTHROPIC_API_KEY
         valueFrom:
           secretKeyRef:
             name: slar-secrets
-            key: openai-api-key
+            key: anthropic-api-key
 ```
 
 ## Persistent Storage

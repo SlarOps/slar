@@ -174,11 +174,11 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-service-role-key
-      - name: OPENAI_API_KEY
+      - name: ANTHROPIC_API_KEY
         valueFrom:
           secretKeyRef:
             name: slar-secrets
-            key: openai-api-key
+            key: anthropic-api-key
 
       # Optional environment variables
       - name: SLAR_API_URL
