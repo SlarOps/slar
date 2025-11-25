@@ -52,23 +52,13 @@ cp .env.example .env
 # - SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional for Slack integration)
 ```
 
-### 2. Setup Database
-
-```bash
-# Install Supabase CLI
-brew install supabase/tap/supabase  # macOS
-# or: npm install -g supabase        # npm
-
-# Link and migrate
-supabase link
-cd supabase && supabase db push
-```
-
-### 3. Launch
+### 2. Launch
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yaml up -d
 ```
+
+**Database migrations will run automatically before services start.**
 
 **Access**: http://localhost:8000
 
@@ -263,15 +253,20 @@ python slack_worker.py
 cp .env.example .env
 # Edit .env with your credentials
 
-# Build and start all services
+# Build and start all services (migrations run automatically)
 docker compose -f deploy/docker/docker-compose.yaml up -d
 
 # View logs
 docker compose -f deploy/docker/docker-compose.yaml logs -f
 
+# View migration logs
+docker compose -f deploy/docker/docker-compose.yaml logs migration
+
 # Stop services
 docker compose -f deploy/docker/docker-compose.yaml down
 ```
+
+**Note**: Database migrations are applied automatically before services start. No manual Supabase CLI setup required.
 
 **Services**:
 - **Web**: http://localhost:8000
@@ -292,16 +287,18 @@ kubectl create secret generic slar-secrets \
   --from-literal=slack-bot-token=xoxb-xxx \
   --from-literal=slack-app-token=xapp-xxx
 
-# Install with Helm
+# Install with Helm (migrations run automatically via pre-install hook)
 cd deploy/helm/slar
 helm install slar . -f values.yaml
 
-# Upgrade
+# Upgrade (migrations run automatically via pre-upgrade hook)
 helm upgrade slar .
 
 # Uninstall
 helm uninstall slar
 ```
+
+**Note**: Database migrations are applied automatically before install/upgrade via Kubernetes Jobs with Helm hooks.
 
 **Note**: Check [deploy/helm/slar/](deploy/helm/slar/) directory for Helm chart values and configuration options.
 

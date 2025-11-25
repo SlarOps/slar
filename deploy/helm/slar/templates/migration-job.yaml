@@ -1,0 +1,55 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "slar.fullname" . }}-migration
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # Run before install and upgrade
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Run before other hooks
+    "helm.sh/hook-weight": "-5"
+    # Delete job before creating new one and after success
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # Retry up to 3 times on failure
+  backoffLimit: {{ .Values.migration.backoffLimit | default 3 }}
+  template:
+    metadata:
+      name: {{ include "slar.fullname" . }}-migration
+      labels:
+        {{- include "slar.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migration
+          image: "{{ .Values.migration.image.repository }}{{ .Values.migration.image.name }}:{{ .Values.migration.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy | default "IfNotPresent" }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slar-secrets
+                  key: database-url
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slar-secrets
+                  key: supabase-url
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: slar-secrets
+                  key: supabase-service-role-key
+          {{- with .Values.migration.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
