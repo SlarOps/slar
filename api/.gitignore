@@ -37,3 +37,10 @@ bin/
 *.dll
 *.so
 *.dylib
+
+# Go build outputs
+main
+server
+worker
+*.out
+*.testmain
