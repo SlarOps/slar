@@ -99,11 +99,11 @@ export default function Sidebar() {
       <div className={`flex items-center h-14 px-4 border-b border-gray-200 dark:border-gray-800 ${collapsed ? 'justify-center' : 'justify-between'}`}>
         <Link href="/" className="flex items-center gap-2">
           {/* Logo Icon */}
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-blue-500/20">
+          <div className="w-8 h-8 bg-gradient-to-br from-orange-500 via-rose-500 to-pink-500 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-orange-500/25">
             S
           </div>
           {!collapsed && (
-            <span className="text-lg font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-blue-800 bg-clip-text text-transparent">
+            <span className="text-lg font-bold bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 bg-clip-text text-transparent">
               SLAR
             </span>
           )}
@@ -190,7 +190,7 @@ export default function Sidebar() {
               </svg>
             </button>
             <div
-              className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-xs font-medium cursor-pointer"
+              className="w-8 h-8 bg-gradient-to-br from-teal-500 to-cyan-500 rounded-full flex items-center justify-center text-white text-xs font-medium cursor-pointer"
               title={user?.email}
               onClick={signOut}
             >
@@ -200,7 +200,7 @@ export default function Sidebar() {
         ) : (
           <div className="px-2">
             <div className="flex items-center gap-3 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-              <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium shadow-sm flex-shrink-0">
+              <div className="w-9 h-9 bg-gradient-to-br from-teal-500 to-cyan-500 rounded-full flex items-center justify-center text-white text-sm font-medium shadow-sm flex-shrink-0">
                 {user?.email?.charAt(0).toUpperCase() || 'U'}
               </div>
               <div className="flex-1 min-w-0">
