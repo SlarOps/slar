@@ -494,14 +494,14 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 		bucketSize = 180
 	}
 
-	// Get deployment info
-	var accountID, apiToken, dbID string
+	// Get deployment info (now includes KV namespace)
+	var accountID, apiToken, dbID, kvNamespaceID string
 	err = h.db.QueryRow(`
-		SELECT d.cf_account_id, d.cf_api_token, d.kv_config_id
+		SELECT d.cf_account_id, d.cf_api_token, d.kv_config_id, COALESCE(d.kv_namespace_id, '') as kv_namespace_id
 		FROM monitors m
 		JOIN monitor_deployments d ON m.deployment_id = d.id
 		WHERE m.id = $1
-	`, id).Scan(&accountID, &apiToken, &dbID)
+	`, id).Scan(&accountID, &apiToken, &dbID, &kvNamespaceID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Monitor not found"})
@@ -510,12 +510,84 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
+	// Try to read from KV first (fast path)
+	if kvNamespaceID != "" {
+		var kvKey string
+		if period == "4h" {
+			kvKey = fmt.Sprintf("monitor:%s:logs:latest", id.String())
+		} else {
+			kvKey = fmt.Sprintf("monitor:%s:logs:hourly", id.String())
+		}
+
+		kvData, err := cf.GetKV(accountID, kvNamespaceID, kvKey)
+		if err == nil && kvData != "" {
+			// Parse KV data
+			var kvResponse map[string]interface{}
+			if err := json.Unmarshal([]byte(kvData), &kvResponse); err == nil {
+				// Transform KV data to API response format
+				data := []map[string]interface{}{}
+
+				if period == "4h" {
+					// Use raw checks from latest
+					if checks, ok := kvResponse["checks"].([]interface{}); ok {
+						for _, check := range checks {
+							if checkMap, ok := check.(map[string]interface{}); ok {
+								timestamp := int64(checkMap["timestamp"].(float64))
+								t := time.Unix(timestamp, 0)
+								data = append(data, map[string]interface{}{
+									"timestamp": timestamp,
+									"time":      t.Format("3PM"),
+									"latency":   checkMap["latency"],
+									"is_up":     checkMap["is_up"],
+									"status":    checkMap["status"],
+									"error":     checkMap["error"],
+								})
+							}
+						}
+					}
+				} else {
+					// Use hourly aggregates
+					if buckets, ok := kvResponse["buckets"].([]interface{}); ok {
+						for _, bucket := range buckets {
+							if bucketMap, ok := bucket.(map[string]interface{}); ok {
+								hour := int64(bucketMap["hour"].(float64))
+								totalLatency := bucketMap["total_latency"].(float64)
+								totalChecks := bucketMap["total_checks"].(float64)
+								upChecks := bucketMap["up_checks"].(float64)
+
+								avgLatency := totalLatency / totalChecks
+								isUp := 1
+								if upChecks < totalChecks {
+									isUp = 0
+								}
+
+								t := time.Unix(hour, 0)
+								data = append(data, map[string]interface{}{
+									"timestamp": hour,
+									"time":      t.Format("3PM"),
+									"latency":   avgLatency,
+									"is_up":     isUp,
+									"status":    200,
+									"error":     "",
+								})
+							}
+						}
+					}
+				}
+
+				c.JSON(http.StatusOK, data)
+				return
+			}
+		}
+	}
+
+	// Fallback to D1 if KV fails or not configured
 	startTime := time.Now().Unix() - duration
 
 	// Build query based on bucket size
 	var query string
 	if bucketSize == 0 {
-		// No aggregation - return raw data
+		// No aggregation - return raw data with LIMIT
 		query = `
 			SELECT 
 				created_at,
@@ -526,9 +598,10 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 			FROM monitor_logs
 			WHERE monitor_id = ? AND created_at >= ?
 			ORDER BY created_at ASC
+			LIMIT 1000
 		`
 	} else {
-		// Aggregate data into time buckets
+		// Aggregate data into time buckets with LIMIT
 		query = fmt.Sprintf(`
 			SELECT 
 				(created_at / %d) * %d as created_at,
@@ -540,6 +613,7 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 			WHERE monitor_id = ? AND created_at >= ?
 			GROUP BY (created_at / %d)
 			ORDER BY created_at ASC
+			LIMIT 1000
 		`, bucketSize, bucketSize, bucketSize)
 	}
 

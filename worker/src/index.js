@@ -45,6 +45,17 @@ export default {
             console.error('Failed to save logs to D1:', e)
         }
 
+        // 4. Save logs to KV for fast access (parallel storage)
+        if (env.MONITOR_KV) {
+            try {
+                await saveLogsToKV(env, results, location)
+                console.log(`Saved ${results.length} check results to KV`)
+            } catch (e) {
+                console.error('Failed to save logs to KV:', e)
+            }
+        }
+
+
         // 4. Handle incident reporting
         // Priority: SLAR_WEBHOOK_URL > FALLBACK_WEBHOOK_URL > /monitors/report
         if (env.SLAR_WEBHOOK_URL) {
@@ -550,3 +561,82 @@ async function sendFallbackAlert(webhookUrl, location, downMonitors) {
         console.error('Failed to send fallback alert:', e)
     }
 }
+
+async function saveLogsToKV(env, results, location) {
+    const timestamp = Math.floor(Date.now() / 1000)
+    const currentHour = Math.floor(timestamp / 3600) * 3600
+
+    for (const result of results) {
+        const monitorId = result.monitor_id
+
+        // 1. Save latest checks (last 100 raw data points)
+        try {
+            const latestKey = `monitor:${monitorId}:logs:latest`
+            const existing = await env.MONITOR_KV.get(latestKey, 'json') || { checks: [] }
+
+            // Add new check
+            existing.checks.unshift({
+                timestamp: timestamp,
+                location: location,
+                latency: result.latency,
+                is_up: result.is_up,
+                status: result.status,
+                error: result.error || ''
+            })
+
+            // Keep last 100 checks (for 4h view at 60s interval)
+            existing.checks = existing.checks.slice(0, 100)
+            existing.updated_at = timestamp
+
+            // Save with 24h TTL
+            await env.MONITOR_KV.put(latestKey, JSON.stringify(existing), {
+                expirationTtl: 86400 // 24 hours
+            })
+        } catch (e) {
+            console.error(`Failed to save latest logs for monitor ${monitorId}:`, e)
+        }
+
+        // 2. Update hourly aggregate
+        try {
+            const hourlyKey = `monitor:${monitorId}:logs:hourly`
+            const hourlyData = await env.MONITOR_KV.get(hourlyKey, 'json') || { buckets: [] }
+
+            // Find or create bucket for current hour
+            let bucket = hourlyData.buckets.find(b => b.hour === currentHour)
+            if (!bucket) {
+                bucket = {
+                    hour: currentHour,
+                    total_latency: 0,
+                    total_checks: 0,
+                    up_checks: 0,
+                    down_checks: 0
+                }
+                hourlyData.buckets.push(bucket)
+            }
+
+            // Update bucket
+            bucket.total_latency += result.latency
+            bucket.total_checks += 1
+            if (result.is_up) {
+                bucket.up_checks += 1
+            } else {
+                bucket.down_checks += 1
+            }
+
+            // Keep last 168 hours (7 days)
+            hourlyData.buckets = hourlyData.buckets
+                .sort((a, b) => b.hour - a.hour)
+                .slice(0, 168)
+
+            hourlyData.updated_at = timestamp
+
+            // Save with 7d TTL
+            await env.MONITOR_KV.put(hourlyKey, JSON.stringify(hourlyData), {
+                expirationTtl: 604800 // 7 days
+            })
+        } catch (e) {
+            console.error(`Failed to save hourly aggregate for monitor ${monitorId}:`, e)
+        }
+    }
+}
+

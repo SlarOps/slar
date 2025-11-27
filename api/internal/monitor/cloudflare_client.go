@@ -310,6 +310,18 @@ func (c *CloudflareClient) WriteKV(accountID, namespaceID, key, value string) er
 	return err
 }
 
+// GetKV reads a value from KV storage
+func (c *CloudflareClient) GetKV(accountID, namespaceID, key string) (string, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/storage/kv/namespaces/%s/values/%s", accountID, namespaceID, key)
+
+	respBytes, err := c.doRequest("GET", url, nil, "")
+	if err != nil {
+		return "", err
+	}
+
+	return string(respBytes), nil
+}
+
 // DeleteD1Database deletes a D1 database
 func (c *CloudflareClient) DeleteD1Database(accountID, databaseID string) error {
 	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/d1/database/%s", accountID, databaseID)
