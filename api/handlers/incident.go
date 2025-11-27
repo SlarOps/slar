@@ -342,9 +342,44 @@ func (h *IncidentHandler) EscalateIncident(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement escalation logic
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": "Escalate incident not implemented yet",
+	// Get user ID from context (set by auth middleware)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+
+	// Call the escalation service
+	result, err := h.incidentService.ManualEscalateIncident(id, userID.(string))
+	if err != nil {
+		// Determine appropriate status code based on error
+		statusCode := http.StatusInternalServerError
+		if err.Error() == "incident not found" {
+			statusCode = http.StatusNotFound
+		} else if err.Error() == "cannot escalate resolved incident" ||
+			err.Error() == "incident has no escalation policy" ||
+			err.Error() == "escalation policy has no levels defined" ||
+			len(err.Error()) > 20 && err.Error()[:20] == "already at maximum" {
+			statusCode = http.StatusBadRequest
+		}
+
+		c.JSON(statusCode, gin.H{
+			"error":   "Failed to escalate incident",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":           "Incident escalated successfully",
+		"new_level":         result.NewLevel,
+		"assigned_user_id":  result.AssignedUserID,
+		"assigned_to_name":  result.AssignedToName,
+		"escalation_status": result.EscalationStatus,
+		"target_type":       result.TargetType,
+		"has_more_levels":   result.HasMoreLevels,
 	})
 }
 

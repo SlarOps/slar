@@ -19,7 +19,7 @@ export default function IncidentDetailPage() {
   useEffect(() => {
     const fetchIncident = async () => {
       console.log('Fetching incident with ID:', params.id);
-      
+
       if (!session?.access_token || !params.id) {
         console.log('Missing session or params.id:', { session: !!session?.access_token, paramsId: params.id });
         setLoading(false);
@@ -29,11 +29,11 @@ export default function IncidentDetailPage() {
       try {
         setLoading(true);
         apiClient.setToken(session.access_token);
-        
+
         console.log('Making API call for incident:', params.id);
         const data = await apiClient.getIncident(params.id);
         console.log('Received incident data:', { id: data.id, title: data.title, status: data.status });
-        
+
         setIncident(data);
         setEvents(data.recent_events || []);
         setError(null);
@@ -50,10 +50,10 @@ export default function IncidentDetailPage() {
 
   const handleAction = async (action) => {
     if (!incident) return;
-    
+
     try {
       setActionLoading(true);
-      
+
       switch (action) {
         case 'acknowledge':
           await apiClient.acknowledgeIncident(incident.id);
@@ -65,15 +65,17 @@ export default function IncidentDetailPage() {
           await apiClient.escalateIncident(incident.id);
           break;
       }
-      
+
       // Refresh incident data
       const data = await apiClient.getIncident(params.id);
       setIncident(data);
       setEvents(data.recent_events || []);
-      
+
     } catch (err) {
       console.error(`Error ${action} incident:`, err);
-      setError(`Failed to ${action} incident`);
+      // Extract detailed error message from API response
+      const errorMessage = err.response?.data?.details || err.response?.data?.error || err.message || `Failed to ${action} incident`;
+      setError(errorMessage);
     } finally {
       setActionLoading(false);
     }
@@ -93,7 +95,7 @@ export default function IncidentDetailPage() {
   };
 
   const getUrgencyColor = (urgency) => {
-    return urgency === 'high' 
+    return urgency === 'high'
       ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300'
       : 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300';
   };
@@ -140,7 +142,7 @@ export default function IncidentDetailPage() {
               <span className="text-sm text-gray-500 ml-2">(URL: {params.id})</span>
             </h1>
           </div>
-          
+
           <div className="flex items-center space-x-3 mb-4">
             <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(incident.status)}`}>
               {incident.status.toUpperCase()}
@@ -154,7 +156,7 @@ export default function IncidentDetailPage() {
               </span>
             )}
           </div>
-          
+
 
         </div>
 
@@ -169,7 +171,7 @@ export default function IncidentDetailPage() {
               {actionLoading ? 'Processing...' : 'Acknowledge'}
             </button>
           )}
-          
+
           {incident.status !== 'resolved' && (
             <button
               onClick={() => handleAction('resolve')}
@@ -179,7 +181,7 @@ export default function IncidentDetailPage() {
               {actionLoading ? 'Processing...' : 'Resolve'}
             </button>
           )}
-          
+
           {incident.status !== 'resolved' && (
             <button
               onClick={() => handleAction('escalate')}
@@ -199,7 +201,7 @@ export default function IncidentDetailPage() {
           {/* Alert Content */}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
-            
+
             <div className="space-y-4">
               {/* Alert Title and Description */}
               <div>
@@ -214,7 +216,7 @@ export default function IncidentDetailPage() {
                   />
                 )}
               </div>
-              
+
               {/* Alert Metadata */}
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <div>
@@ -246,11 +248,11 @@ export default function IncidentDetailPage() {
               </div>
             </div>
           </div>
-          
+
           {/* Timeline */}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Timeline</h3>
-            
+
             {events.length === 0 ? (
               <p className="text-gray-500 dark:text-gray-400">No events recorded yet.</p>
             ) : (
@@ -292,7 +294,7 @@ export default function IncidentDetailPage() {
           {/* Incident Details */}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Details</h3>
-            
+
             <div className="space-y-3">
               <div>
                 <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Incident ID</dt>
@@ -300,7 +302,7 @@ export default function IncidentDetailPage() {
                   {incident.id}
                 </dd>
               </div>
-              
+
               {incident.incident_number && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Incident Number</dt>
@@ -309,7 +311,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.priority && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Priority</dt>
@@ -320,14 +322,14 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               <div>
                 <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Created</dt>
                 <dd className="text-sm text-gray-900 dark:text-white">
                   {new Date(incident.created_at).toLocaleString()}
                 </dd>
               </div>
-              
+
               {incident.acknowledged_at && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Acknowledged</dt>
@@ -336,7 +338,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.resolved_at && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Resolved</dt>
@@ -345,7 +347,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.assigned_to_name && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Assigned To</dt>
@@ -354,7 +356,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.service_name && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Service</dt>
@@ -363,7 +365,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.escalation_policy_name && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Escalation Policy</dt>
@@ -372,7 +374,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.current_escalation_level > 0 && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Escalation Level</dt>
@@ -386,7 +388,7 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.source && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Source</dt>
@@ -395,14 +397,14 @@ export default function IncidentDetailPage() {
                   </dd>
                 </div>
               )}
-              
+
               {incident.external_url && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">External Link</dt>
                   <dd className="text-sm">
-                    <a 
-                      href={incident.external_url} 
-                      target="_blank" 
+                    <a
+                      href={incident.external_url}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                     >

@@ -382,6 +382,9 @@ func (w *IncidentWorker) processEscalationTarget(incident db.Incident, level db.
 		return w.escalateToUser(incident, level.TargetID)
 	case "scheduler":
 		return w.escalateToScheduler(incident, level.TargetID)
+	case "current_schedule":
+		// current_schedule uses the incident's group to find on-call user
+		return w.escalateToGroup(incident, incident.GroupID)
 	case "group":
 		return w.escalateToGroup(incident, level.TargetID)
 	case "external":

@@ -5,7 +5,8 @@ import { useState } from 'react';
 export default function EscalationLevelEditor({ 
   levels = [], 
   onChange, 
-  members = [], 
+  members = [],
+  schedulers = [],  // Add schedulers prop
   maxLevels = 5, 
   defaultTimeout = 5 
 }) {
@@ -54,6 +55,13 @@ export default function EscalationLevelEditor({
     if (targetType === 'user') {
       const member = members.find(m => m.id === targetId);
       return member?.name || 'Select user';
+    }
+    if (targetType === 'scheduler') {
+      const scheduler = schedulers.find(s => s.id === targetId);
+      return scheduler?.name || 'Select scheduler';
+    }
+    if (targetType === 'current_schedule') {
+      return 'Current on-call user';
     }
     if (targetType === 'group') {
       return 'Entire group';
@@ -130,22 +138,31 @@ export default function EscalationLevelEditor({
                 {/* Target Type */}
                 <div className="space-y-2 mb-3">
                   {[
-                    { value: 'user', label: 'Team Member' },
-                    { value: 'group', label: 'Entire Group' },
-                    { value: 'external', label: 'External Webhook' }
+                    { value: 'current_schedule', label: 'Current On-Call', description: 'Current on-call user from group schedule' },
+                    { value: 'scheduler', label: 'Specific Scheduler', description: 'On-call rotation schedule' },
+                    { value: 'user', label: 'Specific User', description: 'Direct user assignment' },
+                    { value: 'group', label: 'Entire Group', description: 'All group members' },
+                    { value: 'external', label: 'External Webhook', description: 'Send to external system' }
                   ].map((type) => (
-                    <label key={type.value} className="flex items-center">
+                    <label key={type.value} className="flex items-start">
                       <input
                         type="radio"
                         name={`target_type_${index}`}
                         value={type.value}
                         checked={level.target_type === type.value}
                         onChange={(e) => updateLevel(index, 'target_type', e.target.value)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600"
+                        className="h-4 w-4 mt-0.5 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600"
                       />
-                      <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                        {type.label}
-                      </span>
+                      <div className="ml-2">
+                        <span className="text-sm text-gray-700 dark:text-gray-300 font-medium">
+                          {type.label}
+                        </span>
+                        {type.description && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            {type.description}
+                          </p>
+                        )}
+                      </div>
                     </label>
                   ))}
                 </div>
@@ -164,6 +181,37 @@ export default function EscalationLevelEditor({
                       </option>
                     ))}
                   </select>
+                )}
+
+                {level.target_type === 'scheduler' && (
+                  <select
+                    value={level.target_id}
+                    onChange={(e) => updateLevel(index, 'target_id', e.target.value)}
+                    className="w-full border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  >
+                    <option value="">Select scheduler</option>
+                    {schedulers.map((scheduler) => (
+                      <option key={scheduler.id} value={scheduler.id}>
+                        {scheduler.name} ({scheduler.rotation_type})
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {level.target_type === 'current_schedule' && (
+                  <div className="text-sm text-gray-500 dark:text-gray-400 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-start">
+                      <svg className="w-4 h-4 text-blue-600 dark:text-blue-400 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="font-medium text-blue-900 dark:text-blue-300">Current on-call user</p>
+                        <p className="text-xs mt-1">
+                          Will automatically escalate to whoever is currently on-call in this group's schedule at the time of escalation.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {level.target_type === 'external' && (

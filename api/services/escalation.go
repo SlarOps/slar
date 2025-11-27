@@ -105,6 +105,19 @@ func (s *EscalationService) CreateEscalationPolicy(groupID string, req db.Escala
 
 	// Insert escalation levels
 	for _, levelReq := range req.Levels {
+		// Validate target_type
+		validTargetTypes := map[string]bool{
+			"user":             true,
+			"scheduler":        true,
+			"current_schedule": true,
+			"group":            true,
+			"external":         true,
+		}
+		if !validTargetTypes[levelReq.TargetType] {
+			return policy, fmt.Errorf("invalid target_type '%s' for level %d. Must be one of: user, scheduler, current_schedule, group, external",
+				levelReq.TargetType, levelReq.LevelNumber)
+		}
+
 		level := db.EscalationLevel{
 			ID:                  uuid.New().String(), // ✅ Generate UUID
 			PolicyID:            policy.ID,
@@ -214,6 +227,19 @@ func (s *EscalationService) UpdateEscalationPolicy(policyID string, req db.Escal
 
 	// Insert new escalation levels
 	for _, levelReq := range req.Levels {
+		// Validate target_type
+		validTargetTypes := map[string]bool{
+			"user":             true,
+			"scheduler":        true,
+			"current_schedule": true,
+			"group":            true,
+			"external":         true,
+		}
+		if !validTargetTypes[levelReq.TargetType] {
+			return policy, fmt.Errorf("invalid target_type '%s' for level %d. Must be one of: user, scheduler, current_schedule, group, external",
+				levelReq.TargetType, levelReq.LevelNumber)
+		}
+
 		level := db.EscalationLevel{
 			ID:                  uuid.New().String(),
 			PolicyID:            policy.ID,

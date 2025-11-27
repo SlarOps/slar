@@ -72,7 +72,8 @@ export default function IncidentDetailModal({
           await apiClient.resolveIncident(incident.id);
           break;
         case 'escalate':
-          await apiClient.escalateIncident(incident.id);
+          const result = await apiClient.escalateIncident(incident.id);
+          console.log('Escalation result:', result);
           break;
       }
 

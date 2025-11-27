@@ -209,3 +209,13 @@ const (
 	WebhookActionAcknowledge = "acknowledge"
 	WebhookActionResolve     = "resolve"
 )
+
+// EscalationResult represents the result of a manual escalation
+type EscalationResult struct {
+	NewLevel         int    `json:"new_level"`
+	AssignedUserID   string `json:"assigned_user_id,omitempty"`
+	AssignedToName   string `json:"assigned_to_name,omitempty"`
+	EscalationStatus string `json:"escalation_status"`
+	TargetType       string `json:"target_type"`
+	HasMoreLevels    bool   `json:"has_more_levels"`
+}

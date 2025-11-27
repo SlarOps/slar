@@ -1044,6 +1044,239 @@ func (s *IncidentService) getCurrentOnCallUserFromGroup(groupID string) (string,
 	return userID, nil
 }
 
+// ManualEscalateIncident handles manual escalation triggered by user action
+// Returns the new escalation level, assigned user ID, and any error
+func (s *IncidentService) ManualEscalateIncident(incidentID, userID string) (*db.EscalationResult, error) {
+	log.Printf("DEBUG: ManualEscalateIncident called for incident %s by user %s", incidentID, userID)
+
+	// Get current incident state
+	var incident struct {
+		ID                     string
+		Status                 string
+		EscalationPolicyID     sql.NullString
+		CurrentEscalationLevel int
+		EscalationStatus       string
+		GroupID                sql.NullString
+	}
+
+	query := `
+		SELECT id, status, escalation_policy_id, current_escalation_level, 
+		       escalation_status, group_id
+		FROM incidents
+		WHERE id = $1
+	`
+	err := s.PG.QueryRow(query, incidentID).Scan(
+		&incident.ID, &incident.Status, &incident.EscalationPolicyID,
+		&incident.CurrentEscalationLevel, &incident.EscalationStatus, &incident.GroupID,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("incident not found")
+		}
+		return nil, fmt.Errorf("failed to get incident: %w", err)
+	}
+
+	// Validate incident can be escalated
+	if incident.Status == db.IncidentStatusResolved {
+		return nil, fmt.Errorf("cannot escalate resolved incident")
+	}
+
+	if !incident.EscalationPolicyID.Valid || incident.EscalationPolicyID.String == "" {
+		return nil, fmt.Errorf("incident has no escalation policy")
+	}
+
+	// Get escalation levels
+	escalationLevels, err := s.getEscalationLevels(incident.EscalationPolicyID.String)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get escalation levels: %w", err)
+	}
+
+	if len(escalationLevels) == 0 {
+		return nil, fmt.Errorf("escalation policy has no levels defined")
+	}
+
+	// Determine next level
+	nextLevel := incident.CurrentEscalationLevel + 1
+	log.Printf("DEBUG: Current level %d, next level %d, total levels %d",
+		incident.CurrentEscalationLevel, nextLevel, len(escalationLevels))
+
+	// Check if there's a next level available
+	var targetLevel *db.EscalationLevel
+	for _, level := range escalationLevels {
+		if level.LevelNumber == nextLevel {
+			targetLevel = &level
+			break
+		}
+	}
+
+	if targetLevel == nil {
+		return nil, fmt.Errorf("already at maximum escalation level (%d)", incident.CurrentEscalationLevel)
+	}
+
+	// Process escalation based on target type
+	var assignedUserID string
+	groupID := ""
+	if incident.GroupID.Valid {
+		groupID = incident.GroupID.String
+	}
+
+	switch targetLevel.TargetType {
+	case "user":
+		assignedUserID = targetLevel.TargetID
+	case "scheduler":
+		assignedUserID, err = s.getCurrentOnCallUserFromScheduler(targetLevel.TargetID, groupID)
+		if err != nil {
+			log.Printf("WARNING: Failed to get on-call user from scheduler: %v", err)
+		}
+	case "current_schedule", "group":
+		targetGroupID := groupID
+		if targetLevel.TargetType == "group" && targetLevel.TargetID != "" {
+			targetGroupID = targetLevel.TargetID
+		}
+		assignedUserID, err = s.getCurrentOnCallUserFromGroup(targetGroupID)
+		if err != nil {
+			log.Printf("WARNING: Failed to get on-call user from group: %v", err)
+		}
+	case "external":
+		// External escalation doesn't assign to a user
+		log.Printf("DEBUG: External escalation to target %s", targetLevel.TargetID)
+	default:
+		log.Printf("WARNING: Unknown target type: %s", targetLevel.TargetType)
+	}
+
+	// Check if there are more levels after this one
+	hasMoreLevels := false
+	for _, level := range escalationLevels {
+		if level.LevelNumber == nextLevel+1 {
+			hasMoreLevels = true
+			break
+		}
+	}
+
+	// Determine new escalation status
+	newStatus := "pending"
+	if !hasMoreLevels {
+		newStatus = "completed"
+	}
+
+	// Update incident in database - use UTC time consistent with worker
+	updateQuery := `
+		UPDATE incidents
+		SET current_escalation_level = $1,
+		    escalation_status = $2,
+		    last_escalated_at = NOW() AT TIME ZONE 'UTC',
+		    updated_at = NOW() AT TIME ZONE 'UTC'
+	`
+	args := []interface{}{nextLevel, newStatus}
+	argIndex := 3
+
+	// Also update assigned_to if we have a user
+	if assignedUserID != "" {
+		updateQuery += fmt.Sprintf(", assigned_to = $%d::uuid, assigned_at = NOW() AT TIME ZONE 'UTC'", argIndex)
+		args = append(args, assignedUserID)
+		argIndex++
+	}
+
+	updateQuery += fmt.Sprintf(" WHERE id = $%d", argIndex)
+	args = append(args, incidentID)
+
+	_, err = s.PG.Exec(updateQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update incident: %w", err)
+	}
+
+	// Get assignee name for event
+	var assignedToName string
+	if assignedUserID != "" {
+		s.PG.QueryRow(`SELECT COALESCE(name, email, 'Unknown') FROM users WHERE id = $1`, assignedUserID).Scan(&assignedToName)
+	}
+
+	// Create escalation event
+	eventData := map[string]interface{}{
+		"escalation_level": nextLevel,
+		"target_type":      targetLevel.TargetType,
+		"target_id":        targetLevel.TargetID,
+		"reason":           "manual_escalation",
+		"escalated_by":     userID,
+	}
+	if assignedUserID != "" {
+		eventData["assigned_to_id"] = assignedUserID
+		eventData["assigned_to"] = assignedToName
+	}
+
+	s.createIncidentEvent(incidentID, db.IncidentEventEscalated, eventData, userID)
+
+	// Create escalation completion event if this was the last level
+	if !hasMoreLevels {
+		completionEventData := map[string]interface{}{
+			"escalation_status": "completed",
+			"final_level":       nextLevel,
+			"reason":            "manual_escalation_completed",
+		}
+		if assignedUserID != "" {
+			completionEventData["final_assignee"] = assignedToName
+			completionEventData["final_assignee_id"] = assignedUserID
+		}
+		s.createIncidentEvent(incidentID, "escalation_completed", completionEventData, userID)
+	}
+
+	// Send notification to assigned user
+	if s.NotificationWorker != nil && assignedUserID != "" {
+		go func() {
+			err := s.NotificationWorker.SendIncidentEscalatedNotification(assignedUserID, incidentID)
+			if err != nil {
+				log.Printf("⚠️  Failed to send escalation notification: %v", err)
+			} else {
+				log.Printf("✅ Sent escalation notification to user %s", assignedUserID)
+			}
+		}()
+	}
+
+	log.Printf("SUCCESS: Manually escalated incident %s to level %d (assigned to: %s, status: %s)",
+		incidentID, nextLevel, assignedUserID, newStatus)
+
+	return &db.EscalationResult{
+		NewLevel:         nextLevel,
+		AssignedUserID:   assignedUserID,
+		AssignedToName:   assignedToName,
+		EscalationStatus: newStatus,
+		TargetType:       targetLevel.TargetType,
+		HasMoreLevels:    hasMoreLevels,
+	}, nil
+}
+
+// getEscalationLevels retrieves escalation levels for a policy
+func (s *IncidentService) getEscalationLevels(policyID string) ([]db.EscalationLevel, error) {
+	query := `
+		SELECT id, policy_id, level_number, target_type, target_id, timeout_minutes
+		FROM escalation_levels
+		WHERE policy_id = $1
+		ORDER BY level_number ASC
+	`
+
+	rows, err := s.PG.Query(query, policyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var levels []db.EscalationLevel
+	for rows.Next() {
+		var level db.EscalationLevel
+		err := rows.Scan(
+			&level.ID, &level.PolicyID, &level.LevelNumber,
+			&level.TargetType, &level.TargetID, &level.TimeoutMinutes,
+		)
+		if err != nil {
+			log.Printf("Error scanning escalation level: %v", err)
+			continue
+		}
+		levels = append(levels, level)
+	}
+
+	return levels, nil
+}
+
 // FindIncidentByFingerprint finds an incident by fingerprint in labels
 func (s *IncidentService) FindIncidentByFingerprint(fingerprint string) (*db.Incident, error) {
 	log.Printf("DEBUG: Searching for incident with fingerprint: %s", fingerprint)
