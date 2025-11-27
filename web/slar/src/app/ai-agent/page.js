@@ -183,7 +183,7 @@ function AIAgentContent() {
             ref={messageAreaRef}
             className="flex-1 overflow-y-auto overflow-x-hidden"
           >
-            <div className="max-w-3xl mx-auto px-4 pb-32 pt-4">
+            <div className="max-w-4xl mx-auto px-4 pb-32 pt-4">
               {/* Messages List */}
               <MessagesList
                 messages={messages}

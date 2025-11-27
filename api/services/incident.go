@@ -180,13 +180,18 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 
 	args := []interface{}{}
 	argIndex := 1
+	hasSearch := false
+	searchArgIndex := 0
 
 	// Apply filters
 	if search, ok := filters["search"].(string); ok && search != "" {
-		query += fmt.Sprintf(" AND (i.title ILIKE $%d OR i.description ILIKE $%d)", argIndex, argIndex+1)
+		hasSearch = true
+		searchArgIndex = argIndex
+		// Use full-text search if search_vector exists, fallback to ILIKE
+		query += fmt.Sprintf(" AND (i.search_vector @@ plainto_tsquery('english', $%d) OR i.title ILIKE $%d OR i.description ILIKE $%d)", argIndex, argIndex+1, argIndex+2)
 		searchPattern := "%" + search + "%"
-		args = append(args, searchPattern, searchPattern)
-		argIndex += 2
+		args = append(args, search, searchPattern, searchPattern)
+		argIndex += 3
 	}
 
 	if status, ok := filters["status"].(string); ok && status != "" {
@@ -245,6 +250,13 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 
 	// Sorting
 	sortBy := "i.created_at DESC"
+
+	// If search is used, prioritize by search ranking
+	if hasSearch {
+		sortBy = fmt.Sprintf("ts_rank(i.search_vector, plainto_tsquery('english', $%d)) DESC, i.created_at DESC", searchArgIndex)
+	}
+
+	// Allow manual sort override
 	if sort, ok := filters["sort"].(string); ok && sort != "" {
 		switch sort {
 		case "created_at_desc":
@@ -257,6 +269,10 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 			sortBy = "CASE WHEN i.urgency = 'high' THEN 1 ELSE 2 END, i.created_at DESC"
 		case "status_asc":
 			sortBy = "CASE WHEN i.status = 'triggered' THEN 1 WHEN i.status = 'acknowledged' THEN 2 ELSE 3 END, i.created_at DESC"
+		case "relevance":
+			if hasSearch {
+				sortBy = fmt.Sprintf("ts_rank(i.search_vector, plainto_tsquery('english', $%d)) DESC, i.created_at DESC", searchArgIndex)
+			}
 		}
 	}
 	query += " ORDER BY " + sortBy
