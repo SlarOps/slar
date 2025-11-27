@@ -45,18 +45,9 @@ export default {
             console.error('Failed to save logs to D1:', e)
         }
 
-        // 4. Save logs to KV for fast access (parallel storage)
-        if (env.MONITOR_KV) {
-            try {
-                await saveLogsToKV(env, results, location)
-                console.log(`Saved ${results.length} check results to KV`)
-            } catch (e) {
-                console.error('Failed to save logs to KV:', e)
-            }
-        }
-
-
         // 4. Handle incident reporting
+        // Note: API metrics are cached at CDN edge level (s-maxage=60)
+        // No need to cache in D1 - CDN handles it automatically!
         // Priority: SLAR_WEBHOOK_URL > FALLBACK_WEBHOOK_URL > /monitors/report
         if (env.SLAR_WEBHOOK_URL) {
             // Send via integration webhook (PagerDuty Events API format)
@@ -70,6 +61,82 @@ export default {
         }
         // Note: /monitors/report endpoint is deprecated but still available for backward compatibility
     },
+
+    // ✅ HTTP API for metrics with Cloudflare CDN Cache
+    async fetch(request, env, ctx) {
+        const url = new URL(request.url)
+        
+        // CORS headers for browser requests
+        const corsHeaders = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        }
+
+        // Handle preflight
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { headers: corsHeaders })
+        }
+
+        // Health check (no cache)
+        if (url.pathname === '/health') {
+            return new Response(JSON.stringify({ status: 'ok', timestamp: Date.now() }), {
+                headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            })
+        }
+
+        // Helper to add CORS headers to any response
+        const addCorsHeaders = (response, cacheStatus) => {
+            const newHeaders = new Headers(response.headers)
+            // Always set CORS headers (overwrite if exists)
+            newHeaders.set('Access-Control-Allow-Origin', '*')
+            newHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            newHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            newHeaders.set('X-Cache-Status', cacheStatus)
+            return new Response(response.body, {
+                status: response.status,
+                headers: newHeaders
+            })
+        }
+
+        // ✅ Check CDN Cache first (only for GET requests)
+        const cache = caches.default
+        const cacheKey = new Request(url.toString(), { method: 'GET' })
+        
+        let response = await cache.match(cacheKey)
+        if (response) {
+            // ✅ CACHE HIT
+            return addCorsHeaders(response, 'HIT')
+        }
+
+        // ❌ CACHE MISS - Query D1 and cache response
+        try {
+            if (url.pathname === '/api/metrics') {
+                response = await handleGetMetrics(env, request, corsHeaders)
+            } else if (url.pathname === '/api/monitors') {
+                response = await handleGetMonitors(env, request, corsHeaders)
+            } else if (url.pathname.startsWith('/api/monitors/')) {
+                const monitorId = url.pathname.split('/')[3]
+                response = await handleGetMonitorStats(env, monitorId, corsHeaders)
+            } else {
+                return new Response('Not Found', { status: 404, headers: corsHeaders })
+            }
+
+            // ✅ Store in CDN Cache (only successful responses)
+            if (response.ok) {
+                const cacheResponse = response.clone()
+                ctx.waitUntil(cache.put(cacheKey, cacheResponse))
+            }
+
+            return addCorsHeaders(response, 'MISS')
+        } catch (error) {
+            console.error('API error:', error)
+            return new Response(JSON.stringify({ error: error.message }), {
+                status: 500,
+                headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            })
+        }
+    }
 }
 
 async function handleIncidentsViaWebhook(env, webhookUrl, monitors, results) {
@@ -562,81 +629,221 @@ async function sendFallbackAlert(webhookUrl, location, downMonitors) {
     }
 }
 
-async function saveLogsToKV(env, results, location) {
-    const timestamp = Math.floor(Date.now() / 1000)
-    const currentHour = Math.floor(timestamp / 3600) * 3600
+// ============================================================================
+// API FUNCTIONS - With Cloudflare CDN Edge Cache
+// ============================================================================
 
-    for (const result of results) {
-        const monitorId = result.monitor_id
+/**
+ * GET /api/metrics - All monitors with latest check results
+ * Cached at CDN edge for 60 seconds (= check interval)
+ * 
+ * Flow:
+ * 1. Browser → CDN Edge (check cache)
+ * 2. If HIT: Return cached response (~5ms) ⚡
+ * 3. If MISS: Worker → D1 → Response → Cache → Browser
+ */
+async function handleGetMetrics(env, request, corsHeaders) {
+    try {
+        const timestamp = Math.floor(Date.now() / 1000)
+        const location = (await getWorkerLocation()) || 'UNKNOWN'
 
-        // 1. Save latest checks (last 100 raw data points)
-        try {
-            const latestKey = `monitor:${monitorId}:logs:latest`
-            const existing = await env.MONITOR_KV.get(latestKey, 'json') || { checks: [] }
+        // ⚡ OPTIMIZED: Single query with JOIN instead of N correlated subqueries
+        // Uses index: idx_monitor_logs_monitor_created (monitor_id, created_at DESC)
+        const { results: monitors } = await env.SLAR_DB.prepare(`
+            SELECT 
+                m.id, m.url, m.target, m.method,
+                l.is_up, l.latency, l.status, l.error, l.created_at as last_check
+            FROM monitors m
+            LEFT JOIN monitor_logs l ON l.id = (
+                SELECT id FROM monitor_logs 
+                WHERE monitor_id = m.id 
+                ORDER BY created_at DESC LIMIT 1
+            )
+            WHERE m.is_active = 1
+        `).all()
 
-            // Add new check
-            existing.checks.unshift({
-                timestamp: timestamp,
-                location: location,
-                latency: result.latency,
-                is_up: result.is_up,
-                status: result.status,
-                error: result.error || ''
-            })
+        const upCount = monitors.filter(m => m.is_up === 1).length
+        const downCount = monitors.filter(m => m.is_up === 0).length
+        const latencies = monitors.map(m => m.latency).filter(l => l > 0)
+        const avgLatency = latencies.length > 0 
+            ? latencies.reduce((a, b) => a + b, 0) / latencies.length 
+            : 0
 
-            // Keep last 100 checks (for 4h view at 60s interval)
-            existing.checks = existing.checks.slice(0, 100)
-            existing.updated_at = timestamp
-
-            // Save with 24h TTL
-            await env.MONITOR_KV.put(latestKey, JSON.stringify(existing), {
-                expirationTtl: 86400 // 24 hours
-            })
-        } catch (e) {
-            console.error(`Failed to save latest logs for monitor ${monitorId}:`, e)
+        const data = {
+            timestamp,
+            location,
+            monitors: monitors.map(m => ({
+                id: m.id,
+                name: m.url || m.target || m.id,
+                url: m.url || m.target,
+                method: m.method,
+                is_up: m.is_up === 1,
+                latency: m.latency || 0,
+                status: m.status || 0,
+                error: m.error || '',
+                last_check: m.last_check
+            })),
+            summary: {
+                total: monitors.length,
+                up: upCount,
+                down: downCount,
+                avg_latency: Math.round(avgLatency)
+            }
         }
 
-        // 2. Update hourly aggregate
-        try {
-            const hourlyKey = `monitor:${monitorId}:logs:hourly`
-            const hourlyData = await env.MONITOR_KV.get(hourlyKey, 'json') || { buckets: [] }
-
-            // Find or create bucket for current hour
-            let bucket = hourlyData.buckets.find(b => b.hour === currentHour)
-            if (!bucket) {
-                bucket = {
-                    hour: currentHour,
-                    total_latency: 0,
-                    total_checks: 0,
-                    up_checks: 0,
-                    down_checks: 0
-                }
-                hourlyData.buckets.push(bucket)
+        return new Response(JSON.stringify(data), {
+            headers: { 
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+                ...corsHeaders
             }
-
-            // Update bucket
-            bucket.total_latency += result.latency
-            bucket.total_checks += 1
-            if (result.is_up) {
-                bucket.up_checks += 1
-            } else {
-                bucket.down_checks += 1
-            }
-
-            // Keep last 168 hours (7 days)
-            hourlyData.buckets = hourlyData.buckets
-                .sort((a, b) => b.hour - a.hour)
-                .slice(0, 168)
-
-            hourlyData.updated_at = timestamp
-
-            // Save with 7d TTL
-            await env.MONITOR_KV.put(hourlyKey, JSON.stringify(hourlyData), {
-                expirationTtl: 604800 // 7 days
-            })
-        } catch (e) {
-            console.error(`Failed to save hourly aggregate for monitor ${monitorId}:`, e)
-        }
+        })
+    } catch (error) {
+        console.error('Error fetching metrics:', error)
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        })
     }
 }
 
+/**
+ * GET /api/monitors - List monitors with current status
+ * Cached at CDN edge for 60 seconds
+ */
+async function handleGetMonitors(env, request, corsHeaders) {
+    try {
+        // ⚡ OPTIMIZED: Single JOIN instead of correlated subqueries
+        const { results: monitors } = await env.SLAR_DB.prepare(`
+            SELECT 
+                m.id, m.url, m.target, m.method,
+                l.is_up, l.latency
+            FROM monitors m
+            LEFT JOIN monitor_logs l ON l.id = (
+                SELECT id FROM monitor_logs 
+                WHERE monitor_id = m.id 
+                ORDER BY created_at DESC LIMIT 1
+            )
+            WHERE m.is_active = 1
+        `).all()
+
+        const upCount = monitors.filter(m => m.is_up === 1).length
+
+        return new Response(JSON.stringify({ 
+            monitors: monitors.map(m => ({
+                id: m.id,
+                name: m.url || m.target || m.id,
+                url: m.url || m.target,
+                method: m.method,
+                is_up: m.is_up === 1,
+                latency: m.latency || 0
+            })),
+            summary: {
+                total: monitors.length,
+                up: upCount,
+                down: monitors.length - upCount
+            }
+        }), {
+            headers: { 
+                'Content-Type': 'application/json',
+                // ✅ CDN Cache for 60 seconds
+                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+                ...corsHeaders
+            }
+        })
+    } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        })
+    }
+}
+
+/**
+ * GET /api/monitors/:id - Detailed stats for specific monitor
+ * Cached at CDN edge for 60 seconds
+ * ⚡ OPTIMIZED: Batch queries + SQL aggregation + reduced data fetch
+ */
+async function handleGetMonitorStats(env, monitorId, corsHeaders) {
+    try {
+        // ⚡ OPTIMIZED: Batch all queries together for single round trip
+        const [monitorResult, statsResult, logsResult] = await env.SLAR_DB.batch([
+            // Query 1: Monitor info
+            env.SLAR_DB.prepare(`SELECT id, url, target, method FROM monitors WHERE id = ?`).bind(monitorId),
+            // Query 2: Stats aggregation in SQL (much faster than JS)
+            env.SLAR_DB.prepare(`
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) as up_count,
+                    AVG(CASE WHEN latency > 0 THEN latency END) as avg_latency
+                FROM monitor_logs
+                WHERE monitor_id = ? AND created_at > unixepoch('now', '-7 days')
+            `).bind(monitorId),
+            // Query 3: Recent logs for chart (limit 50, enough for display)
+            env.SLAR_DB.prepare(`
+                SELECT is_up, latency, status, error, created_at
+                FROM monitor_logs
+                WHERE monitor_id = ?
+                ORDER BY created_at DESC
+                LIMIT 50
+            `).bind(monitorId)
+        ])
+
+        const monitor = monitorResult.results?.[0]
+        if (!monitor) {
+            return new Response(JSON.stringify({ error: 'Monitor not found' }), {
+                status: 404,
+                headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            })
+        }
+
+        const stats = statsResult.results?.[0] || { total: 0, up_count: 0, avg_latency: 0 }
+        const logs = logsResult.results || []
+        const latestLog = logs[0]
+
+        const total = stats.total || 0
+        const upCount = stats.up_count || 0
+        const uptimePercent = total > 0 ? (upCount / total) * 100 : 100
+
+        return new Response(JSON.stringify({
+            monitor: {
+                id: monitor.id,
+                name: monitor.url || monitor.target || monitorId,
+                url: monitor.url || monitor.target,
+                method: monitor.method,
+                is_up: latestLog?.is_up === 1,
+                latency: latestLog?.latency || 0,
+                status: latestLog?.status || 0,
+                error: latestLog?.error || '',
+                last_check: latestLog?.created_at
+            },
+            stats: {
+                period: '7d',
+                uptime_percent: Math.round(uptimePercent * 100) / 100,
+                total_checks: total,
+                successful_checks: upCount,
+                failed_checks: total - upCount,
+                avg_latency_ms: Math.round(stats.avg_latency || 0)
+            },
+            recent_logs: logs.map(l => ({
+                is_up: l.is_up === 1,
+                latency: l.latency,
+                status: l.status,
+                error: l.error,
+                timestamp: l.created_at
+            }))
+        }), {
+            headers: { 
+                'Content-Type': 'application/json',
+                // ✅ CDN Cache for 60 seconds
+                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+                ...corsHeaders
+            }
+        })
+    } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        })
+    }
+}

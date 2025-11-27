@@ -23,6 +23,7 @@ type DeployRequest struct {
 	Name          string `json:"name" binding:"required"`
 	CFAccountID   string `json:"cf_account_id" binding:"required"`
 	CFAPIToken    string `json:"cf_api_token" binding:"required"`
+	CFSubdomain   string `json:"cf_subdomain"`   // Optional, Cloudflare workers subdomain for constructing worker_url
 	WorkerName    string `json:"worker_name"`    // Optional, default slar-uptime-worker
 	IntegrationID string `json:"integration_id"` // Optional, link to integration for webhook URL
 }
@@ -133,27 +134,51 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 		integrationIDPtr = &req.IntegrationID
 	}
 
+	// Auto-detect subdomain from Cloudflare API if not provided
+	subdomain := req.CFSubdomain
+	if subdomain == "" {
+		detectedSubdomain, err := cf.GetWorkersSubdomain(req.CFAccountID)
+		if err != nil {
+			fmt.Printf("Warning: Failed to auto-detect workers subdomain: %v\n", err)
+		} else {
+			subdomain = detectedSubdomain
+		}
+	}
+
+	// Construct worker_url from subdomain
+	var workerURL *string
+	if subdomain != "" {
+		url := fmt.Sprintf("https://%s.%s.workers.dev", req.WorkerName, subdomain)
+		workerURL = &url
+	}
+
 	err = h.db.QueryRow(`
-		INSERT INTO monitor_deployments (name, cf_account_id, cf_api_token, worker_name, kv_config_id, integration_id, last_deployed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		INSERT INTO monitor_deployments (name, cf_account_id, cf_api_token, worker_name, kv_config_id, integration_id, worker_url, last_deployed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 		RETURNING id
-	`, req.Name, req.CFAccountID, req.CFAPIToken, req.WorkerName, dbID, integrationIDPtr).Scan(&deploymentID)
+	`, req.Name, req.CFAccountID, req.CFAPIToken, req.WorkerName, dbID, integrationIDPtr, workerURL).Scan(&deploymentID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save deployment: " + err.Error()})
 		return
 	}
 
+	// Return worker_url (nil if subdomain not detected)
+	var responseWorkerURL interface{}
+	if workerURL != nil {
+		responseWorkerURL = *workerURL
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Worker deployed successfully",
 		"deployment_id": deploymentID,
-		"worker_url":    fmt.Sprintf("https://%s.%s.workers.dev", req.WorkerName, "SUBDOMAIN_TODO"), // We don't know subdomain easily
+		"worker_url":    responseWorkerURL,
 	})
 }
 
 func (h *DeploymentHandler) GetDeployments(c *gin.Context) {
 	rows, err := h.db.Query(`
-		SELECT id, name, worker_name, last_deployed_at, created_at, integration_id
+		SELECT id, name, worker_name, last_deployed_at, created_at, integration_id, worker_url
 		FROM monitor_deployments
 		ORDER BY created_at DESC
 	`)
@@ -168,8 +193,8 @@ func (h *DeploymentHandler) GetDeployments(c *gin.Context) {
 		var id uuid.UUID
 		var name, workerName string
 		var lastDeployedAt, createdAt sql.NullTime
-		var integrationID sql.NullString
-		if err := rows.Scan(&id, &name, &workerName, &lastDeployedAt, &createdAt, &integrationID); err != nil {
+		var integrationID, workerURL sql.NullString
+		if err := rows.Scan(&id, &name, &workerName, &lastDeployedAt, &createdAt, &integrationID, &workerURL); err != nil {
 			continue
 		}
 
@@ -179,6 +204,13 @@ func (h *DeploymentHandler) GetDeployments(c *gin.Context) {
 			"worker_name":      workerName,
 			"last_deployed_at": lastDeployedAt.Time,
 			"created_at":       createdAt.Time,
+		}
+
+		// Add worker_url if present (for direct Worker API access)
+		if workerURL.Valid && workerURL.String != "" {
+			deployment["worker_url"] = workerURL.String
+		} else {
+			deployment["worker_url"] = nil
 		}
 
 		// Add integration_id if present
@@ -192,6 +224,56 @@ func (h *DeploymentHandler) GetDeployments(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, deployments)
+}
+
+// UpdateWorkerURL updates the worker_url for a deployment
+// This allows users to set the worker URL if they didn't provide subdomain during deployment
+func (h *DeploymentHandler) UpdateWorkerURL(c *gin.Context) {
+	deploymentID := c.Param("id")
+
+	var req struct {
+		WorkerURL string `json:"worker_url" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate URL format
+	if req.WorkerURL != "" && !isValidWorkerURL(req.WorkerURL) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid worker URL. Expected format: https://{worker-name}.{subdomain}.workers.dev"})
+		return
+	}
+
+	result, err := h.db.Exec(`
+		UPDATE monitor_deployments
+		SET worker_url = $1
+		WHERE id = $2
+	`, req.WorkerURL, deploymentID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Worker URL updated successfully",
+		"worker_url": req.WorkerURL,
+	})
+}
+
+// isValidWorkerURL validates the worker URL format
+func isValidWorkerURL(url string) bool {
+	// Basic validation: should start with https:// and contain workers.dev
+	return len(url) > 0 &&
+		(url[:8] == "https://" || url[:7] == "http://") &&
+		(len(url) > 20) // Basic length check
 }
 
 // RedeployWorker redeploys an existing worker with latest code
@@ -280,22 +362,45 @@ func (h *DeploymentHandler) RedeployWorker(c *gin.Context) {
 		return
 	}
 
-	// Update last_deployed_at
-	_, err = h.db.Exec(`
-		UPDATE monitor_deployments
-		SET last_deployed_at = NOW()
-		WHERE id = $1
-	`, deploymentID)
+	// Get workers subdomain and construct worker_url
+	var workerURL string
+	subdomain, err := cf.GetWorkersSubdomain(cfAccountID)
+	if err != nil {
+		// Log but don't fail - worker_url is optional
+		fmt.Printf("Warning: Failed to get workers subdomain: %v\n", err)
+	} else if subdomain != "" {
+		workerURL = fmt.Sprintf("https://%s.%s.workers.dev", workerName, subdomain)
+	}
+
+	// Update last_deployed_at and worker_url
+	if workerURL != "" {
+		_, err = h.db.Exec(`
+			UPDATE monitor_deployments
+			SET last_deployed_at = NOW(), worker_url = $2
+			WHERE id = $1
+		`, deploymentID, workerURL)
+	} else {
+		_, err = h.db.Exec(`
+			UPDATE monitor_deployments
+			SET last_deployed_at = NOW()
+			WHERE id = $1
+		`, deploymentID)
+	}
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update deployment record: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"message":       "Worker redeployed successfully",
 		"deployment_id": deploymentID,
-	})
+	}
+	if workerURL != "" {
+		response["worker_url"] = workerURL
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // DeleteDeployment deletes a worker deployment
@@ -372,6 +477,7 @@ func (h *DeploymentHandler) ensureD1Schema(cf *CloudflareClient, accountID, dbID
 	// SQLite ALTER TABLE ADD COLUMN is atomic.
 
 	newColumns := []string{
+		"ALTER TABLE monitors ADD COLUMN name TEXT;",
 		"ALTER TABLE monitors ADD COLUMN target TEXT;",
 		"ALTER TABLE monitors ADD COLUMN response_keyword TEXT;",
 		"ALTER TABLE monitors ADD COLUMN response_forbidden_keyword TEXT;",
@@ -387,6 +493,21 @@ func (h *DeploymentHandler) ensureD1Schema(cf *CloudflareClient, accountID, dbID
 			// We'll log it but continue, assuming it failed because column exists.
 			// In a perfect world we'd parse the error.
 			fmt.Printf("Info: Schema update query '%s' returned error (likely already exists): %v\n", sql, err)
+		}
+	}
+
+	// 3. Create indexes for performance (CRITICAL for reducing D1 row reads)
+	// Without indexes, D1 does full table scans which consume massive row read quota
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_monitor_logs_monitor_created ON monitor_logs(monitor_id, created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_monitor_logs_created ON monitor_logs(created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_monitors_active ON monitors(is_active);",
+	}
+
+	for _, sql := range indexes {
+		err := cf.ExecuteD1SQL(accountID, dbID, sql, nil)
+		if err != nil {
+			fmt.Printf("Info: Index creation '%s' returned error (likely already exists): %v\n", sql, err)
 		}
 	}
 

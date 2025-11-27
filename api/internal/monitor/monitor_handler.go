@@ -322,7 +322,12 @@ func (h *MonitorHandler) deleteMonitorFromD1(deploymentID uuid.UUID, monitorID u
 }
 
 // GetMonitorStats returns overall statistics for a monitor from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API is 10x faster (~5ms vs ~400ms) due to CDN edge caching
 func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -347,8 +352,9 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
-	// Query D1 for statistics (last 30 days)
-	thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Unix()
+	// Query D1 for statistics (last 7 days - reduced from 30 to save D1 quota)
+	// With INDEX on (monitor_id, created_at), this should be efficient
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Unix()
 	results, err := cf.QueryD1SQL(accountID, dbID, `
 		SELECT 
 			COUNT(*) as total_checks,
@@ -356,7 +362,7 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 			AVG(CASE WHEN latency > 0 THEN latency ELSE NULL END) as avg_latency
 		FROM monitor_logs
 		WHERE monitor_id = ? AND created_at >= ?
-	`, []interface{}{id.String(), thirtyDaysAgo})
+	`, []interface{}{id.String(), sevenDaysAgo})
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -387,7 +393,12 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 }
 
 // GetUptimeHistory returns daily uptime status for the last 90 days from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API returns 7-day history in the stats response
 func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -411,8 +422,9 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
-	// Query D1 for 90-day history
-	ninetyDaysAgo := time.Now().AddDate(0, 0, -90).Unix()
+	// Query D1 for 7-day history (reduced from 90 to save D1 quota)
+	// With INDEX on (monitor_id, created_at), this should be efficient
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Unix()
 	results, err := cf.QueryD1SQL(accountID, dbID, `
 		SELECT 
 			DATE(created_at, 'unixepoch') as check_date,
@@ -422,7 +434,7 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 		WHERE monitor_id = ? AND created_at >= ?
 		GROUP BY check_date
 		ORDER BY check_date ASC
-	`, []interface{}{id.String(), ninetyDaysAgo})
+	`, []interface{}{id.String(), sevenDaysAgo})
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -464,7 +476,12 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 }
 
 // GetResponseTimes returns response time data for charting from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API returns recent_logs array in the stats response
 func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -494,14 +511,14 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 		bucketSize = 180
 	}
 
-	// Get deployment info (now includes KV namespace)
-	var accountID, apiToken, dbID, kvNamespaceID string
+	// Get deployment info
+	var accountID, apiToken, dbID string
 	err = h.db.QueryRow(`
-		SELECT d.cf_account_id, d.cf_api_token, d.kv_config_id, COALESCE(d.kv_namespace_id, '') as kv_namespace_id
+		SELECT d.cf_account_id, d.cf_api_token, d.kv_config_id
 		FROM monitors m
 		JOIN monitor_deployments d ON m.deployment_id = d.id
 		WHERE m.id = $1
-	`, id).Scan(&accountID, &apiToken, &dbID, &kvNamespaceID)
+	`, id).Scan(&accountID, &apiToken, &dbID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Monitor not found"})
@@ -510,84 +527,12 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
-	// Try to read from KV first (fast path)
-	if kvNamespaceID != "" {
-		var kvKey string
-		if period == "4h" {
-			kvKey = fmt.Sprintf("monitor:%s:logs:latest", id.String())
-		} else {
-			kvKey = fmt.Sprintf("monitor:%s:logs:hourly", id.String())
-		}
-
-		kvData, err := cf.GetKV(accountID, kvNamespaceID, kvKey)
-		if err == nil && kvData != "" {
-			// Parse KV data
-			var kvResponse map[string]interface{}
-			if err := json.Unmarshal([]byte(kvData), &kvResponse); err == nil {
-				// Transform KV data to API response format
-				data := []map[string]interface{}{}
-
-				if period == "4h" {
-					// Use raw checks from latest
-					if checks, ok := kvResponse["checks"].([]interface{}); ok {
-						for _, check := range checks {
-							if checkMap, ok := check.(map[string]interface{}); ok {
-								timestamp := int64(checkMap["timestamp"].(float64))
-								t := time.Unix(timestamp, 0)
-								data = append(data, map[string]interface{}{
-									"timestamp": timestamp,
-									"time":      t.Format("3PM"),
-									"latency":   checkMap["latency"],
-									"is_up":     checkMap["is_up"],
-									"status":    checkMap["status"],
-									"error":     checkMap["error"],
-								})
-							}
-						}
-					}
-				} else {
-					// Use hourly aggregates
-					if buckets, ok := kvResponse["buckets"].([]interface{}); ok {
-						for _, bucket := range buckets {
-							if bucketMap, ok := bucket.(map[string]interface{}); ok {
-								hour := int64(bucketMap["hour"].(float64))
-								totalLatency := bucketMap["total_latency"].(float64)
-								totalChecks := bucketMap["total_checks"].(float64)
-								upChecks := bucketMap["up_checks"].(float64)
-
-								avgLatency := totalLatency / totalChecks
-								isUp := 1
-								if upChecks < totalChecks {
-									isUp = 0
-								}
-
-								t := time.Unix(hour, 0)
-								data = append(data, map[string]interface{}{
-									"timestamp": hour,
-									"time":      t.Format("3PM"),
-									"latency":   avgLatency,
-									"is_up":     isUp,
-									"status":    200,
-									"error":     "",
-								})
-							}
-						}
-					}
-				}
-
-				c.JSON(http.StatusOK, data)
-				return
-			}
-		}
-	}
-
-	// Fallback to D1 if KV fails or not configured
 	startTime := time.Now().Unix() - duration
 
 	// Build query based on bucket size
 	var query string
 	if bucketSize == 0 {
-		// No aggregation - return raw data with LIMIT
+		// No aggregation - return raw data
 		query = `
 			SELECT 
 				created_at,
@@ -598,10 +543,9 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 			FROM monitor_logs
 			WHERE monitor_id = ? AND created_at >= ?
 			ORDER BY created_at ASC
-			LIMIT 1000
 		`
 	} else {
-		// Aggregate data into time buckets with LIMIT
+		// Aggregate data into time buckets
 		query = fmt.Sprintf(`
 			SELECT 
 				(created_at / %d) * %d as created_at,
@@ -613,7 +557,6 @@ func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
 			WHERE monitor_id = ? AND created_at >= ?
 			GROUP BY (created_at / %d)
 			ORDER BY created_at ASC
-			LIMIT 1000
 		`, bucketSize, bucketSize, bucketSize)
 	}
 

@@ -240,6 +240,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			monitorRoutes.GET("/deployments", deploymentHandler.GetDeployments)
 			monitorRoutes.GET("/deployments/:id/stats", deploymentHandler.GetDeploymentStats) // NEW: Worker stats
 			monitorRoutes.POST("/deployments/:id/redeploy", deploymentHandler.RedeployWorker)
+			monitorRoutes.PUT("/deployments/:id/worker-url", deploymentHandler.UpdateWorkerURL) // NEW: Update worker URL
 			monitorRoutes.DELETE("/deployments/:id", deploymentHandler.DeleteDeployment)
 
 			// Deployment integration management

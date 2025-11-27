@@ -1,10 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../lib/api';
 
 export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDeleteClick }) {
     const [redeploying, setRedeploying] = useState(false);
+    const [workerUrl, setWorkerUrl] = useState(deployment.worker_url || '');
+    const [savingUrl, setSavingUrl] = useState(false);
+    const [urlChanged, setUrlChanged] = useState(false);
+
+    useEffect(() => {
+        setWorkerUrl(deployment.worker_url || '');
+        setUrlChanged(false);
+    }, [deployment.worker_url]);
 
     const handleRedeploy = async () => {
         if (!confirm('Redeploy this worker with latest code?')) return;
@@ -20,6 +28,31 @@ export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDe
         } finally {
             setRedeploying(false);
         }
+    };
+
+    const handleSaveWorkerUrl = async () => {
+        if (!workerUrl.startsWith('https://')) {
+            toast.error('Worker URL must start with https://');
+            return;
+        }
+
+        try {
+            setSavingUrl(true);
+            await apiClient.updateDeploymentWorkerUrl(deployment.id, workerUrl);
+            toast.success('Worker URL saved! Metrics will now load faster via CDN.');
+            setUrlChanged(false);
+            onUpdate();
+        } catch (error) {
+            console.error('Failed to save worker URL:', error);
+            toast.error('Failed to save worker URL');
+        } finally {
+            setSavingUrl(false);
+        }
+    };
+
+    const handleUrlChange = (e) => {
+        setWorkerUrl(e.target.value);
+        setUrlChanged(e.target.value !== (deployment.worker_url || ''));
     };
 
     return (
@@ -54,6 +87,46 @@ export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDe
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">
                             Active
                         </span>
+                    </div>
+                </div>
+
+                {/* Worker URL Configuration - Important for fast metrics */}
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0">
+                            <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                        </div>
+                        <div className="flex-1">
+                            <h4 className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1">
+                                Worker API URL {deployment.worker_url ? '✅' : '⚠️ Not configured'}
+                            </h4>
+                            <p className="text-xs text-blue-700 dark:text-blue-400 mb-3">
+                                {deployment.worker_url 
+                                    ? 'Metrics load directly from CDN edge (~5ms). Much faster!' 
+                                    : 'Set this URL to enable fast CDN-cached metrics. Without it, metrics load via Go API (~400ms).'}
+                            </p>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={workerUrl}
+                                    onChange={handleUrlChange}
+                                    placeholder={`https://${deployment.worker_name}.YOUR-SUBDOMAIN.workers.dev`}
+                                    className="flex-1 px-3 py-2 text-sm font-mono border border-blue-300 dark:border-blue-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                                <button
+                                    onClick={handleSaveWorkerUrl}
+                                    disabled={savingUrl || !urlChanged || !workerUrl}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {savingUrl ? 'Saving...' : 'Save'}
+                                </button>
+                            </div>
+                            <p className="text-xs text-blue-600 dark:text-blue-500 mt-2">
+                                💡 Find your subdomain in Cloudflare Dashboard → Workers & Pages → Overview
+                            </p>
+                        </div>
                     </div>
                 </div>
 

@@ -1037,30 +1037,36 @@ class APIClient {
   }
 
   /**
-   * Get monitor statistics
+   * @deprecated Use workerApi.getMonitorStats() instead for faster CDN-cached response
+   * Get monitor statistics via Go API (slow: Go → Cloudflare API → D1)
    * @param {string} monitorId - Monitor ID
    * @returns {Promise<object>} Statistics (uptime %, avg latency, total checks)
    */
   async getMonitorStats(monitorId) {
+    console.warn('DEPRECATED: getMonitorStats() - Use workerApi.getMonitorStats() for faster response');
     return this.request(`/monitors/${monitorId}/stats`);
   }
 
   /**
-   * Get 90-day uptime history
+   * @deprecated Use workerApi.getMonitorStats() instead for faster CDN-cached response
+   * Get 90-day uptime history via Go API (slow: Go → Cloudflare API → D1)
    * @param {string} monitorId - Monitor ID
    * @returns {Promise<Array>} Daily uptime status
    */
   async getMonitorUptimeHistory(monitorId) {
+    console.warn('DEPRECATED: getMonitorUptimeHistory() - Use workerApi.getMonitorStats() for faster response');
     return this.request(`/monitors/${monitorId}/uptime-history`);
   }
 
   /**
-   * Get response times for charting
+   * @deprecated Use workerApi.getMonitorStats() instead for faster CDN-cached response
+   * Get response times for charting via Go API (slow: Go → Cloudflare API → D1)
    * @param {string} monitorId - Monitor ID
    * @param {string} period - Time period (24h, 7d, 30d)
    * @returns {Promise<Array>} Response time data
    */
   async getMonitorResponseTimes(monitorId, period = '24h') {
+    console.warn('DEPRECATED: getMonitorResponseTimes() - Use workerApi.getMonitorStats() for faster response');
     return this.request(`/monitors/${monitorId}/response-times?period=${period}`);
   }
 
@@ -1107,6 +1113,66 @@ class APIClient {
       method: 'PUT',
       body: JSON.stringify({ integration_id: integrationId })
     });
+  }
+
+  /**
+   * Update worker URL for a deployment
+   * @param {string} deploymentId - Deployment ID
+   * @param {string} workerUrl - Worker URL (e.g., https://slar-worker.xxx.workers.dev)
+   * @returns {Promise<object>} Update result
+   */
+  async updateDeploymentWorkerUrl(deploymentId, workerUrl) {
+    return this.request(`/monitors/deployments/${deploymentId}/worker-url`, {
+      method: 'PUT',
+      body: JSON.stringify({ worker_url: workerUrl })
+    });
+  }
+
+  // ===========================
+  // WORKER API METHODS (FAST - CDN CACHED)
+  // ===========================
+  // These methods call the Worker directly for much faster response (~5ms vs ~400ms)
+
+  /**
+   * Get all metrics from Worker (CDN cached, ~5ms on cache hit)
+   * @param {string} workerUrl - Worker URL (e.g., https://slar-worker.xxx.workers.dev)
+   * @returns {Promise<object>} Metrics with all monitors
+   */
+  async getWorkerMetrics(workerUrl) {
+    const response = await fetch(`${workerUrl}/api/metrics`);
+    if (!response.ok) throw new Error(`Worker API error: ${response.status}`);
+    const data = await response.json();
+    return {
+      ...data,
+      _cache_status: response.headers.get('X-Cache-Status')
+    };
+  }
+
+  /**
+   * Get monitor stats from Worker (CDN cached, ~5ms on cache hit)
+   * @param {string} workerUrl - Worker URL
+   * @param {string} monitorId - Monitor ID
+   * @returns {Promise<object>} Monitor stats with recent logs
+   */
+  async getWorkerMonitorStats(workerUrl, monitorId) {
+    const response = await fetch(`${workerUrl}/api/monitors/${monitorId}`);
+    if (!response.ok) throw new Error(`Worker API error: ${response.status}`);
+    const data = await response.json();
+    return {
+      ...data,
+      _cache_status: response.headers.get('X-Cache-Status')
+    };
+  }
+
+  /**
+   * Check Worker health
+   * @param {string} workerUrl - Worker URL
+   * @returns {Promise<object>} Health status
+   */
+  async checkWorkerHealth(workerUrl) {
+    const response = await fetch(`${workerUrl}/health`);
+    if (!response.ok) throw new Error(`Worker health check failed: ${response.status}`);
+    return response.json();
   }
 
   // AI Agent endpoints

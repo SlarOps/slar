@@ -209,6 +209,7 @@ export default function MonitorsPage() {
                                     monitor={monitor}
                                     onUpdate={loadData}
                                     onEdit={() => handleEditMonitor(monitor)}
+                                    workerUrl={selectedDeployment.worker_url}
                                 />
                             ))}
                     </div>
@@ -382,29 +383,54 @@ function DeploymentCard({ deployment, onSelect, onUpdate, onDelete, isSelected }
     );
 }
 
-function MonitorCard({ monitor, onUpdate, onEdit }) {
+function MonitorCard({ monitor, onUpdate, onEdit, workerUrl }) {
     const [stats, setStats] = useState(null);
-    const [history, setHistory] = useState([]);
     const [responseTimes, setResponseTimes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expanded, setExpanded] = useState(false);
-    const [selectedPeriod, setSelectedPeriod] = useState('24h');
+    const [cacheStatus, setCacheStatus] = useState(null);
 
     useEffect(() => {
         loadMonitorStats();
-    }, [monitor.id]);
+    }, [monitor.id, workerUrl]);
 
-    const loadMonitorStats = async (period = selectedPeriod) => {
+    const loadMonitorStats = async () => {
         try {
             setLoading(true);
-            const [statsData, historyData, responseData] = await Promise.all([
+            
+            // ✅ Use Worker API if available (fast, CDN cached)
+            if (workerUrl) {
+                try {
+                    const data = await apiClient.getWorkerMonitorStats(workerUrl, monitor.id);
+                    setStats({
+                        uptime_percent: data.stats?.uptime_percent || 0,
+                        avg_latency_ms: data.stats?.avg_latency_ms || 0,
+                        total_checks: data.stats?.total_checks || 0
+                    });
+                    // Convert recent_logs to response times format (chart expects 'time' property)
+                    setResponseTimes((data.recent_logs || []).map(log => ({
+                        time: new Date(log.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        timestamp: log.timestamp,
+                        latency: log.latency,
+                        is_up: log.is_up,
+                        status: log.status,
+                        error: log.error
+                    })).reverse()); // Reverse to show oldest first (left to right)
+                    setCacheStatus(data._cache_status);
+                    return;
+                } catch (workerError) {
+                    console.warn('Worker API failed, falling back to Go API:', workerError);
+                }
+            }
+            
+            // ❌ Fallback to Go API (slow, but works without worker URL)
+            const [statsData, responseData] = await Promise.all([
                 apiClient.getMonitorStats(monitor.id),
-                apiClient.getMonitorUptimeHistory(monitor.id),
-                apiClient.getMonitorResponseTimes(monitor.id, period)
+                apiClient.getMonitorResponseTimes(monitor.id, '24h')
             ]);
             setStats(statsData);
-            setHistory(historyData);
             setResponseTimes(responseData);
+            setCacheStatus(null);
         } catch (error) {
             console.error('Failed to load monitor stats:', error);
         } finally {
@@ -412,9 +438,8 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
         }
     };
 
-    const handlePeriodChange = async (period) => {
-        setSelectedPeriod(period);
-        await loadMonitorStats(period);
+    const handleRefresh = async () => {
+        await loadMonitorStats();
     };
 
 
@@ -508,8 +533,19 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                     )}
 
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>90 days ago</span>
-                    <span>{stats?.uptime_percent.toFixed(2)}% uptime</span>
+                    <span>7 days ago</span>
+                    <div className="flex items-center gap-1.5">
+                        <span>{stats?.uptime_percent?.toFixed(2) || 0}% uptime</span>
+                        {cacheStatus && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                cacheStatus === 'HIT' 
+                                    ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' 
+                                    : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400'
+                            }`}>
+                                {cacheStatus === 'HIT' ? '⚡ CDN' : '🔄 Fresh'}
+                            </span>
+                        )}
+                    </div>
                     <span>Today</span>
                 </div>
             </div>
@@ -546,7 +582,7 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                             {stats && (
                                 <div>
                                     <span className="text-gray-500 dark:text-gray-400">Avg Latency:</span>
-                                    <p>{stats.avg_latency_ms.toFixed(0)}ms</p>
+                                    <p>{stats.avg_latency_ms?.toFixed(0) || 0}ms</p>
                                 </div>
                             )}
                         </div>
@@ -556,22 +592,14 @@ function MonitorCard({ monitor, onUpdate, onEdit }) {
                             <div className="mt-3">
                                 <div className="flex items-center justify-between mb-2">
                                     <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                                        Response times (last {selectedPeriod === '4h' ? '4 hours' : selectedPeriod === '24h' ? '24 hours' : selectedPeriod === '7d' ? '7 days' : '30 days'})
+                                        Response times (last 7 days)
                                     </h4>
-                                    <div className="flex gap-1">
-                                        {['4h', '24h', '7d', '30d'].map((period) => (
-                                            <button
-                                                key={period}
-                                                onClick={() => handlePeriodChange(period)}
-                                                className={`px-2 py-0.5 text-xs rounded transition-colors ${selectedPeriod === period
-                                                    ? 'bg-blue-600 text-white'
-                                                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                                                    }`}
-                                            >
-                                                {period}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <button
+                                        onClick={handleRefresh}
+                                        className="px-2 py-0.5 text-xs rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                                    >
+                                        Refresh
+                                    </button>
                                 </div>
                                 <ResponseTimeChart data={responseTimes} height={120} />
                             </div >

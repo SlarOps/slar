@@ -34,20 +34,20 @@ const ChatInput = ({
   const hasTodos = todos && todos.length > 0;
 
   return (
-    <div className="fixed inset-x-0 bottom-0" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0px)' }}>
+    <div className="sticky bottom-0 left-0 right-0 bg-gray-50 dark:bg-gray-950" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
       {/* Todo List - Integrated above input */}
       {hasTodos && (
-        <div className="">
+        <div className="pb-2">
           <div className="max-w-3xl mx-auto px-4">
             <TodoList todos={todos} />
           </div>
         </div>
       )}
-      <div className="pb-2 sm:pb-2 px-2">
+      <div className="pb-4 px-4">
         <div className="max-w-3xl mx-auto">
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
-            <div className="flex items-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2">
+            <div className="flex items-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/50">
               {/* New Session Button */}
               {sessionId && onSessionReset && (
                 <div className="flex-shrink-0">
