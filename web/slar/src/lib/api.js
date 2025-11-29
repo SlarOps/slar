@@ -1192,6 +1192,39 @@ class APIClient {
       method: 'DELETE'
     }, this.aiBaseURL);
   }
+
+  // ===========================
+  // MOBILE APP CONNECTION
+  // ===========================
+
+  /**
+   * Generate QR code data for mobile app connection
+   * @returns {Promise<object>} QR code payload
+   */
+  async generateMobileConnectQR() {
+    return this.request('/mobile/connect/generate', {
+      method: 'POST'
+    });
+  }
+
+  /**
+   * Get connected mobile devices
+   * @returns {Promise<object>} List of connected devices
+   */
+  async getMobileDevices() {
+    return this.request('/mobile/devices');
+  }
+
+  /**
+   * Disconnect a mobile device
+   * @param {string} deviceId - Device ID to disconnect
+   * @returns {Promise<object>} Result
+   */
+  async disconnectMobileDevice(deviceId) {
+    return this.request(`/mobile/devices/${deviceId}`, {
+      method: 'DELETE'
+    });
+  }
 }
 
 export const apiClient = new APIClient();

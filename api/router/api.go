@@ -51,6 +51,20 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
 	serviceService := services.NewServiceService(pg)         // NEW: Service management
 	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
+	identityService, err := services.NewIdentityService("./data") // Initialize IdentityService
+	if err != nil {
+		log.Printf("Warning: Failed to initialize identity service: %v", err)
+	}
+
+	// Initialize cloud relay and auto-register with cloud if configured
+	cloudRelayService := services.NewCloudRelayService(identityService)
+	if cloudRelayService.IsConfigured() {
+		go func() {
+			if err := cloudRelayService.RegisterWithCloud(); err != nil {
+				log.Printf("Warning: Failed to register with cloud relay: %v", err)
+			}
+		}()
+	}
 
 	// Initialize handlers
 	alertHandler := handlers.NewAlertHandler(alertService)
@@ -71,6 +85,8 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	webhookHandler := handlers.NewWebhookHandler(integrationService, alertService, incidentService, serviceService) // NEW: Webhook handler
 	notificationHandler := handlers.NewNotificationHandler(slackService)                                            // NEW: Notification handler
 	debugHandler := handlers.NewDebugHandler(pg)
+	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
+	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -418,6 +434,28 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		protected.GET("/verify-token", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "Token is valid"})
 		})
+
+		// MOBILE APP CONNECTION (protected - requires Supabase JWT)
+		mobileRoutes := protected.Group("/mobile")
+		{
+			mobileRoutes.POST("/connect/generate", mobileHandler.GenerateMobileConnectQR)
+			mobileRoutes.GET("/devices", mobileHandler.GetConnectedDevices)
+			mobileRoutes.DELETE("/devices/:device_id", mobileHandler.DisconnectDevice)
+		}
+
+		// IDENTITY MANAGEMENT
+		identityRoutes := protected.Group("/identity")
+		{
+			identityRoutes.GET("/public-key", identityHandler.GetPublicKey)
+			identityRoutes.POST("/connect-relay", identityHandler.ConnectRelay)
+		}
+	}
+
+	// PUBLIC MOBILE ENDPOINTS (no Supabase auth - token verified internally)
+	mobilePublicRoutes := r.Group("/mobile")
+	{
+		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)
+		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
 	}
 
 	return r
