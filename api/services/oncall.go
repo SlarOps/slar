@@ -65,26 +65,29 @@ func (s *OnCallService) ListGroupSchedules(groupID string) ([]string, error) {
 // GetCurrentOnCallUser returns the currently on-call user for a group
 func (s *OnCallService) GetCurrentOnCallUser(groupID string) (*db.Shift, error) {
 	query := `
-		SELECT os.id, os.group_id, os.shift_type, os.start_time, os.end_time,
+		SELECT os.id, os.group_id, os.user_id, os.shift_type, os.start_time, os.end_time,
 		       os.is_active, os.is_recurring, os.rotation_days, os.created_at, os.updated_at,
 		       COALESCE(os.created_by, '') as created_by,
-		       os.rotation_cycle_id, os.is_override, os.original_user_id, os.override_reason
+		       os.rotation_cycle_id, os.is_override,
+		       u.name as user_name, u.email as user_email, COALESCE(u.team, '') as user_team
 		FROM shifts os
 		JOIN groups g ON os.group_id = g.id
+		JOIN users u ON os.user_id = u.id
 		WHERE os.group_id = $1
-		  AND os.is_active = true 
+		  AND os.is_active = true
 		  AND NOW() BETWEEN os.start_time AND os.end_time
 		ORDER BY os.start_time ASC
 		LIMIT 1
 	`
 
 	var schedule db.Shift
-	var rotationCycleID, originalUserID sql.NullString
+	var rotationCycleID sql.NullString
+	var isOverride sql.NullBool
 	err := s.PG.QueryRow(query, groupID).Scan(
 		&schedule.ID, &schedule.GroupID, &schedule.UserID, &schedule.ShiftType,
 		&schedule.StartTime, &schedule.EndTime, &schedule.IsActive, &schedule.IsRecurring,
 		&schedule.RotationDays, &schedule.CreatedAt, &schedule.UpdatedAt, &schedule.CreatedBy,
-		&rotationCycleID, &originalUserID,
+		&rotationCycleID, &isOverride,
 		&schedule.UserName, &schedule.UserEmail, &schedule.UserTeam,
 	)
 
@@ -94,6 +97,14 @@ func (s *OnCallService) GetCurrentOnCallUser(groupID string) (*db.Shift, error) 
 			return nil, nil // No current on-call user
 		}
 		return nil, fmt.Errorf("failed to get current on-call user: %w", err)
+	}
+
+	// Handle nullable fields
+	if rotationCycleID.Valid {
+		schedule.RotationCycleID = &rotationCycleID.String
+	}
+	if isOverride.Valid {
+		schedule.IsOverridden = isOverride.Bool
 	}
 
 	return &schedule, nil
@@ -346,8 +357,8 @@ func (s *OnCallService) GetUpcomingSchedules(groupID string, days int) ([]db.Shi
 		SELECT os.id, os.group_id, os.user_id, os.shift_type, os.start_time, os.end_time,
 		       os.is_active, os.is_recurring, os.rotation_days, os.created_at, os.updated_at,
 		       COALESCE(os.created_by, '') as created_by,
-		       os.rotation_cycle_id, os.is_override, os.original_user_id, os.override_reason,
-		       u.name as user_name, u.email as user_email, u.team as user_team
+		       os.rotation_cycle_id, os.is_override,
+		       u.name as user_name, u.email as user_email, COALESCE(u.team, '') as user_team
 		FROM shifts os
 		JOIN users u ON os.user_id = u.id
 		WHERE os.group_id = $1
@@ -365,15 +376,17 @@ func (s *OnCallService) GetUpcomingSchedules(groupID string, days int) ([]db.Shi
 	var schedules []db.Shift
 	for rows.Next() {
 		var schedule db.Shift
-		var rotationCycleID, originalUserID, overrideReason sql.NullString
+		var rotationCycleID sql.NullString
+		var isOverride sql.NullBool
 		err := rows.Scan(
 			&schedule.ID, &schedule.GroupID, &schedule.UserID, &schedule.ShiftType,
 			&schedule.StartTime, &schedule.EndTime, &schedule.IsActive, &schedule.IsRecurring,
 			&schedule.RotationDays, &schedule.CreatedAt, &schedule.UpdatedAt, &schedule.CreatedBy,
-			&rotationCycleID, &schedule.IsOverridden, &originalUserID, &overrideReason,
+			&rotationCycleID, &isOverride,
 			&schedule.UserName, &schedule.UserEmail, &schedule.UserTeam,
 		)
 		if err != nil {
+			log.Printf("Error scanning upcoming schedule: %v", err)
 			continue
 		}
 
@@ -381,11 +394,8 @@ func (s *OnCallService) GetUpcomingSchedules(groupID string, days int) ([]db.Shi
 		if rotationCycleID.Valid {
 			schedule.RotationCycleID = &rotationCycleID.String
 		}
-		if originalUserID.Valid {
-			schedule.OriginalUserID = &originalUserID.String
-		}
-		if overrideReason.Valid {
-			schedule.OverrideReason = &overrideReason.String
+		if isOverride.Valid {
+			schedule.IsOverridden = isOverride.Bool
 		}
 
 		schedules = append(schedules, schedule)

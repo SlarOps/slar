@@ -175,6 +175,17 @@ class SlackWorker:
         
         logger.info("✅ Slack event handlers setup complete")
     
+    def get_incident_url(self, incident_id: str) -> str:
+        """Generate incident URL for AI agent
+        
+        Args:
+            incident_id: The incident ID
+            
+        Returns:
+            Full URL to the AI agent page for the incident
+        """
+        return f"{self.config['api_base_url']}/ai-agent?incident={incident_id}"
+    
     def get_routed_teams(self, incident_data: Dict) -> str:
         """Get routed service name from the integration attached to the incident"""
         try:
@@ -562,7 +573,7 @@ class SlackWorker:
         else:
             truncated_title = title
 
-        url = f"{self.config['api_base_url']}/incidents/{incident_data['id']}"
+        url = self.get_incident_url(incident_data['id'])
         routed_teams = self.get_routed_teams(incident_data)
 
         # Build compact blocks with better markdown formatting
@@ -648,7 +659,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "View Incident"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "url": self.get_incident_url(incident_data['id']),
                             "style": "primary"
                         },
                         {
@@ -735,7 +746,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "View Incident"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "url": self.get_incident_url(incident_data['id']),
                             "style": "primary"
                         }
                     ]
@@ -803,7 +814,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "View Incident"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "url": self.get_incident_url(incident_data['id']),
                             "style": "primary"
                         }
                     ]
@@ -902,7 +913,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "View Incident"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "url": self.get_incident_url(incident_data['id']),
                             "style": "primary"
                         }
                     ]
@@ -951,7 +962,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "Handle Immediately"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_data['id']}",
+                            "url": self.get_incident_url(incident_data['id']),
                             "style": "danger"
                         },
                         {
@@ -1279,7 +1290,7 @@ class SlackWorker:
                             "type": "plain_text",
                             "text": "View Incident"
                         },
-                        "url": f"{self.config['api_base_url']}/incidents/{incident_id}",
+                        "url": self.get_incident_url(incident_id),
                         "style": "primary"
                     }
                 ]
@@ -1475,7 +1486,7 @@ class SlackWorker:
                                 "type": "plain_text",
                                 "text": "🔧 View Incident"
                             },
-                            "url": f"{self.config['api_base_url']}/incidents/{incident_id}",
+                            "url": self.get_incident_url(incident_id),
                             "style": "primary"
                         },
                         {
