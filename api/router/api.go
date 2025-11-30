@@ -87,6 +87,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	debugHandler := handlers.NewDebugHandler(pg)
 	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
 	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
+	agentHandler := handlers.NewAgentHandler(pg, identityService)   // Initialize AgentHandler for Zero-Trust
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -122,6 +123,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 	// Debug endpoints (temporary for troubleshooting)
 	r.GET("/debug/rotation-tables", debugHandler.CheckRotationTables)
+
+	// PUBLIC IDENTITY ENDPOINT - public key is public!
+	// AI Agent needs this to verify device certificates without authentication
+	// Must be registered BEFORE protected routes to take precedence
+	r.GET("/identity/public-key", identityHandler.GetPublicKey)
 
 	// PUBLIC WEBHOOK ENDPOINTS (no authentication - secured by integration secret)
 	webhookRoutes := r.Group("/webhook")
@@ -443,11 +449,20 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			mobileRoutes.DELETE("/devices/:device_id", mobileHandler.DisconnectDevice)
 		}
 
-		// IDENTITY MANAGEMENT
+		// IDENTITY MANAGEMENT (connect-relay requires auth, public-key is public - see above)
 		identityRoutes := protected.Group("/identity")
 		{
-			identityRoutes.GET("/public-key", identityHandler.GetPublicKey)
+			// Note: GET /identity/public-key is registered as PUBLIC route above
 			identityRoutes.POST("/connect-relay", identityHandler.ConnectRelay)
+		}
+
+		// AI AGENT ZERO-TRUST AUTHENTICATION
+		agentRoutes := protected.Group("/agent")
+		{
+			agentRoutes.POST("/device-cert", agentHandler.GenerateDeviceCertificate)
+			agentRoutes.DELETE("/device-cert/:cert_id", agentHandler.RevokeDeviceCertificate)
+			agentRoutes.GET("/device-certs", agentHandler.ListDeviceCertificates)
+			agentRoutes.GET("/config", agentHandler.GetAgentConfig)
 		}
 	}
 

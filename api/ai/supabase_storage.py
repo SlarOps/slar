@@ -321,7 +321,7 @@ def parse_mcp_servers(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return mcp_servers
 
 
-async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
+async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[str, Any]:
     """
     Get MCP servers configuration from PostgreSQL database (instant, no S3 lag).
 
@@ -333,18 +333,18 @@ async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
     - Supports all three server types: stdio, sse, http
 
     Args:
-        auth_token: Supabase JWT token
+        auth_token: Supabase JWT token (for unsecure flow)
+        user_id: User ID directly (for secure/Zero-Trust flow, takes priority)
 
     Returns:
         Dictionary of MCP servers ready to pass to ClaudeAgentOptions
         Empty dict if no servers found (safe for mcp_servers.update())
 
-    Example usage:
-        user_mcp_servers = await get_user_mcp_servers(auth_token)
-        options = ClaudeAgentOptions(
-            mcp_servers={"incident_tools": incident_tools, **user_mcp_servers},
-            ...
-        )
+    Example usage (unsecure flow):
+        user_mcp_servers = await get_user_mcp_servers(auth_token=auth_token)
+
+    Example usage (secure/Zero-Trust flow):
+        user_mcp_servers = await get_user_mcp_servers(user_id=user_id)
 
     Example return format (stdio):
         {
@@ -364,22 +364,27 @@ async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
             }
         }
     """
-    # Extract user ID from token
-    user_id = extract_user_id_from_token(auth_token)
+    # Priority: direct user_id > extract from auth_token
+    # Secure flow provides user_id directly (from Zero-Trust certificate)
+    # Unsecure flow provides auth_token (JWT)
+    effective_user_id = user_id
+    
+    if not effective_user_id and auth_token:
+        effective_user_id = extract_user_id_from_token(auth_token)
 
-    if not user_id:
-        logger.warning("Could not extract user_id from auth token")
+    if not effective_user_id:
+        logger.warning("⚠️ No user_id provided and could not extract from auth_token")
         return {}
 
     try:
-        # Get Supabase client
+        # Get Supabase client (uses SERVICE_ROLE_KEY, bypasses RLS)
         supabase = get_supabase_client()
 
         # Query MCP servers from PostgreSQL
-        result = supabase.table("user_mcp_servers").select("*").eq("user_id", user_id).eq("status", "active").execute()
+        result = supabase.table("user_mcp_servers").select("*").eq("user_id", effective_user_id).eq("status", "active").execute()
 
         if not result.data:
-            logger.debug(f"ℹ️  No MCP servers found for user {user_id}")
+            logger.debug(f"ℹ️  No MCP servers found for user {effective_user_id}")
             return {}
 
         # Convert to MCP server format based on server_type
@@ -410,12 +415,12 @@ async def get_user_mcp_servers(auth_token: str) -> Dict[str, Any]:
                 logger.warning(f"⚠️  Unknown server_type '{server_type}' for server '{server_name}', skipping")
                 continue
 
-        logger.info(f"✅ Loaded {len(mcp_servers)} MCP servers from PostgreSQL for user {user_id}")
+        logger.info(f"✅ Loaded {len(mcp_servers)} MCP servers from PostgreSQL for user {effective_user_id}")
         logger.debug(f"   Servers: {list(mcp_servers.keys())}")
         return mcp_servers
 
     except Exception as e:
-        logger.error(f"❌ Failed to load MCP servers from PostgreSQL for user {user_id}: {e}")
+        logger.error(f"❌ Failed to load MCP servers from PostgreSQL for user {effective_user_id}: {e}")
         return {}
 
 

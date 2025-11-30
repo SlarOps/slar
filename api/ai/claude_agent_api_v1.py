@@ -36,6 +36,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from incident_tools import create_incident_tools_server, set_auth_token
+from zero_trust_verifier import get_verifier, init_verifier
 from supabase_storage import (
     extract_user_id_from_token,
     get_user_mcp_servers,
@@ -401,6 +402,8 @@ async def agent_task(
     """Process agent messages and handle responses."""
     current_auth_token = None
     current_session_id = None
+    current_conversation_id = None  # Claude conversation ID (separate from session_id)
+    current_user_id = None  # User ID (from Zero-Trust session OR JWT token)
 
     try:
         while True:
@@ -413,10 +416,14 @@ async def agent_task(
                 break
 
             # Get session id and auth token from data
+            # NOTE: session_id is for stop events tracking
+            # conversation_id is for Claude conversation resume (separate concept!)
             session_id = data.get("session_id", "")
             auth_token = data.get("auth_token", "")
+            conversation_id = data.get("conversation_id", "")  # For Claude resume
+            direct_user_id = data.get("user_id", "")  # From Zero-Trust secure flow
 
-            # Update current session
+            # Update current session (for stop events)
             if session_id:
                 current_session_id = session_id
 
@@ -427,10 +434,25 @@ async def agent_task(
                 # Clear the event (reset for new message)
                 stop_events[session_id].clear()
 
-            # Update current auth token
-            if auth_token:
+            # Update current conversation ID (for Claude resume)
+            # This is separate from session_id - see distinction:
+            # - session_id: WebSocket/Zero-Trust session (for security/stop events)
+            # - conversation_id: Claude conversation (for AI context resume)
+            if conversation_id:
+                current_conversation_id = conversation_id
+                logger.info(f"💬 Conversation ID received: {conversation_id}")
+
+            # Update current user ID
+            # Priority: direct user_id from Zero-Trust > extract from JWT token
+            if direct_user_id:
+                current_user_id = direct_user_id
+                logger.info(f"👤 User ID from Zero-Trust session: {current_user_id}")
+            elif auth_token:
                 current_auth_token = auth_token
-                logger.info(f"🔑 Auth token received (length: {len(auth_token)})")
+                extracted_user_id = extract_user_id_from_token(auth_token)
+                if extracted_user_id:
+                    current_user_id = extracted_user_id
+                    logger.info(f"👤 User ID extracted from JWT: {current_user_id}")
 
             # Note: Bucket sync is now handled by frontend via /api/sync-bucket
             # before WebSocket connection to ensure skills are ready
@@ -438,8 +460,8 @@ async def agent_task(
             # Set the auth token for incident_tools to use
             set_auth_token(current_auth_token or "")
 
-            # Extract user_id from token
-            user_id = extract_user_id_from_token(current_auth_token or "")
+            # Use the current user_id (from Zero-Trust or JWT)
+            user_id = current_user_id
 
             # Get user workspace directory (isolated per user)
             if user_id:
@@ -454,7 +476,13 @@ async def agent_task(
 
             mcp_servers = {"incident_tools": incident_tools_server}
 
-            user_mcp_servers = await get_user_mcp_servers(current_auth_token or "")
+            # Get user MCP servers
+            # Secure flow: user_id from Zero-Trust session (no auth_token needed)
+            # Unsecure flow: auth_token for JWT extraction
+            user_mcp_servers = await get_user_mcp_servers(
+                auth_token=current_auth_token or "",
+                user_id=user_id or ""
+            )
 
             if user_mcp_servers:
                 mcp_servers.update(user_mcp_servers)
@@ -483,12 +511,24 @@ async def agent_task(
                     allowed_tools.extend(user_allowed)
                     logger.info(f"✅ Loaded {len(user_allowed)} allowed tools from DB")
 
+            # Use conversation_id for Claude resume (NOT session_id!)
+            # - session_id: WebSocket/Zero-Trust session (for security, stop events)
+            # - conversation_id: Claude conversation (for AI context, multi-turn chat)
+            # If conversation_id is provided, Claude will resume that conversation.
+            # If not provided (empty/None), Claude starts a new conversation.
+            resume_id = current_conversation_id if current_conversation_id else None
+            
+            if resume_id:
+                logger.info(f"💬 Resuming Claude conversation: {resume_id}")
+            else:
+                logger.info(f"💬 Starting new Claude conversation")
+            
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
                 cwd=user_workspace,
                 model="sonnet",
-                resume=session_id,
+                resume=resume_id,  # Use conversation_id, not session_id!
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
                 setting_sources=["project","user"],
@@ -571,17 +611,24 @@ async def agent_task(
                     if isinstance(message, SystemMessage):
                         if isinstance(message.data, dict):
                             if message.data.get("subtype") == "init":
-                                session_id = message.data.get("session_id")
-                                current_session_id = session_id
-
-                                # Initialize stop event
-                                if session_id not in stop_events:
-                                    stop_events[session_id] = asyncio.Event()
-                                stop_events[session_id].clear()
-
-                                await output_queue.put(
-                                    {"type": "session_init", "session_id": session_id}
-                                )
+                                # Claude SDK returns its conversation session_id
+                                # This is DIFFERENT from Zero-Trust session_id!
+                                # - session_id: Zero-Trust WebSocket session (for security)
+                                # - claude_session_id: Claude conversation (for AI context)
+                                claude_session_id = message.data.get("session_id")
+                                
+                                # Update current_conversation_id for resume
+                                if claude_session_id:
+                                    current_conversation_id = claude_session_id
+                                    logger.info(f"💬 Claude conversation started: {claude_session_id}")
+                                
+                                # Send to client so they can save for resume
+                                # Client should save conversation_id and send it back in next messages
+                                await output_queue.put({
+                                    "type": "session_init",
+                                    "session_id": session_id,  # Zero-Trust session (unchanged)
+                                    "conversation_id": claude_session_id,  # Claude conversation (NEW!)
+                                })
 
                     if isinstance(message, ResultMessage):
                         await output_queue.put(
@@ -745,8 +792,8 @@ async def sync_mcp_config(request: Request):
 
         logger.info(f"🔄 Syncing MCP config for user: {user_id}")
 
-        # Download fresh config from Supabase
-        user_mcp_servers = await get_user_mcp_servers(auth_token)
+        # Download fresh config from Supabase (pass user_id directly for efficiency)
+        user_mcp_servers = await get_user_mcp_servers(user_id=user_id)
 
         if user_mcp_servers:
             # Update cache
@@ -2595,10 +2642,265 @@ async def websocket_chat(websocket: WebSocket):
         logger.info("🧹 All tasks cleaned up")
 
 
+@app.websocket("/ws/secure/chat")
+async def websocket_secure_chat(websocket: WebSocket):
+    """
+    Zero-Trust Secure WebSocket for AI Agent.
+
+    Every message is cryptographically signed by the device and verified.
+    This prevents session hijacking and replay attacks.
+
+    Authentication flow:
+    1. Client sends signed auth message with device certificate
+    2. Server verifies certificate was signed by trusted instance
+    3. Every subsequent message is signed by device's private key
+    4. Server verifies each message against device's public key
+    """
+    await websocket.accept()
+
+    verifier = get_verifier()
+    session = None
+    session_id = None
+
+    # Create queues for message routing
+    agent_queue = asyncio.Queue(maxsize=100)
+    interrupt_queue = asyncio.Queue(maxsize=10)
+    permission_response_queue = asyncio.Queue(maxsize=20)
+    output_queue = asyncio.Queue(maxsize=100)
+    stop_events: Dict[str, asyncio.Event] = {}
+
+    # Task references
+    heartbeat = None
+    router_task = None
+    sender = None
+    interrupt = None
+    agent = None
+
+    try:
+        # Wait for authentication message
+        logger.info("🔐 Waiting for Zero-Trust authentication...")
+        auth_data = await asyncio.wait_for(
+            websocket.receive_json(),
+            timeout=30.0  # 30 second auth timeout
+        )
+
+        if auth_data.get("type") != "authenticate":
+            await websocket.send_json({
+                "type": "auth_error",
+                "error": "Expected authentication message"
+            })
+            await websocket.close(code=4001)
+            return
+
+        # Verify device certificate
+        cert_dict = auth_data.get("certificate")
+        existing_session_id = auth_data.get("session_id")
+
+        if not cert_dict:
+            await websocket.send_json({
+                "type": "auth_error",
+                "error": "Missing device certificate"
+            })
+            await websocket.close(code=4002)
+            return
+
+        # Authenticate with verifier
+        session, error = await verifier.authenticate(cert_dict, existing_session_id)
+
+        if not session:
+            logger.warning(f"🚫 Zero-Trust authentication failed: {error}")
+            await websocket.send_json({
+                "type": "auth_error",
+                "error": error
+            })
+            await websocket.close(code=4003)
+            return
+
+        session_id = session.session_id
+        logger.info(f"✅ Zero-Trust authenticated: user={session.user_id}, session={session_id}")
+
+        # Send auth success
+        await websocket.send_json({
+            "type": "authenticated",
+            "session_id": session_id,
+            "user_id": session.user_id,
+            "permissions": session.permissions
+        })
+
+        # Define secure message router (verifies each message)
+        async def secure_message_router():
+            """Route incoming signed messages to appropriate queues after verification."""
+            try:
+                while True:
+                    signed_message = await websocket.receive_json()
+
+                    # Handle pong (not signed)
+                    if signed_message.get("type") == "pong":
+                        continue
+
+                    # Verify signature on every message
+                    is_valid, error_msg, data = verifier.verify_message(
+                        signed_message, session_id
+                    )
+
+                    if not is_valid:
+                        logger.warning(f"🚫 Message verification failed: {error_msg}")
+                        await output_queue.put({
+                            "type": "error",
+                            "error": f"Message verification failed: {error_msg}"
+                        })
+                        continue
+
+                    # Message is verified, route based on type
+                    msg_type = signed_message.get("payload", {}).get("type", "")
+
+                    if msg_type == "interrupt":
+                        await interrupt_queue.put(data)
+                    elif msg_type == "permission_response" or data.get("allow") is not None:
+                        await permission_response_queue.put(data)
+                    elif msg_type == "chat_message":
+                        # Add session context to message
+                        # NOTE: session_id here is for stop events tracking (Zero-Trust session)
+                        # conversation_id (if provided by client) is for Claude conversation resume
+                        data["session_id"] = session_id  # Zero-Trust session for stop events
+                        data["user_id"] = session.user_id
+                        # Preserve conversation_id from client for Claude resume
+                        # Client can send: {"prompt": "...", "conversation_id": "abc-123"}
+                        # If not provided, will start new conversation
+                        await agent_queue.put(data)
+                    else:
+                        logger.warning(f"⚠️ Unknown message type: {msg_type}")
+
+            except WebSocketDisconnect:
+                logger.info("🔌 Secure message router: WebSocket disconnected")
+            except Exception as e:
+                logger.error(f"❌ Secure message router error: {e}", exc_info=True)
+            finally:
+                await agent_queue.put(None)
+                await interrupt_queue.put(None)
+                await permission_response_queue.put(None)
+
+        # Define permission callback for secure chat
+        async def secure_permission_callback(
+            tool_name: str, input_data: dict, context: ToolPermissionContext
+        ) -> PermissionResultAllow | PermissionResultDeny:
+            """Permission callback that uses queues for secure communication."""
+            request_id = str(uuid.uuid4())
+
+            await output_queue.put({
+                "type": "permission_request",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "input_data": input_data,
+                "suggestions": context.suggestions,
+            })
+
+            while True:
+                response = await permission_response_queue.get()
+                if response is None:
+                    return PermissionResultDeny(message="Connection closed")
+
+                if response.get("request_id") != request_id:
+                    await permission_response_queue.put(response)
+                    await asyncio.sleep(0.01)
+                    continue
+
+                if response.get("allow") in ("y", "yes", True):
+                    return PermissionResultAllow()
+                else:
+                    return PermissionResultDeny(message="User denied permission")
+
+        # Start tasks
+        heartbeat = asyncio.create_task(
+            heartbeat_task(websocket, interval=30), name="secure_heartbeat"
+        )
+
+        router_task = asyncio.create_task(
+            secure_message_router(), name="secure_router"
+        )
+
+        sender = asyncio.create_task(
+            websocket_sender(websocket, output_queue), name="secure_sender"
+        )
+
+        interrupt = asyncio.create_task(
+            interrupt_task(interrupt_queue, stop_events, websocket), name="secure_interrupt"
+        )
+
+        agent = asyncio.create_task(
+            agent_task(
+                agent_queue,
+                stop_events,
+                output_queue,
+                secure_permission_callback,
+                websocket,
+            ),
+            name="secure_agent",
+        )
+
+        tasks = [heartbeat, router_task, sender, interrupt, agent]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    except asyncio.TimeoutError:
+        logger.warning("⏰ Zero-Trust authentication timeout")
+        try:
+            await websocket.send_json({
+                "type": "auth_error",
+                "error": "Authentication timeout"
+            })
+        except:
+            pass
+    except WebSocketDisconnect:
+        logger.info("🔌 Secure WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"❌ Secure WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "error": sanitize_error_message(e, "in secure WebSocket")
+            })
+        except:
+            pass
+    finally:
+        # NOTE: Don't revoke session on disconnect to allow reconnection with same session
+        # Session will expire naturally based on certificate expiry time
+        # This allows:
+        # 1. Reconnection with same session_id
+        # 2. Nonce state preserved (replay attack prevention)
+        # 3. Potential Claude conversation resume (if re-enabled)
+        # 
+        # For explicit logout, mobile should call a separate revoke endpoint
+        if session_id:
+            logger.info(f"🔐 Session {session_id} kept for potential reconnection")
+
+        # Cleanup tasks
+        try:
+            await output_queue.put(None)
+        except:
+            pass
+
+        all_tasks = [t for t in [heartbeat, router_task, sender, interrupt, agent] if t and not t.done()]
+        for task in all_tasks:
+            task.cancel()
+
+        if all_tasks:
+            await asyncio.wait(all_tasks, timeout=2.0)
+
+        logger.info("🧹 Secure WebSocket cleanup complete")
+
+
 if __name__ == "__main__":
     import os
 
     import uvicorn
+
+    # Initialize Zero-Trust verifier with backend URL
+    backend_url = os.getenv("SLAR_BACKEND_URL", "")
+    if backend_url:
+        init_verifier(backend_url)
+        logger.info(f"✅ Zero-Trust verifier initialized with backend: {backend_url}")
+    else:
+        logger.warning("⚠️ SLAR_BACKEND_URL not set, Zero-Trust features limited")
 
     # Disable auto-reload in production to prevent sync issues
     # Auto-reload can cause server restarts during file operations (like sync)

@@ -135,6 +135,17 @@ func (s *IdentityService) Sign(data []byte) (string, error) {
 	return hex.EncodeToString(signature), nil
 }
 
+// SignMap signs a map by converting it to canonical JSON first
+// Keys are sorted alphabetically for consistent hashing
+func (s *IdentityService) SignMap(data map[string]interface{}) (string, error) {
+	// Convert to canonical JSON (sorted keys)
+	canonicalJSON, err := canonicalJSONEncode(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode canonical JSON: %w", err)
+	}
+	return s.Sign([]byte(canonicalJSON))
+}
+
 // GetPublicKey returns the public key in PEM format
 func (s *IdentityService) GetPublicKey() (string, error) {
 	s.mu.RLock()
@@ -156,4 +167,95 @@ func (s *IdentityService) GetPublicKey() (string, error) {
 	})
 
 	return string(pemEncodedPub), nil
+}
+
+// canonicalJSONEncode converts a map to canonical JSON with sorted keys
+func canonicalJSONEncode(data interface{}) (string, error) {
+	return encodeValue(data)
+}
+
+func encodeValue(v interface{}) (string, error) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return encodeMap(val)
+	case []interface{}:
+		return encodeArray(val)
+	case []string:
+		arr := make([]interface{}, len(val))
+		for i, s := range val {
+			arr[i] = s
+		}
+		return encodeArray(arr)
+	case string:
+		return fmt.Sprintf("%q", val), nil
+	case float64:
+		// Check if it's an integer
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val)), nil
+		}
+		return fmt.Sprintf("%v", val), nil
+	case int:
+		return fmt.Sprintf("%d", val), nil
+	case int64:
+		return fmt.Sprintf("%d", val), nil
+	case bool:
+		if val {
+			return "true", nil
+		}
+		return "false", nil
+	case nil:
+		return "null", nil
+	default:
+		return fmt.Sprintf("%q", fmt.Sprintf("%v", val)), nil
+	}
+}
+
+func encodeMap(m map[string]interface{}) (string, error) {
+	// Get sorted keys
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+
+	result := "{"
+	for i, k := range keys {
+		if i > 0 {
+			result += ","
+		}
+		encodedValue, err := encodeValue(m[k])
+		if err != nil {
+			return "", err
+		}
+		result += fmt.Sprintf("%q:%s", k, encodedValue)
+	}
+	result += "}"
+	return result, nil
+}
+
+func encodeArray(arr []interface{}) (string, error) {
+	result := "["
+	for i, v := range arr {
+		if i > 0 {
+			result += ","
+		}
+		encodedValue, err := encodeValue(v)
+		if err != nil {
+			return "", err
+		}
+		result += encodedValue
+	}
+	result += "]"
+	return result, nil
+}
+
+// Simple string sort (to avoid importing sort package)
+func sortStrings(s []string) {
+	for i := 0; i < len(s)-1; i++ {
+		for j := i + 1; j < len(s); j++ {
+			if s[i] > s[j] {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
 }
