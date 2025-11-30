@@ -22,8 +22,11 @@ export default function MobileAppSettings({ userId }) {
   useEffect(() => {
     if (!qrData) return;
 
+    // expires_at is inside signed_token.payload
+    const expiresAt = qrData.signed_token?.payload?.expires_at || 0;
+
     const interval = setInterval(() => {
-      const remaining = Math.max(0, qrData.expires_at - Math.floor(Date.now() / 1000));
+      const remaining = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
       setTimeRemaining(remaining);
 
       if (remaining === 0) {
@@ -55,10 +58,20 @@ export default function MobileAppSettings({ userId }) {
       setQrData(data);
 
       // Generate QR code image
-      const qrString = JSON.stringify(data);
+      // IMPORTANT: Only encode signed_token in QR (not auth_config)
+      // auth_config contains long strings that make QR too dense to scan
+      // Mobile app will fetch auth_config separately after registration
+      const qrPayload = {
+        signed_token: data.signed_token
+      };
+      const qrString = JSON.stringify(qrPayload);
+      console.log('QR Data length:', qrString.length);
+      console.log('QR Data:', qrString);
+
       const qrImageUrl = await QRCode.toDataURL(qrString, {
-        width: 256,
+        width: 400,  // Larger for better scanning
         margin: 2,
+        errorCorrectionLevel: 'M',  // Medium error correction
         color: {
           dark: '#000000',
           light: '#ffffff'
@@ -146,7 +159,7 @@ export default function MobileAppSettings({ userId }) {
         ) : (
           <div className="text-center py-4">
             <div className="inline-block p-4 bg-white rounded-lg shadow-lg border border-gray-200 mb-4">
-              <img src={qrImage} alt="QR Code" className="w-64 h-64" />
+              <img src={qrImage} alt="QR Code" className="w-80 h-80" />
             </div>
             <div className="flex items-center justify-center space-x-2 mb-4">
               <svg className={`w-5 h-5 ${timeRemaining < 60 ? 'text-red-500' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -13,16 +13,15 @@ services:
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
     networks:
       - slar-network
-    restart: "no"  # Only run once
+    restart: "no"
+    profiles: ["migration"]
 
 
   ai:
     container_name: slar-ai
     build:
       context: ../../api/ai
-    depends_on:
-      migration:
-        condition: service_completed_successfully
+
     expose:
       - "8002"
     ports:
@@ -54,9 +53,7 @@ services:
     container_name: slar-api
     build:
       context: ../../api
-    depends_on:
-      migration:
-        condition: service_completed_successfully
+
     expose:
       - "8080"
     ports:
@@ -68,6 +65,9 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
       - SLAR_ENV=production
+      - SLAR_CLOUD_URL=${SLAR_CLOUD_URL}
+      - SLAR_CLOUD_TOKEN=${SLAR_CLOUD_TOKEN}
+      - SLAR_INSTANCE_ID=${SLAR_INSTANCE_ID}
     restart: unless-stopped
     networks:
       - slar-network
@@ -82,9 +82,7 @@ services:
     container_name: slar-slack-worker
     build:
       context: ../../api/workers
-    depends_on:
-      migration:
-        condition: service_completed_successfully
+
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}

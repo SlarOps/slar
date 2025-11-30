@@ -456,6 +456,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	{
 		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)
 		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
+		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get Supabase config after QR scan
 	}
 
 	return r
