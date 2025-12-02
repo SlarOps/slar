@@ -73,18 +73,31 @@ export default function IncidentTimeline({ events }) {
                 const level = eventData.escalation_level || eventData.level;
                 const targetType = eventData.target_type;
                 const targetName = eventData.target_name || eventData.assigned_to;
+                const reason = eventData.reason;
 
-                let description = `Escalated to policy level ${level}`;
+                // Check if manual or automatic escalation
+                const isManual = reason === 'manual_escalation';
+                let description = isManual 
+                    ? `Manually escalated to level ${level}`
+                    : `Auto-escalated to policy level ${level}`;
+
                 if (targetType === 'scheduler') {
                     description += ` (on-call scheduler)`;
                 } else if (targetType === 'user') {
-                    description += ` (direct user assignment)`;
+                    description += ` (direct user)`;
                 } else if (targetType === 'group') {
-                    description += ` (group assignment)`;
+                    description += ` (group)`;
+                } else if (targetType === 'current_schedule') {
+                    description += ` (current schedule)`;
                 }
 
                 if (targetName) {
                     description += ` → ${targetName}`;
+                }
+
+                // Add who performed the escalation for manual cases
+                if (isManual && event.created_by_name) {
+                    description += ` by ${event.created_by_name}`;
                 }
 
                 return description;

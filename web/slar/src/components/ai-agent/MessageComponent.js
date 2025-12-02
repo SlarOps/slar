@@ -119,7 +119,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
-      <p className="my-2 leading-relaxed" {...props} />
+      <p className="my-2 leading-relaxed break-words" {...props} />
     ),
     ul: ({ node, ...props }) => (
       <ul className="my-2 list-disc" {...props} />
@@ -128,31 +128,52 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       <ol className="my-2 list-decimal pl-5" {...props} />
     ),
     li: ({ node, ...props }) => (
-      <li className="my-1" {...props} />
+      <li className="my-1 break-words" {...props} />
     ),
     a: ({ node, ...props }) => (
-      <a className="underline hover:no-underline" {...props} />
+      <a className="underline hover:no-underline break-all" {...props} />
     ),
     pre: ({ node, ...props }) => (
-      <pre className="my-2 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto" {...props} />
+      <pre className="my-2 p-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto max-w-full text-sm" {...props} />
     ),
+    code: ({ node, inline, className, children, ...props }) => {
+      // Inline code (not in pre block)
+      if (inline) {
+        return (
+          <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-sm break-all" {...props}>
+            {children}
+          </code>
+        );
+      }
+      // Code block (inside pre)
+      return (
+        <code className={`${className || ''} block overflow-x-auto`} {...props}>
+          {children}
+        </code>
+      );
+    },
     h1: ({ node, ...props }) => (
-      <h1 className="text-lg font-semibold mt-3 mb-2" {...props} />
+      <h1 className="text-lg font-semibold mt-3 mb-2 break-words" {...props} />
     ),
     h2: ({ node, ...props }) => (
-      <h2 className="text-base font-semibold mt-3 mb-2" {...props} />
+      <h2 className="text-base font-semibold mt-3 mb-2 break-words" {...props} />
+    ),
+    h3: ({ node, ...props }) => (
+      <h3 className="text-sm font-semibold mt-2 mb-1 break-words" {...props} />
     ),
     blockquote: ({ node, ...props }) => (
       <blockquote className="border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3 text-gray-600 dark:text-gray-300" {...props} />
     ),
     table: ({ node, ...props }) => (
-      <table className="my-2 w-full border-collapse" {...props} />
+      <div className="overflow-x-auto my-2">
+        <table className="w-full border-collapse min-w-max" {...props} />
+      </div>
     ),
     th: ({ node, ...props }) => (
-      <th className="border px-2 py-1 text-left bg-gray-50 dark:bg-gray-800" {...props} />
+      <th className="border px-2 py-1 text-left bg-gray-50 dark:bg-gray-800 whitespace-nowrap" {...props} />
     ),
     td: ({ node, ...props }) => (
-      <td className="border px-2 py-1 align-top" {...props} />
+      <td className="border px-2 py-1 align-top break-words max-w-xs" {...props} />
     ),
   }), []);
 
@@ -189,7 +210,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
               </svg>
               <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Tool: {toolData.name}</span>
             </div>
-            <pre className="text-xs bg-white dark:bg-gray-900 p-2 rounded overflow-x-auto">
+            <pre className="text-xs bg-white dark:bg-gray-900 p-2 rounded overflow-x-auto max-w-full">
               {JSON.stringify(toolData.input, null, 2)}
             </pre>
           </div>
@@ -221,7 +242,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
               </button>
             )}
           </div>
-          <div className="text-sm">
+          <div className="text-sm overflow-hidden">
             <Markdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
@@ -400,7 +421,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
     // Default text message
     return (
-      <div className="relative">
+      <div className="relative overflow-hidden">
         <Markdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
@@ -415,9 +436,9 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block max-w-full overflow-hidden"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
           ? "bg-gray-100 text-gray-800"
-          : " dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          : "dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           }`}
       >
         {/* Thought display - expandable */}

@@ -27,6 +27,7 @@ ${GREEN}Commands:${NC}
   up              Start all services locally (build Next.js + docker compose up)
   down            Stop all services
   restart         Restart all services
+  migrate         Run database migrations
   logs [service]  View logs (optional: specify service name)
   build           Build all Docker images for linux/amd64
   push [registry] Build and push to registry (default: $REGISTRY)
@@ -170,6 +171,12 @@ cmd_restart() {
     docker compose ps
 }
 
+cmd_migrate() {
+    echo -e "${BLUE}🔄 Running database migrations...${NC}"
+    docker compose --profile migration up migration
+    echo -e "${GREEN}✅ Migrations completed${NC}"
+}
+
 cmd_logs() {
     SERVICE=$1
     if [ -z "$SERVICE" ]; then
@@ -250,6 +257,9 @@ case $COMMAND in
         ;;
     restart)
         cmd_restart
+        ;;
+    migrate)
+        cmd_migrate
         ;;
     logs)
         cmd_logs $2

@@ -68,45 +68,49 @@ export default function DashboardPage() {
           value={loading ? "..." : stats?.incidents.triggered}
           subtitle={loading ? "Loading..." : `${stats?.incidents.total} total incidents`}
           icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 14.5c-.77.833.192 2.5 1.732 2.5z" />
             </svg>
           }
+          iconColor="red"
           trend={stats?.incidents.triggered > 0 ? { type: 'up', value: '+2', label: 'from yesterday' } : null}
         />
-        
+
         <StatCard
           title="Services Up"
           value={loading ? "..." : `${stats?.services.up}/${stats?.services.total}`}
           subtitle={loading ? "Loading..." : "All systems operational"}
           icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           }
+          iconColor="emerald"
           trend={{ type: 'neutral', value: '99.2%', label: 'uptime' }}
         />
-        
+
         <StatCard
           title="Active Groups"
           value={loading ? "..." : stats?.groups.active}
           subtitle={loading ? "Loading..." : `${stats?.groups.total} total groups`}
           icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           }
+          iconColor="purple"
         />
-        
+
         <StatCard
           title="Response Time"
           value={loading ? "..." : "156ms"}
           subtitle="Average response"
           icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           }
+          iconColor="amber"
           trend={{ type: 'down', value: '-12ms', label: 'from last hour' }}
         />
       </div>
@@ -118,16 +122,16 @@ export default function DashboardPage() {
           <OnCallStatus />
           <IncidentsList limit={5} />
         </div>
-        
+
         {/* Right Column */}
         <div className="space-y-6">
           <ServiceStatus limit={6} />
-          
+
           {/* Quick Actions */}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Quick Actions</h3>
             <div className="grid grid-cols-2 gap-3">
-              <button 
+              <button
                 onClick={() => setShowCreateModal(true)}
                 className="flex items-center gap-2 p-3 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
               >

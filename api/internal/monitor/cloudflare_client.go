@@ -448,3 +448,38 @@ func (c *CloudflareClient) GetWorkerMetrics(accountID, workerName string) (*Work
 
 	return metrics, nil
 }
+
+// GetWorkersSubdomain gets the workers.dev subdomain for an account
+// Returns the subdomain (e.g., "my-subdomain" for https://worker.my-subdomain.workers.dev)
+func (c *CloudflareClient) GetWorkersSubdomain(accountID string) (string, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/workers/subdomain", accountID)
+
+	respBody, err := c.doRequest("GET", url, nil, "")
+	if err != nil {
+		return "", err
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Result  struct {
+			Subdomain string `json:"subdomain"`
+		} `json:"result"`
+		Errors []struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", err
+	}
+
+	if !resp.Success {
+		if len(resp.Errors) > 0 {
+			return "", fmt.Errorf("cloudflare api error: %s", resp.Errors[0].Message)
+		}
+		return "", fmt.Errorf("failed to get workers subdomain")
+	}
+
+	return resp.Result.Subdomain, nil
+}

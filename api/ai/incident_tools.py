@@ -482,12 +482,174 @@ async def get_current_time(args: dict[str, Any]) -> dict[str, Any]:
     return await _get_current_time_impl(args)
 
 
+async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Search incidents using full-text search.
+
+    Args:
+        query: Search query string (e.g., "CPU high", "database connection")
+        status: Optional filter by status - "triggered", "acknowledged", "resolved", or "all" (default: "all")
+        severity: Optional filter by severity - "critical", "error", "warning", "info"
+        limit: Maximum number of incidents to return (default: 20, max: 100)
+
+    Returns:
+        Dictionary with search results ranked by relevance
+    """
+    query = args.get("query", "")
+    status = args.get("status", "all")
+    severity = args.get("severity", "")
+    limit = args.get("limit", 20)
+
+    if not query or query.strip() == "":
+        return {
+            "content": [
+                {"type": "text", "text": "❌ Error: Search query is required"}
+            ],
+            "isError": True,
+        }
+
+    # Validate limit
+    if limit < 1 or limit > 100:
+        return {
+            "content": [
+                {"type": "text", "text": "❌ Error: Limit must be between 1 and 100"}
+            ],
+            "isError": True,
+        }
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {get_auth_token()}",
+            "Content-Type": "application/json",
+        }
+
+        # Build query parameters
+        params = {"search": query, "limit": limit, "sort": "relevance"}
+
+        if status != "all":
+            params["status"] = status
+
+        if severity:
+            params["severity"] = severity
+
+        async with aiohttp.ClientSession() as session:
+            url = f"{API_BASE_URL}/incidents"
+
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    incidents = data.get("incidents", [])
+
+                    # Format the response
+                    if not incidents:
+                        result_text = f"📭 No incidents found matching '{query}'"
+                        if status != "all":
+                            result_text += f" with status '{status}'"
+                        if severity:
+                            result_text += f" and severity '{severity}'"
+                    else:
+                        result_text = f"🔍 Found {len(incidents)} incident(s) matching '{query}'\n"
+                        result_text += f"(Sorted by relevance)\n\n"
+
+                        for idx, incident in enumerate(incidents, 1):
+                            result_text += f"**Incident #{idx}**\n"
+                            result_text += f"  • ID: {incident.get('id', 'N/A')}\n"
+                            result_text += (
+                                f"  • Title: {incident.get('title', 'N/A')}\n"
+                            )
+                            result_text += (
+                                f"  • Status: {incident.get('status', 'N/A')}\n"
+                            )
+                            result_text += (
+                                f"  • Severity: {incident.get('severity', 'N/A')}\n"
+                            )
+                            result_text += (
+                                f"  • Service: {incident.get('service_name', 'N/A')}\n"
+                            )
+                            result_text += (
+                                f"  • Created: {incident.get('created_at', 'N/A')}\n"
+                            )
+                            result_text += f"  • Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
+
+                            if incident.get("acknowledged_at"):
+                                result_text += f"  • Acknowledged: {incident.get('acknowledged_at')}\n"
+                            if incident.get("resolved_at"):
+                                result_text += (
+                                    f"  • Resolved: {incident.get('resolved_at')}\n"
+                                )
+
+                            result_text += "\n"
+
+                    return {"content": [{"type": "text", "text": result_text}]}
+
+                elif response.status == 401:
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "❌ Error: Authentication failed. Please check your API token.",
+                            }
+                        ],
+                        "isError": True,
+                    }
+
+                else:
+                    error_text = await response.text()
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"❌ Error: API request failed with status {response.status}\n{error_text}",
+                            }
+                        ],
+                        "isError": True,
+                    }
+
+    except aiohttp.ClientError as e:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"❌ Error: Network error occurred: {str(e)}\nPlease check if the SLAR API is running at {API_BASE_URL}",
+                }
+            ],
+            "isError": True,
+        }
+
+    except Exception as e:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"❌ Error: Unexpected error occurred: {str(e)}",
+                }
+            ],
+            "isError": True,
+        }
+
+
+@tool(
+    "search_incidents",
+    "Search incidents using full-text search with semantic understanding. Use this to find incidents by keywords, phrases, or descriptions.",
+    {
+        "query": str,  # Search query (e.g., "CPU high", "database connection")
+        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
+        "severity": str,  # Optional: "critical", "error", "warning", "info"
+        "limit": int,  # Optional: Max number of results (default: 20)
+    },
+)
+async def search_incidents(args: dict[str, Any]) -> dict[str, Any]:
+    """Wrapper for Claude Agent SDK"""
+    return await _search_incidents_impl(args)
+
+
 # Export all tools as a list for easy registration
 INCIDENT_TOOLS = [
     get_incidents_by_time,
     get_incident_by_id,
     get_incident_stats,
     get_current_time,
+    search_incidents,
 ]
 
 
@@ -515,7 +677,9 @@ __all__ = [
     "_get_incident_by_id_impl",
     "_get_incident_stats_impl",
     "_get_current_time_impl",
+    "_search_incidents_impl",
     "set_auth_token",
     "get_auth_token",
     "get_current_time",
+    "search_incidents",
 ]

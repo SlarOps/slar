@@ -119,6 +119,9 @@ temp/
 # .claude/skills/
 # .claude/plugins/
 
+# Cursor IDE chat assets (auto-generated from screenshots)
+assets/
+
 # ==========================================
 # Docker
 # ==========================================

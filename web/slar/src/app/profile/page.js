@@ -5,12 +5,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import apiClient from '../../lib/api';
 import NotificationSettings from '../../components/profile/NotificationSettings';
 import UserProfileForm from '../../components/profile/UserProfileForm';
+import MobileAppSettings from '../../components/profile/MobileAppSettings';
 import { toast } from 'react-hot-toast';
-import { UserIcon, BellIcon, LockIcon } from '../../components/ui/Icons';
+import { UserIcon, BellIcon, LockIcon, SmartphoneIcon } from '../../components/ui/Icons';
 
 const ProfileTabs = {
   PROFILE: 'profile',
   NOTIFICATIONS: 'notifications',
+  MOBILE: 'mobile',
   SECURITY: 'security'
 };
 
@@ -53,6 +55,12 @@ export default function ProfilePage() {
       label: 'Notifications',
       icon: BellIcon,
       description: 'Configure how you receive notifications'
+    },
+    {
+      key: ProfileTabs.MOBILE,
+      label: 'Mobile App',
+      icon: SmartphoneIcon,
+      description: 'Connect your mobile device for push notifications'
     },
     {
       key: ProfileTabs.SECURITY,
@@ -152,6 +160,16 @@ export default function ProfilePage() {
                   <p className="text-gray-600">Configure how you want to receive notifications for incidents and alerts.</p>
                 </div>
                 <NotificationSettings userId={userData?.id} />
+              </div>
+            )}
+
+            {activeTab === ProfileTabs.MOBILE && (
+              <div>
+                <div className="mb-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Mobile App</h3>
+                  <p className="text-gray-600">Connect your mobile device to receive push notifications for incidents.</p>
+                </div>
+                <MobileAppSettings userId={userData?.id} />
               </div>
             )}
 

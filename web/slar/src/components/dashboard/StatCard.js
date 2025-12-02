@@ -1,4 +1,18 @@
-export default function StatCard({ title, value, subtitle, icon, trend, className = "" }) {
+export default function StatCard({ title, value, subtitle, icon, trend, className = "", iconColor = "blue" }) {
+  // Define gradient color schemes for different icon types
+  const iconColorSchemes = {
+    blue: "bg-gradient-to-br from-blue-500 to-blue-600 text-white",
+    purple: "bg-gradient-to-br from-purple-500 to-purple-600 text-white",
+    green: "bg-gradient-to-br from-green-500 to-green-600 text-white",
+    orange: "bg-gradient-to-br from-orange-500 to-orange-600 text-white",
+    red: "bg-gradient-to-br from-red-500 to-red-600 text-white",
+    indigo: "bg-gradient-to-br from-indigo-500 to-indigo-600 text-white",
+    pink: "bg-gradient-to-br from-pink-500 to-pink-600 text-white",
+    cyan: "bg-gradient-to-br from-cyan-500 to-cyan-600 text-white",
+    amber: "bg-gradient-to-br from-amber-500 to-amber-600 text-white",
+    emerald: "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white",
+  };
+
   return (
     <div className={`bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 ${className}`}>
       <div className="flex items-center justify-between">
@@ -10,7 +24,7 @@ export default function StatCard({ title, value, subtitle, icon, trend, classNam
           )}
         </div>
         {icon && (
-          <div className="text-gray-400 dark:text-gray-500">
+          <div className={`p-3 rounded-xl ${iconColorSchemes[iconColor] || iconColorSchemes.blue} shadow-lg`}>
             {icon}
           </div>
         )}

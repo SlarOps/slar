@@ -51,6 +51,20 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
 	serviceService := services.NewServiceService(pg)         // NEW: Service management
 	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
+	identityService, err := services.NewIdentityService("./data") // Initialize IdentityService
+	if err != nil {
+		log.Printf("Warning: Failed to initialize identity service: %v", err)
+	}
+
+	// Initialize cloud relay and auto-register with cloud if configured
+	cloudRelayService := services.NewCloudRelayService(identityService)
+	if cloudRelayService.IsConfigured() {
+		go func() {
+			if err := cloudRelayService.RegisterWithCloud(); err != nil {
+				log.Printf("Warning: Failed to register with cloud relay: %v", err)
+			}
+		}()
+	}
 
 	// Initialize handlers
 	alertHandler := handlers.NewAlertHandler(alertService)
@@ -71,6 +85,9 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	webhookHandler := handlers.NewWebhookHandler(integrationService, alertService, incidentService, serviceService) // NEW: Webhook handler
 	notificationHandler := handlers.NewNotificationHandler(slackService)                                            // NEW: Notification handler
 	debugHandler := handlers.NewDebugHandler(pg)
+	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
+	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
+	agentHandler := handlers.NewAgentHandler(pg, identityService)   // Initialize AgentHandler for Zero-Trust
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -106,6 +123,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 	// Debug endpoints (temporary for troubleshooting)
 	r.GET("/debug/rotation-tables", debugHandler.CheckRotationTables)
+
+	// PUBLIC IDENTITY ENDPOINT - public key is public!
+	// AI Agent needs this to verify device certificates without authentication
+	// Must be registered BEFORE protected routes to take precedence
+	r.GET("/identity/public-key", identityHandler.GetPublicKey)
 
 	// PUBLIC WEBHOOK ENDPOINTS (no authentication - secured by integration secret)
 	webhookRoutes := r.Group("/webhook")
@@ -240,6 +262,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			monitorRoutes.GET("/deployments", deploymentHandler.GetDeployments)
 			monitorRoutes.GET("/deployments/:id/stats", deploymentHandler.GetDeploymentStats) // NEW: Worker stats
 			monitorRoutes.POST("/deployments/:id/redeploy", deploymentHandler.RedeployWorker)
+			monitorRoutes.PUT("/deployments/:id/worker-url", deploymentHandler.UpdateWorkerURL) // NEW: Update worker URL
 			monitorRoutes.DELETE("/deployments/:id", deploymentHandler.DeleteDeployment)
 
 			// Deployment integration management
@@ -417,6 +440,38 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		protected.GET("/verify-token", func(c *gin.Context) {
 			c.JSON(200, gin.H{"message": "Token is valid"})
 		})
+
+		// MOBILE APP CONNECTION (protected - requires Supabase JWT)
+		mobileRoutes := protected.Group("/mobile")
+		{
+			mobileRoutes.POST("/connect/generate", mobileHandler.GenerateMobileConnectQR)
+			mobileRoutes.GET("/devices", mobileHandler.GetConnectedDevices)
+			mobileRoutes.DELETE("/devices/:device_id", mobileHandler.DisconnectDevice)
+		}
+
+		// IDENTITY MANAGEMENT (connect-relay requires auth, public-key is public - see above)
+		identityRoutes := protected.Group("/identity")
+		{
+			// Note: GET /identity/public-key is registered as PUBLIC route above
+			identityRoutes.POST("/connect-relay", identityHandler.ConnectRelay)
+		}
+
+		// AI AGENT ZERO-TRUST AUTHENTICATION
+		agentRoutes := protected.Group("/agent")
+		{
+			agentRoutes.POST("/device-cert", agentHandler.GenerateDeviceCertificate)
+			agentRoutes.DELETE("/device-cert/:cert_id", agentHandler.RevokeDeviceCertificate)
+			agentRoutes.GET("/device-certs", agentHandler.ListDeviceCertificates)
+			agentRoutes.GET("/config", agentHandler.GetAgentConfig)
+		}
+	}
+
+	// PUBLIC MOBILE ENDPOINTS (no Supabase auth - token verified internally)
+	mobilePublicRoutes := r.Group("/mobile")
+	{
+		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)
+		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
+		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get Supabase config after QR scan
 	}
 
 	return r

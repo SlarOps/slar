@@ -1,18 +1,14 @@
 name = "slar-uptime-worker"
-main = "src/index.ts"
+main = "src/index.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 [triggers]
 crons = ["* * * * *"] # Run every minute
 
-[[kv_namespaces]]
-binding = "SLAR_CONFIG"
-id = "replace-me-config-id"
-
-[[kv_namespaces]]
-binding = "SLAR_STATE"
-id = "replace-me-state-id"
-
-[vars]
-SLAR_API_URL = "https://api.slar.app"
-SLAR_API_TOKEN = "replace-me-token"
+# D1 Database for storing monitors and logs
+# This is the only storage - no KV needed (simpler, cheaper)
+[[d1_databases]]
+binding = "SLAR_DB"
+database_name = "SLAR_DB"
+database_id = "replace-me-d1-id"

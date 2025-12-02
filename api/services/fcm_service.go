@@ -1,11 +1,15 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -16,6 +20,10 @@ import (
 type FCMService struct {
 	PG     *sql.DB
 	client *messaging.Client
+	// Cloud relay configuration
+	cloudURL   string
+	cloudToken string
+	instanceID string
 }
 
 type NotificationData struct {
@@ -27,32 +35,62 @@ type NotificationData struct {
 }
 
 func NewFCMService(pg *sql.DB) (*FCMService, error) {
-	// Initialize Firebase Admin SDK
+	// Read cloud relay configuration
+	cloudURL := os.Getenv("SLAR_CLOUD_URL")
+	cloudToken := os.Getenv("SLAR_CLOUD_TOKEN")
+	instanceID := os.Getenv("SLAR_INSTANCE_ID")
+
+	service := &FCMService{
+		PG:         pg,
+		cloudURL:   cloudURL,
+		cloudToken: cloudToken,
+		instanceID: instanceID,
+	}
+
+	// Log cloud relay status
+	if cloudURL != "" && cloudToken != "" && instanceID != "" {
+		log.Printf("FCM Service: Cloud relay configured (URL: %s, Instance: %s)", cloudURL, instanceID)
+	} else {
+		log.Println("FCM Service: Cloud relay not configured, will use direct FCM if available")
+	}
+
+	// Initialize Firebase Admin SDK (optional - used as fallback)
 	// You'll need to set GOOGLE_APPLICATION_CREDENTIALS environment variable
 	// pointing to your Firebase service account key JSON file
 	opt := option.WithCredentialsFile("firebase-service-account-key.json")
 	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
-		log.Printf("Error initializing Firebase app: %v", err)
-		return &FCMService{PG: pg}, nil // Return service without FCM client
+		log.Printf("Firebase app not initialized: %v (will use cloud relay if configured)", err)
+		return service, nil
 	}
 
 	client, err := app.Messaging(context.Background())
 	if err != nil {
-		log.Printf("Error getting Messaging client: %v", err)
-		return &FCMService{PG: pg}, nil // Return service without FCM client
+		log.Printf("Firebase messaging client not initialized: %v (will use cloud relay if configured)", err)
+		return service, nil
 	}
 
-	return &FCMService{
-		PG:     pg,
-		client: client,
-	}, nil
+	service.client = client
+	log.Println("FCM Service: Direct Firebase messaging initialized")
+
+	return service, nil
+}
+
+// IsCloudRelayEnabled returns true if cloud relay is configured
+func (s *FCMService) IsCloudRelayEnabled() bool {
+	return s.cloudURL != "" && s.cloudToken != "" && s.instanceID != ""
 }
 
 // SendAlertNotification sends notification to assigned user when alert is created
 func (s *FCMService) SendAlertNotification(alert *db.Alert) error {
+	// Check if cloud relay is enabled - prefer cloud relay over direct FCM
+	if s.IsCloudRelayEnabled() {
+		return s.sendAlertViaCloudRelay(alert)
+	}
+
+	// Fallback to direct FCM
 	if s.client == nil {
-		log.Println("FCM client not initialized, skipping notification")
+		log.Println("FCM client not initialized and cloud relay not configured, skipping notification")
 		return nil
 	}
 
@@ -243,6 +281,126 @@ func (s *FCMService) UpdateUserFCMToken(userID, fcmToken string) error {
 
 	log.Printf("Updated FCM token for user %s", userID)
 	return nil
+}
+
+// ============================================================================
+// CLOUD RELAY METHODS
+// ============================================================================
+
+// CloudRelayNotification represents the notification payload for cloud relay
+type CloudRelayNotification struct {
+	InstanceID   string                 `json:"instance_id"`
+	UserID       string                 `json:"user_id"`
+	Notification CloudRelayNotifPayload `json:"notification"`
+}
+
+// CloudRelayNotifPayload represents the notification content
+type CloudRelayNotifPayload struct {
+	Title    string            `json:"title"`
+	Body     string            `json:"body"`
+	Priority string            `json:"priority"`
+	Data     map[string]string `json:"data,omitempty"`
+}
+
+// CloudRelayResponse represents the response from cloud relay
+type CloudRelayResponse struct {
+	NotificationID string `json:"notification_id"`
+	Status         string `json:"status"`
+	DevicesCount   int    `json:"devices_count"`
+	Error          string `json:"error,omitempty"`
+}
+
+// sendAlertViaCloudRelay sends alert notification via cloud relay (noti-gw)
+func (s *FCMService) sendAlertViaCloudRelay(alert *db.Alert) error {
+	log.Printf("Sending alert notification via cloud relay for user %s", alert.AssignedTo)
+
+	payload := CloudRelayNotification{
+		InstanceID: s.instanceID,
+		UserID:     alert.AssignedTo,
+		Notification: CloudRelayNotifPayload{
+			Title:    fmt.Sprintf("🚨 %s Alert", alert.Severity),
+			Body:     fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
+			Priority: getPriorityBySeverity(alert.Severity),
+			Data: map[string]string{
+				"alert_id":    alert.ID,
+				"alert_title": alert.Title,
+				"severity":    alert.Severity,
+				"source":      alert.Source,
+				"type":        "alert",
+			},
+		},
+	}
+
+	return s.sendToCloudRelay(payload)
+}
+
+// sendToCloudRelay sends notification payload to cloud relay
+func (s *FCMService) sendToCloudRelay(payload CloudRelayNotification) error {
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cloud relay payload: %v", err)
+	}
+
+	url := s.cloudURL + "/api/gateway/notifications/send"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("failed to create cloud relay request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.cloudToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send to cloud relay: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("cloud relay error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var relayResp CloudRelayResponse
+	if err := json.Unmarshal(body, &relayResp); err != nil {
+		log.Printf("Warning: Could not parse cloud relay response: %v", err)
+	} else {
+		log.Printf("Cloud relay notification sent: ID=%s, Status=%s, Devices=%d",
+			relayResp.NotificationID, relayResp.Status, relayResp.DevicesCount)
+	}
+
+	return nil
+}
+
+// SendNotificationToUserViaRelay sends a custom notification to a user via cloud relay
+func (s *FCMService) SendNotificationToUserViaRelay(userID, title, body string, data map[string]string) error {
+	if !s.IsCloudRelayEnabled() {
+		return fmt.Errorf("cloud relay not configured")
+	}
+
+	payload := CloudRelayNotification{
+		InstanceID: s.instanceID,
+		UserID:     userID,
+		Notification: CloudRelayNotifPayload{
+			Title:    title,
+			Body:     body,
+			Priority: "high",
+			Data:     data,
+		},
+	}
+
+	return s.sendToCloudRelay(payload)
+}
+
+func getPriorityBySeverity(severity string) string {
+	switch severity {
+	case "critical", "high":
+		return "high"
+	default:
+		return "normal"
+	}
 }
 
 // Helper functions

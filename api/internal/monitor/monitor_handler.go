@@ -322,7 +322,12 @@ func (h *MonitorHandler) deleteMonitorFromD1(deploymentID uuid.UUID, monitorID u
 }
 
 // GetMonitorStats returns overall statistics for a monitor from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API is 10x faster (~5ms vs ~400ms) due to CDN edge caching
 func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -347,8 +352,9 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
-	// Query D1 for statistics (last 30 days)
-	thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Unix()
+	// Query D1 for statistics (last 7 days - reduced from 30 to save D1 quota)
+	// With INDEX on (monitor_id, created_at), this should be efficient
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Unix()
 	results, err := cf.QueryD1SQL(accountID, dbID, `
 		SELECT 
 			COUNT(*) as total_checks,
@@ -356,7 +362,7 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 			AVG(CASE WHEN latency > 0 THEN latency ELSE NULL END) as avg_latency
 		FROM monitor_logs
 		WHERE monitor_id = ? AND created_at >= ?
-	`, []interface{}{id.String(), thirtyDaysAgo})
+	`, []interface{}{id.String(), sevenDaysAgo})
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -387,7 +393,12 @@ func (h *MonitorHandler) GetMonitorStats(c *gin.Context) {
 }
 
 // GetUptimeHistory returns daily uptime status for the last 90 days from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API returns 7-day history in the stats response
 func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -411,8 +422,9 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 
 	cf := NewCloudflareClient(apiToken)
 
-	// Query D1 for 90-day history
-	ninetyDaysAgo := time.Now().AddDate(0, 0, -90).Unix()
+	// Query D1 for 7-day history (reduced from 90 to save D1 quota)
+	// With INDEX on (monitor_id, created_at), this should be efficient
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Unix()
 	results, err := cf.QueryD1SQL(accountID, dbID, `
 		SELECT 
 			DATE(created_at, 'unixepoch') as check_date,
@@ -422,7 +434,7 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 		WHERE monitor_id = ? AND created_at >= ?
 		GROUP BY check_date
 		ORDER BY check_date ASC
-	`, []interface{}{id.String(), ninetyDaysAgo})
+	`, []interface{}{id.String(), sevenDaysAgo})
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -464,7 +476,12 @@ func (h *MonitorHandler) GetUptimeHistory(c *gin.Context) {
 }
 
 // GetResponseTimes returns response time data for charting from D1
+// DEPRECATED: Use Worker API /api/monitors/:id instead for faster CDN-cached response
+// This endpoint will be removed in a future version
+// Worker API returns recent_logs array in the stats response
 func (h *MonitorHandler) GetResponseTimes(c *gin.Context) {
+	c.Header("X-Deprecated", "true")
+	c.Header("X-Deprecated-Message", "Use Worker API /api/monitors/:id instead")
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {

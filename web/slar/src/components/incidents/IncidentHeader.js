@@ -103,13 +103,24 @@ export default function IncidentHeader({
                             </Button>
                         )}
 
-                        {incident.status !== 'resolved' && (
+                        {/* Escalate button - show only when incident has escalation policy and can be escalated */}
+                        {incident.status !== 'resolved' && incident.escalation_policy_id && (
                             <Button
                                 onClick={() => onAction('escalate')}
-                                disabled={actionLoading}
-                                className="flex-1 sm:flex-none bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
+                                disabled={actionLoading || incident.escalation_status === 'completed'}
+                                className={`flex-1 sm:flex-none ${
+                                    incident.escalation_status === 'completed'
+                                        ? 'bg-gray-400 cursor-not-allowed'
+                                        : 'bg-orange-500 hover:bg-orange-600'
+                                } disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2`}
+                                title={incident.escalation_status === 'completed' 
+                                    ? 'Already at maximum escalation level' 
+                                    : `Escalate to level ${(incident.current_escalation_level || 0) + 1}`}
                             >
-                                {actionLoading ? 'Processing...' : 'Escalate'}
+                                {actionLoading ? 'Processing...' : 
+                                    incident.escalation_status === 'completed' 
+                                        ? 'Max Level' 
+                                        : `Escalate (L${(incident.current_escalation_level || 0) + 1})`}
                             </Button>
                         )}
                     </div>
