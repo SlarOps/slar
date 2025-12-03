@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import GroupCard from './GroupCard';
 
@@ -59,6 +60,7 @@ const MOCK_GROUPS = [
 
 export default function GroupsList({ filters, activeTab, refreshTrigger, onGroupAction, onCreateGroup, onEditGroup }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -70,28 +72,42 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
         return;
       }
 
+      // ReBAC: org_id is required for tenant isolation
+      if (!currentOrg?.id) {
+        setLoading(false);
+        setGroups([]);
+        return;
+      }
+
       setLoading(true);
       try {
         // Set authentication token
         apiClient.setToken(session.access_token);
-        
+
+        // Include org_id and project_id in filters for ReBAC
+        const filtersWithOrg = {
+          ...filters,
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+
         let data;
         // Call different endpoints based on active tab
         switch (activeTab) {
           case 'my':
-            data = await apiClient.getMyGroups(filters);
+            data = await apiClient.getMyGroups(filtersWithOrg);
             break;
           case 'public':
-            data = await apiClient.getPublicGroups(filters);
+            data = await apiClient.getPublicGroups(filtersWithOrg);
             break;
           case 'all':
-            data = await apiClient.getAllGroups(filters);
+            data = await apiClient.getAllGroups(filtersWithOrg);
             break;
           default:
-            data = await apiClient.getGroups(filters);
+            data = await apiClient.getGroups(filtersWithOrg);
             break;
         }
-        
+
         setGroups(data.groups || []);
         setError(null);
       } catch (err) {
@@ -104,7 +120,7 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
     };
 
     fetchGroups();
-  }, [filters, activeTab, session, refreshTrigger]);
+  }, [filters, activeTab, session, refreshTrigger, currentOrg?.id, currentProject?.id]);
 
   const handleEditGroup = (groupId) => {
     console.log('Editing group:', groupId);
@@ -122,11 +138,16 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
       }
 
       apiClient.setToken(session.access_token);
-      await apiClient.deleteGroup(groupId);
-      
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      await apiClient.deleteGroup(groupId, rebacFilters);
+
       // Optimistically update UI
       setGroups(prev => prev.filter(group => group.id !== groupId));
-      
+
       if (onGroupAction) {
         onGroupAction('delete', groupId);
       }
@@ -144,15 +165,20 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
       }
 
       apiClient.setToken(session.access_token);
-      await apiClient.updateGroup(groupId, { is_active: newStatus });
-      
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      await apiClient.updateGroup(groupId, { is_active: newStatus }, rebacFilters);
+
       // Optimistically update UI
-      setGroups(prev => prev.map(group => 
-        group.id === groupId 
+      setGroups(prev => prev.map(group =>
+        group.id === groupId
           ? { ...group, is_active: newStatus, updated_at: new Date().toISOString() }
           : group
       ));
-      
+
       if (onGroupAction) {
         onGroupAction('toggle', groupId);
       }
@@ -175,6 +201,11 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
       }
 
       apiClient.setToken(session.access_token);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
       await apiClient.addGroupMember(groupId, {
         user_id: `oauth-google-${currentUserId}`, // Transform user ID
         role: 'member',
@@ -184,24 +215,30 @@ export default function GroupsList({ filters, activeTab, refreshTrigger, onGroup
           email: true,
           sms: false
         }
-      });
+      }, rebacFilters);
       
       // Refresh the groups list
       const refreshData = async () => {
         try {
+          // Include org_id and project_id in filters for ReBAC
+          const filtersWithOrg = {
+            ...filters,
+            org_id: currentOrg?.id,
+            ...(currentProject?.id && { project_id: currentProject.id })
+          };
           let data;
           switch (activeTab) {
             case 'my':
-              data = await apiClient.getMyGroups(filters);
+              data = await apiClient.getMyGroups(filtersWithOrg);
               break;
             case 'public':
-              data = await apiClient.getPublicGroups(filters);
+              data = await apiClient.getPublicGroups(filtersWithOrg);
               break;
             case 'all':
-              data = await apiClient.getAllGroups(filters);
+              data = await apiClient.getAllGroups(filtersWithOrg);
               break;
             default:
-              data = await apiClient.getGroups(filters);
+              data = await apiClient.getGroups(filtersWithOrg);
               break;
           }
           setGroups(data.groups || []);

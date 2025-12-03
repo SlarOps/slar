@@ -36,10 +36,18 @@ func (r *SimpleOrgRepository) Create(ctx context.Context, org *Organization) err
 	org.CreatedAt = now
 	org.UpdatedAt = now
 
+	// Handle empty settings - PostgreSQL JSON type requires valid JSON or NULL
+	var settings interface{}
+	if org.Settings == "" {
+		settings = nil // Will be stored as NULL in database
+	} else {
+		settings = org.Settings
+	}
+
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO organizations (id, name, slug, description, settings, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, org.ID, org.Name, org.Slug, org.Description, org.Settings, org.IsActive, org.CreatedAt, org.UpdatedAt)
+	`, org.ID, org.Name, org.Slug, org.Description, settings, org.IsActive, org.CreatedAt, org.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create organization: %w", err)
@@ -124,11 +132,20 @@ func (r *SimpleOrgRepository) ListByUser(ctx context.Context, userID string) ([]
 // Update updates an organization
 func (r *SimpleOrgRepository) Update(ctx context.Context, org *Organization) error {
 	org.UpdatedAt = time.Now()
+
+	// Handle empty settings - PostgreSQL JSON type requires valid JSON or NULL
+	var settings interface{}
+	if org.Settings == "" {
+		settings = nil
+	} else {
+		settings = org.Settings
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE organizations
 		SET name = $2, slug = $3, description = $4, settings = $5, is_active = $6, updated_at = $7
 		WHERE id = $1
-	`, org.ID, org.Name, org.Slug, org.Description, org.Settings, org.IsActive, org.UpdatedAt)
+	`, org.ID, org.Name, org.Slug, org.Description, settings, org.IsActive, org.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to update organization: %w", err)
@@ -210,10 +227,18 @@ func (r *SimpleProjectRepository) Create(ctx context.Context, project *Project) 
 	project.CreatedAt = now
 	project.UpdatedAt = now
 
+	// Handle empty settings - PostgreSQL JSON type requires valid JSON or NULL
+	var settings interface{}
+	if project.Settings == "" {
+		settings = nil // Will be stored as NULL in database
+	} else {
+		settings = project.Settings
+	}
+
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO projects (id, organization_id, name, slug, description, settings, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, project.ID, project.OrganizationID, project.Name, project.Slug, project.Description, project.Settings, project.IsActive, project.CreatedAt, project.UpdatedAt)
+	`, project.ID, project.OrganizationID, project.Name, project.Slug, project.Description, settings, project.IsActive, project.CreatedAt, project.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create project: %w", err)
@@ -313,11 +338,20 @@ func (r *SimpleProjectRepository) ListByUser(ctx context.Context, userID string)
 // Update updates a project
 func (r *SimpleProjectRepository) Update(ctx context.Context, project *Project) error {
 	project.UpdatedAt = time.Now()
+
+	// Handle empty settings - PostgreSQL JSON type requires valid JSON or NULL
+	var settings interface{}
+	if project.Settings == "" {
+		settings = nil
+	} else {
+		settings = project.Settings
+	}
+
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE projects
 		SET name = $2, slug = $3, description = $4, settings = $5, is_active = $6, updated_at = $7
 		WHERE id = $1
-	`, project.ID, project.Name, project.Slug, project.Description, project.Settings, project.IsActive, project.UpdatedAt)
+	`, project.ID, project.Name, project.Slug, project.Description, settings, project.IsActive, project.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to update project: %w", err)

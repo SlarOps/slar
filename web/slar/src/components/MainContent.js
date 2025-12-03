@@ -12,10 +12,11 @@ export default function MainContent({ children }) {
   const { isAuthenticated } = useAuth();
   const pathname = usePathname();
 
-  // No sidebar margin for auth pages or unauthenticated users
+  // No sidebar margin for auth pages, onboarding, or unauthenticated users
   const isAuthPage = pathname === '/login' || pathname === '/signup';
-  const isFullBleed = FULL_BLEED_PAGES.includes(pathname);
-  const showSidebarMargin = !isMobile && isAuthenticated && !isAuthPage;
+  const isOnboardingPage = pathname === '/onboarding';
+  const isFullBleed = FULL_BLEED_PAGES.includes(pathname) || isOnboardingPage;
+  const showSidebarMargin = !isMobile && isAuthenticated && !isAuthPage && !isOnboardingPage;
 
   return (
     <main 

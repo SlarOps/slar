@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
+import { useOrg } from '../../contexts/OrgContext';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 import Select from '../ui/Select';
 import Input from '../ui/Input';
@@ -16,6 +17,7 @@ export default function CreateOverrideModal({
   session,
   onOverrideCreated
 }) {
+  const { currentOrg, currentProject } = useOrg();
   const [formData, setFormData] = useState({
     userId: '',
     startDate: '',
@@ -76,6 +78,11 @@ export default function CreateOverrideModal({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -95,7 +102,13 @@ export default function CreateOverrideModal({
       const { apiClient } = await import('../../lib/api');
       apiClient.setToken(session.access_token);
 
-      const response = await apiClient.createOverride(groupId, overrideData);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const response = await apiClient.createOverride(groupId, overrideData, rebacFilters);
 
       if (onOverrideCreated) {
         onOverrideCreated(response);

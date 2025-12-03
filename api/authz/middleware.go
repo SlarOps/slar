@@ -380,3 +380,231 @@ func GetProjectRoleFromContext(c *gin.Context) Role {
 	role := c.GetString(string(ContextKeyProjectRole))
 	return Role(role)
 }
+
+
+// ProjectScopedMiddleware injects project context for resource creation/listing
+// - If project_id provided (param/query/header): validate access, set project_id + org_id
+// - If no project_id: compute accessible projects list for filtering
+type ProjectScopedMiddleware struct {
+	Authorizer     Authorizer
+	ProjectService *ProjectService
+}
+
+// NewProjectScopedMiddleware creates middleware for project-scoped resources
+func NewProjectScopedMiddleware(az Authorizer, ps *ProjectService) *ProjectScopedMiddleware {
+	return &ProjectScopedMiddleware{
+		Authorizer:     az,
+		ProjectService: ps,
+	}
+}
+
+// InjectProjectContext middleware for resource handlers
+// Simple ReBAC: Just pass user context, service layer handles relationship traversal
+func (m *ProjectScopedMiddleware) InjectProjectContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error":   "unauthorized",
+				"message": "User not authenticated",
+			})
+			return
+		}
+
+		// Optional: If project_id provided, validate and set context for scoping
+		projectID := c.Param("project_id")
+		if projectID == "" {
+			projectID = c.Query("project_id")
+		}
+		if projectID == "" {
+			projectID = c.GetHeader("X-Project-ID")
+		}
+
+		if projectID != "" {
+			// Validate project access via ReBAC
+			if !m.Authorizer.CanAccessProject(c.Request.Context(), userID, projectID) {
+				log.Printf("REBAC DENIED: User %s cannot access project %s", userID, projectID)
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error":   "forbidden",
+					"message": "You don't have access to this project",
+				})
+				return
+			}
+			c.Set(string(ContextKeyProjectID), projectID)
+			log.Printf("REBAC: User %s scoped to project %s", userID, projectID)
+		}
+		// No pre-computed lists - service layer uses EXISTS for relationship traversal
+
+		c.Next()
+	}
+}
+
+// =============================================================================
+// ReBAC FILTER HELPER (Shared across all handlers)
+// =============================================================================
+
+// GetReBACFilters extracts security context from Gin Context and returns
+// a standardized filter map to pass to Service layer.
+// ReBAC with Tenant Isolation: Pass user_id + org_id (mandatory), service layer handles relationship traversal.
+//
+// Usage:
+//
+//	func (h *Handler) List(c *gin.Context) {
+//	    filters := authz.GetReBACFilters(c)
+//	    // Add resource-specific filters
+//	    if status := c.Query("status"); status != "" {
+//	        filters["status"] = status
+//	    }
+//	    results, err := h.Service.List(c.Request.Context(), filters)
+//	}
+func GetReBACFilters(c *gin.Context) map[string]interface{} {
+	filters := make(map[string]interface{})
+
+	// ReBAC: Pass user_id, service layer handles relationship traversal via EXISTS
+	if userID := c.GetString("user_id"); userID != "" {
+		filters["current_user_id"] = userID
+	}
+
+	// TENANT ISOLATION (MANDATORY): Pass org_id for all queries
+	// Priority: context (set by middleware) > query param > header
+	orgID := GetOrgIDFromContext(c)
+	if orgID == "" {
+		orgID = c.Query("org_id")
+	}
+	if orgID == "" {
+		orgID = c.GetHeader("X-Org-ID")
+	}
+	if orgID != "" {
+		filters["current_org_id"] = orgID
+	}
+
+	// Optional: Project scoping (if explicitly provided)
+	if projectID := GetProjectIDFromContext(c); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	return filters
+}
+
+// =============================================================================
+// GENERIC PERMISSION MIDDLEWARE (Defense in Depth Pattern)
+// =============================================================================
+
+// RequirePermission is a flexible middleware that checks permissions based on
+// action and resource type. It extracts resource ID from URL params.
+//
+// URL param naming convention: {resourceType}ID or {resourceType}_id
+// Example: /orgs/:org_id/projects/:project_id
+//
+// Usage:
+//   router.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceProject))
+//   router.DELETE("/:id", authzMiddleware.RequirePermission(authz.ActionDelete, authz.ResourceOrg), handler)
+func (m *AuthzMiddleware) RequirePermission(action Action, resourceType ResourceType) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error":   "unauthorized",
+				"message": "User not authenticated",
+			})
+			return
+		}
+
+		// Try to get resource ID from URL params
+		// Naming convention: project_id, org_id, or id (fallback)
+		resourceID := c.Param(string(resourceType) + "_id")
+		if resourceID == "" {
+			resourceID = c.Param("id") // Fallback to generic :id
+		}
+
+		// If no ID found in URL, skip middleware (let handler deal with it)
+		// This is useful for POST requests where ID doesn't exist yet
+		if resourceID == "" {
+			log.Printf("AUTHZ SKIP - No %s_id in URL, delegating to handler", resourceType)
+			c.Next()
+			return
+		}
+
+		// Check permission using Authorizer.Check()
+		allowed := m.Authorizer.Check(c.Request.Context(), userID, action, resourceType, resourceID)
+		if !allowed {
+			log.Printf("AUTHZ DENIED - User %s cannot %s on %s %s", userID, action, resourceType, resourceID)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"message": "You don't have permission to perform this action",
+				"details": map[string]string{
+					"action":        string(action),
+					"resource_type": string(resourceType),
+					"resource_id":   resourceID,
+				},
+			})
+			return
+		}
+
+		// Store resource info in context for handler use
+		switch resourceType {
+		case ResourceOrg:
+			role := m.Authorizer.GetOrgRole(c.Request.Context(), userID, resourceID)
+			c.Set(string(ContextKeyOrgID), resourceID)
+			c.Set(string(ContextKeyOrgRole), string(role))
+			log.Printf("AUTHZ OK - User %s (role: %s) can %s on %s %s", userID, role, action, resourceType, resourceID)
+		case ResourceProject:
+			role := m.Authorizer.GetProjectRole(c.Request.Context(), userID, resourceID)
+			c.Set(string(ContextKeyProjectID), resourceID)
+			c.Set(string(ContextKeyProjectRole), string(role))
+			log.Printf("AUTHZ OK - User %s (role: %s) can %s on %s %s", userID, role, action, resourceType, resourceID)
+		}
+
+		c.Next()
+	}
+}
+
+// RequirePermissionWithParamKey is like RequirePermission but allows specifying
+// a custom URL param key for the resource ID.
+//
+// Usage:
+//   router.GET("/custom/:customID", authzMiddleware.RequirePermissionWithParamKey(
+//       authz.ActionView, authz.ResourceProject, "customID"), handler)
+func (m *AuthzMiddleware) RequirePermissionWithParamKey(action Action, resourceType ResourceType, paramKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error":   "unauthorized",
+				"message": "User not authenticated",
+			})
+			return
+		}
+
+		resourceID := c.Param(paramKey)
+		if resourceID == "" {
+			log.Printf("AUTHZ SKIP - No %s in URL, delegating to handler", paramKey)
+			c.Next()
+			return
+		}
+
+		allowed := m.Authorizer.Check(c.Request.Context(), userID, action, resourceType, resourceID)
+		if !allowed {
+			log.Printf("AUTHZ DENIED - User %s cannot %s on %s %s", userID, action, resourceType, resourceID)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"message": "You don't have permission to perform this action",
+			})
+			return
+		}
+
+		// Store in context
+		switch resourceType {
+		case ResourceOrg:
+			role := m.Authorizer.GetOrgRole(c.Request.Context(), userID, resourceID)
+			c.Set(string(ContextKeyOrgID), resourceID)
+			c.Set(string(ContextKeyOrgRole), string(role))
+		case ResourceProject:
+			role := m.Authorizer.GetProjectRole(c.Request.Context(), userID, resourceID)
+			c.Set(string(ContextKeyProjectID), resourceID)
+			c.Set(string(ContextKeyProjectRole), string(role))
+		}
+
+		c.Next()
+	}
+}

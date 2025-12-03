@@ -3,15 +3,17 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { Modal, ModalFooter, ModalButton } from '../ui';
 import { Input, Textarea, Select } from '../ui';
 
-export default function CreateIncidentModal({ 
-  isOpen, 
-  onClose, 
-  onIncidentCreated 
+export default function CreateIncidentModal({
+  isOpen,
+  onClose,
+  onIncidentCreated
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [services, setServices] = useState([]);
@@ -31,13 +33,19 @@ export default function CreateIncidentModal({
   // Fetch services and escalation policies for dropdowns
   useEffect(() => {
     const fetchData = async () => {
-      if (!session?.access_token) return;
-      
+      if (!session?.access_token || !currentOrg?.id) return;
+
       try {
         apiClient.setToken(session.access_token);
-        
+
+        // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+        const rebacFilters = {
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+
         // Fetch services
-        const servicesData = await apiClient.getAllServices();
+        const servicesData = await apiClient.getServices(rebacFilters);
         const serviceOptions = (servicesData.services || []).map(service => ({
           value: service.id,
           label: service.name
@@ -46,7 +54,7 @@ export default function CreateIncidentModal({
 
         // Fetch groups for selection
         try {
-          const groupsData = await apiClient.getGroups();
+          const groupsData = await apiClient.getGroups(rebacFilters);
           console.log('Fetched groups:', groupsData);
           
           const groupOptions = (groupsData.groups || []).map(group => ({
@@ -88,15 +96,16 @@ export default function CreateIncidentModal({
     if (isOpen) {
       fetchData();
     }
-  }, [isOpen, session]);
+  }, [isOpen, session, currentOrg?.id, currentProject?.id]);
 
   // Fetch escalation policies when group is selected
   useEffect(() => {
     const fetchEscalationPolicies = async () => {
-      if (!session?.access_token || !formData.group_id) {
-        console.log('Clearing escalation policies - no session or group_id:', { 
-          hasSession: !!session?.access_token, 
-          groupId: formData.group_id 
+      if (!session?.access_token || !formData.group_id || !currentOrg?.id) {
+        console.log('Clearing escalation policies - no session or group_id:', {
+          hasSession: !!session?.access_token,
+          groupId: formData.group_id,
+          orgId: currentOrg?.id
         });
         setEscalationPolicies([]);
         return;
@@ -105,8 +114,13 @@ export default function CreateIncidentModal({
       try {
         apiClient.setToken(session.access_token);
         console.log(`🔄 Fetching escalation policies for selected group: ${formData.group_id}`);
-        
-        const groupPolicies = await apiClient.getGroupEscalationPolicies(formData.group_id);
+
+        // ReBAC: Pass org_id for tenant isolation
+        const rebacFilters = {
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+        const groupPolicies = await apiClient.getGroupEscalationPolicies(formData.group_id, rebacFilters);
         console.log(`✅ Group ${formData.group_id} policies response:`, groupPolicies);
         
         // Check if response has the expected structure
@@ -161,7 +175,7 @@ export default function CreateIncidentModal({
     };
 
     fetchEscalationPolicies();
-  }, [formData.group_id, session]);
+  }, [formData.group_id, session, currentOrg?.id, currentProject?.id]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -199,7 +213,7 @@ export default function CreateIncidentModal({
     try {
       apiClient.setToken(session.access_token);
       
-      // Prepare incident data
+      // Prepare incident data with ReBAC context
       const incidentData = {
         title: formData.title.trim(),
         description: formData.description.trim(),
@@ -208,7 +222,9 @@ export default function CreateIncidentModal({
         severity: formData.severity,
         service_id: formData.service_id || undefined,
         group_id: formData.group_id || undefined,
-        escalation_policy_id: formData.escalation_policy_id || undefined
+        escalation_policy_id: formData.escalation_policy_id || undefined,
+        organization_id: currentOrg?.id, // ReBAC: MANDATORY tenant isolation
+        project_id: currentProject?.id || undefined // ReBAC: OPTIONAL project scoping
       };
 
       const createdIncident = await apiClient.createIncident(incidentData);
@@ -298,6 +314,20 @@ export default function CreateIncidentModal({
       }
     >
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Project Indicator */}
+        {currentProject && (
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              <span className="text-sm text-blue-700 dark:text-blue-300">
+                Creating in project: <strong>{currentProject.name}</strong>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Error Display */}
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">

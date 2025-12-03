@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/db"
 	"github.com/vanchonlee/slar/services"
 )
@@ -26,20 +27,44 @@ func NewGroupHandler(groupService *services.GroupService, escalationService *ser
 // GROUP MANAGEMENT ENDPOINTS
 
 // ListGroups retrieves all groups with optional filtering
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) ListGroups(c *gin.Context) {
-	groupType := c.Query("type")
-	activeOnlyParam := c.Query("active_only")
+	// Get ReBAC filters (current_user_id, current_org_id, project_id)
+	filters := authz.GetReBACFilters(c)
 
-	var activeOnly *bool
-	if activeOnlyParam != "" {
-		val, err := strconv.ParseBool(activeOnlyParam)
-		if err == nil {
-			activeOnly = &val
-		}
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
 	}
 
-	groups, err := h.GroupService.ListGroups(groupType, activeOnly)
+	// Add resource-specific filters
+	if groupType := c.Query("type"); groupType != "" {
+		filters["type"] = groupType
+	}
+	if activeOnlyParam := c.Query("active_only"); activeOnlyParam != "" {
+		val, err := strconv.ParseBool(activeOnlyParam)
+		if err == nil {
+			filters["active_only"] = val
+		}
+	}
+	if search := c.Query("search"); search != "" {
+		filters["search"] = search
+	}
+
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	groups, err := h.GroupService.ListGroups(filters)
 	if err != nil {
+		log.Printf("ListGroups error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve groups"})
 		return
 	}
@@ -91,8 +116,35 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		return
 	}
 
+	// ReBAC: Inject organization context (required for tenant isolation)
+	// Priority: request body > query param > header
+	if req.OrganizationID == "" {
+		req.OrganizationID = c.Query("org_id")
+	}
+	if req.OrganizationID == "" {
+		req.OrganizationID = c.GetHeader("X-Org-ID")
+	}
+	if req.OrganizationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide organization_id in request body, org_id query param, or X-Org-ID header",
+		})
+		return
+	}
+
+	// Optional: Inject project context
+	if req.ProjectID == "" {
+		req.ProjectID = c.Query("project_id")
+	}
+	if req.ProjectID == "" {
+		req.ProjectID = c.GetHeader("X-Project-ID")
+	}
+
+	log.Printf("CreateGroup: org_id=%s, project_id=%s, user_id=%s", req.OrganizationID, req.ProjectID, userID)
+
 	group, err := h.GroupService.CreateGroup(req, userID.(string))
 	if err != nil {
+		log.Printf("Failed to create group: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create group"})
 		return
 	}
@@ -321,6 +373,7 @@ func (h *GroupHandler) CreateEscalationPolicy(c *gin.Context) {
 }
 
 // GetGroupEscalationPolicies retrieves escalation policies for a specific group
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) GetGroupEscalationPolicies(c *gin.Context) {
 	groupID := c.Param("id")
 	if groupID == "" {
@@ -328,11 +381,29 @@ func (h *GroupHandler) GetGroupEscalationPolicies(c *gin.Context) {
 		return
 	}
 
+	// =========================================================================
+	// ReBAC: Get security context from middleware
+	// =========================================================================
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
+	}
+
 	// Get active only by default, can be overridden with query param
 	activeOnlyParam := c.Query("active_only")
 	activeOnly := activeOnlyParam != "false" // Default to true unless explicitly set to false
 
-	policiesWithUsage, err := h.EscalationService.GetGroupEscalationPolicies(groupID, activeOnly)
+	// Pass filters to service for ReBAC-aware query
+	filters["group_id"] = groupID
+	filters["active_only"] = activeOnly
+
+	policiesWithUsage, err := h.EscalationService.GetGroupEscalationPoliciesWithFilters(filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve escalation policies"})
 		return
@@ -386,27 +457,44 @@ func (h *GroupHandler) GetUserGroups(c *gin.Context) {
 }
 
 // GetMyGroups retrieves groups for the authenticated user (user-scoped view)
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) GetMyGroups(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+	// Get ReBAC filters (current_user_id, current_org_id, project_id)
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
 		return
 	}
 
-	groupType := c.Query("type")
-	activeOnlyParam := c.Query("active_only")
-
-	var activeOnly *bool
-	if activeOnlyParam != "" {
+	// Add resource-specific filters
+	if groupType := c.Query("type"); groupType != "" {
+		filters["type"] = groupType
+	}
+	if activeOnlyParam := c.Query("active_only"); activeOnlyParam != "" {
 		val, err := strconv.ParseBool(activeOnlyParam)
 		if err == nil {
-			activeOnly = &val
+			filters["active_only"] = val
 		}
 	}
 
-	groups, err := h.GroupService.ListUserScopedGroups(userID.(string), groupType, activeOnly)
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	// Filter to only groups user is a direct member of
+	filters["my_groups_only"] = true
+
+	groups, err := h.GroupService.ListGroups(filters)
 	if err != nil {
+		log.Printf("GetMyGroups error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve groups"})
 		return
 	}
@@ -418,18 +506,38 @@ func (h *GroupHandler) GetMyGroups(c *gin.Context) {
 }
 
 // GetPublicGroups retrieves public groups that user can discover and join
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) GetPublicGroups(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+	// Get ReBAC filters (current_user_id, current_org_id, project_id)
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
 		return
 	}
 
-	groupType := c.Query("type")
+	// Add resource-specific filters
+	if groupType := c.Query("type"); groupType != "" {
+		filters["type"] = groupType
+	}
 
-	groups, err := h.GroupService.ListPublicGroups(userID.(string), groupType)
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	// Filter to only public visibility groups
+	filters["public_only"] = true
+
+	groups, err := h.GroupService.ListGroups(filters)
 	if err != nil {
+		log.Printf("GetPublicGroups error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve public groups"})
 		return
 	}
@@ -441,16 +549,33 @@ func (h *GroupHandler) GetPublicGroups(c *gin.Context) {
 }
 
 // GetCurrentUserGroups retrieves groups for the current authenticated user
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) GetCurrentUserGroups(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+	// Get ReBAC filters (current_user_id, current_org_id, project_id)
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
 		return
 	}
 
-	groups, err := h.GroupService.GetUserGroups(userID.(string))
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	// Filter to only groups user is a direct member of
+	filters["my_groups_only"] = true
+
+	groups, err := h.GroupService.ListGroups(filters)
 	if err != nil {
+		log.Printf("GetCurrentUserGroups error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve user groups"})
 		return
 	}
@@ -462,9 +587,30 @@ func (h *GroupHandler) GetCurrentUserGroups(c *gin.Context) {
 }
 
 // GetEscalationGroups retrieves all groups that can be used for escalation
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *GroupHandler) GetEscalationGroups(c *gin.Context) {
-	groups, err := h.GroupService.GetEscalationGroups()
+	// Get ReBAC filters (current_user_id, current_org_id, project_id)
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
+	}
+
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	groups, err := h.GroupService.GetEscalationGroups(filters)
 	if err != nil {
+		log.Printf("GetEscalationGroups error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve escalation groups"})
 		return
 	}

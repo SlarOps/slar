@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 
 export default function EditGroupModal({ isOpen, onClose, onGroupUpdated, groupId }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [fetchingGroup, setFetchingGroup] = useState(false);
   const [formData, setFormData] = useState({
@@ -17,12 +19,18 @@ export default function EditGroupModal({ isOpen, onClose, onGroupUpdated, groupI
   // Fetch group data when modal opens
   useEffect(() => {
     const fetchGroup = async () => {
-      if (!isOpen || !groupId || !session?.access_token) return;
+      // ReBAC: MUST have session AND org_id for tenant isolation
+      if (!isOpen || !groupId || !session?.access_token || !currentOrg?.id) return;
 
       setFetchingGroup(true);
       try {
         apiClient.setToken(session.access_token);
-        const group = await apiClient.getGroup(groupId);
+        // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+        const rebacFilters = {
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+        const group = await apiClient.getGroup(groupId, rebacFilters);
 
         setFormData({
           name: group.name || '',
@@ -37,7 +45,7 @@ export default function EditGroupModal({ isOpen, onClose, onGroupUpdated, groupI
     };
 
     fetchGroup();
-  }, [isOpen, groupId, session]);
+  }, [isOpen, groupId, session, currentOrg?.id, currentProject?.id]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -46,7 +54,7 @@ export default function EditGroupModal({ isOpen, onClose, onGroupUpdated, groupI
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!session?.access_token) {
+    if (!session?.access_token || !currentOrg?.id) {
       alert('Not authenticated');
       return;
     }
@@ -54,8 +62,13 @@ export default function EditGroupModal({ isOpen, onClose, onGroupUpdated, groupI
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
 
-      const result = await apiClient.updateGroup(groupId, formData);
+      const result = await apiClient.updateGroup(groupId, formData, rebacFilters);
 
       onGroupUpdated(result);
       onClose();

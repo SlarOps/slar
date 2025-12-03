@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { toast, ConfirmationModal } from '../ui';
 import IntegrationModal from '../integrations/IntegrationModal';
@@ -29,6 +30,7 @@ import {
 
 export default function IntegrationsTab({ groupId }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -52,14 +54,21 @@ export default function IntegrationsTab({ groupId }) {
   useEffect(() => {
     loadIntegrations();
     loadDeployments();
-  }, []);
+  }, [currentOrg?.id, currentProject?.id]);
 
   const loadIntegrations = async () => {
     try {
-      if (!session?.access_token) return;
+      if (!session?.access_token || !currentOrg?.id) return;
 
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getIntegrations({ active_only: true });
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id }),
+        active_only: true
+      };
+      const response = await apiClient.getIntegrations(rebacFilters);
       setIntegrations(response.integrations || []);
     } catch (error) {
       console.error('Failed to load integrations:', error);
@@ -100,11 +109,16 @@ export default function IntegrationsTab({ groupId }) {
   };
 
   const confirmDeleteIntegration = async () => {
-    if (!integrationToDelete) return;
+    if (!integrationToDelete || !currentOrg?.id) return;
 
     try {
       apiClient.setToken(session.access_token);
-      await apiClient.deleteIntegration(integrationToDelete.id);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      await apiClient.deleteIntegration(integrationToDelete.id, rebacFilters);
 
       await loadIntegrations();
       toast.success('Integration deleted successfully');
@@ -173,10 +187,16 @@ export default function IntegrationsTab({ groupId }) {
   // Monitor deployment handlers
   const loadDeployments = async () => {
     try {
-      if (!session?.access_token) return;
+      if (!session?.access_token || !currentOrg?.id) return;
 
       apiClient.setToken(session.access_token);
-      const deploymentsList = await apiClient.getMonitorDeployments();
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const deploymentsList = await apiClient.getMonitorDeployments(rebacFilters);
       setDeployments(deploymentsList || []);
     } catch (error) {
       console.error('Failed to load deployments:', error);

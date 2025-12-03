@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Modal, ModalFooter, ModalButton, toast } from '../ui';
 
@@ -11,9 +12,10 @@ export default function CreateServiceScheduleModal({
   service, 
   groupId, 
   members = [],
-  onScheduleCreated 
+  onScheduleCreated
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     user_id: '',
@@ -30,10 +32,21 @@ export default function CreateServiceScheduleModal({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       // Create service-specific schedule
       const scheduleData = {
         ...formData,
@@ -42,8 +55,8 @@ export default function CreateServiceScheduleModal({
         schedule_scope: 'service',
         service_id: service.id
       };
-      
-      const response = await apiClient.createServiceSchedule(groupId, service.id, scheduleData);
+
+      const response = await apiClient.createServiceSchedule(groupId, service.id, scheduleData, rebacFilters);
       
       if (response.schedule) {
         onScheduleCreated && onScheduleCreated(response.schedule);

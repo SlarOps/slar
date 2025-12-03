@@ -37,8 +37,10 @@ type Incident struct {
 	EscalationStatus       string     `json:"escalation_status"`
 
 	// Grouping & Organization
-	GroupID  string `json:"group_id,omitempty"`
-	APIKeyID string `json:"api_key_id,omitempty"`
+	GroupID        string `json:"group_id,omitempty"`
+	APIKeyID       string `json:"api_key_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
+	ProjectID      string `json:"project_id,omitempty"`      // Project scoping
 
 	// Incident details
 	Severity     string                 `json:"severity,omitempty"`
@@ -112,6 +114,7 @@ type CreateIncidentRequest struct {
 	Severity           string                 `json:"severity,omitempty"`
 	Labels             map[string]interface{} `json:"labels,omitempty"`
 	CustomFields       map[string]interface{} `json:"custom_fields,omitempty"`
+	ProjectID          string                 `json:"project_id,omitempty"` // Project scoping - org_id computed from project
 }
 
 // UpdateIncidentRequest for updating an incident

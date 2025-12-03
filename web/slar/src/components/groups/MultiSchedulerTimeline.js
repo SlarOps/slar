@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import ScheduleTimeline from './ScheduleTimeline';
 import ConfirmationModal from './ConfirmationModal';
@@ -11,6 +12,7 @@ import toast from 'react-hot-toast';
 
 export default function MultiSchedulerTimeline({ groupId, members, onEditScheduler }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [schedulers, setSchedulers] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +45,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
   useEffect(() => {
     fetchSchedulerTimelines();
-  }, [groupId, session]);
+  }, [groupId, session, currentOrg?.id, currentProject?.id]);
 
   // Auto-refresh timeline when shifts data changes
   useEffect(() => {
@@ -164,7 +166,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
       async () => {
         setConfirmationModal(prev => ({ ...prev, isLoading: true }));
 
-        if (!session?.access_token) {
+        if (!session?.access_token || !currentOrg?.id) {
           toast.error('Not authenticated');
           closeConfirmation();
           return;
@@ -178,7 +180,12 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
         try {
           apiClient.setToken(session.access_token);
-          await apiClient.deleteOverride(groupId, shift.override_id);
+          // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+          const rebacFilters = {
+            org_id: currentOrg.id,
+            ...(currentProject?.id && { project_id: currentProject.id })
+          };
+          await apiClient.deleteOverride(groupId, shift.override_id, rebacFilters);
 
           // Close the detail modal
           setDetailModal({ isOpen: false, shift: null, originalMember: null, currentMember: null });
@@ -225,7 +232,7 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
       async () => {
         setConfirmationModal(prev => ({ ...prev, isLoading: true }));
 
-        if (!session?.access_token) {
+        if (!session?.access_token || !currentOrg?.id) {
           toast.error('Not authenticated');
           closeConfirmation();
           return;
@@ -233,7 +240,12 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
 
         try {
           apiClient.setToken(session.access_token);
-          await apiClient.deleteScheduler(groupId, schedulerId);
+          // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+          const rebacFilters = {
+            org_id: currentOrg.id,
+            ...(currentProject?.id && { project_id: currentProject.id })
+          };
+          await apiClient.deleteScheduler(groupId, schedulerId, rebacFilters);
 
           // Remove scheduler from state
           setSchedulers(prev => prev.filter(s => s.id !== schedulerId));
@@ -259,7 +271,8 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
   };
 
   const fetchSchedulerTimelines = async () => {
-    if (!session?.access_token || !groupId) {
+    // ReBAC: MUST have session AND org_id for tenant isolation
+    if (!session?.access_token || !groupId || !currentOrg?.id) {
       setLoading(false);
       return;
     }
@@ -268,10 +281,16 @@ export default function MultiSchedulerTimeline({ groupId, members, onEditSchedul
     try {
       apiClient.setToken(session.access_token);
 
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       // Fetch schedulers and shifts for the group
       const [schedulersResponse, shiftsResponse] = await Promise.all([
-        apiClient.getGroupSchedulers(groupId),
-        apiClient.getGroupShifts(groupId)
+        apiClient.getGroupSchedulers(groupId, rebacFilters),
+        apiClient.getGroupShifts(groupId, rebacFilters)
       ]);
 
       setSchedulers(schedulersResponse.schedulers || []);

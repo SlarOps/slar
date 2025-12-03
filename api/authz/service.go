@@ -89,6 +89,30 @@ func (s *OrgService) ListUserOrgs(ctx context.Context, userID string) ([]Organiz
 	return s.repo.ListByUser(ctx, userID)
 }
 
+// OrganizationWithRole represents an organization with the user's role
+type OrganizationWithRole struct {
+	Organization
+	UserRole Role `json:"user_role"`
+}
+
+// ListUserOrgsWithRole returns all organizations a user has access to with their role
+func (s *OrgService) ListUserOrgsWithRole(ctx context.Context, userID string) ([]OrganizationWithRole, error) {
+	orgs, err := s.repo.ListByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]OrganizationWithRole, len(orgs))
+	for i, org := range orgs {
+		role := s.authz.GetOrgRole(ctx, userID, org.ID)
+		result[i] = OrganizationWithRole{
+			Organization: org,
+			UserRole:     role,
+		}
+	}
+	return result, nil
+}
+
 // UpdateOrgInput represents input for updating an organization
 type UpdateOrgInput struct {
 	Name        *string `json:"name,omitempty"`

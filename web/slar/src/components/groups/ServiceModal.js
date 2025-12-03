@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Modal, ModalFooter, ModalButton, Input, Textarea, Checkbox, CheckboxGroup, toast } from '../ui';
 import EscalationPolicySelector from './EscalationPolicySelector';
@@ -17,6 +18,7 @@ export default function ServiceModal({
   onServiceUpdated 
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -94,21 +96,32 @@ export default function ServiceModal({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       let response;
       if (isEditMode) {
         // Update existing service
-        response = await apiClient.updateService(service.id, formData);
+        response = await apiClient.updateService(service.id, formData, rebacFilters);
         if (response.service) {
           onServiceUpdated && onServiceUpdated(response.service);
           toast.success('Service updated successfully!');
         }
       } else {
         // Create new service
-        response = await apiClient.createService(groupId, formData);
+        response = await apiClient.createService(groupId, formData, rebacFilters);
         if (response.service) {
           onServiceCreated && onServiceCreated(response.service);
           toast.success('Service created successfully!');

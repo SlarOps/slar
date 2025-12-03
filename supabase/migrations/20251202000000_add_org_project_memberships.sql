@@ -74,6 +74,16 @@ CREATE INDEX IF NOT EXISTS idx_groups_org ON groups(organization_id);
 CREATE INDEX IF NOT EXISTS idx_groups_project ON groups(project_id);
 
 -- ============================================================================
+-- UPDATE SERVICES TABLE - Add project_id for direct filtering
+-- ============================================================================
+ALTER TABLE services
+ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
+
+COMMENT ON COLUMN services.project_id IS 'Direct link to project for filtering. Falls back to group.project_id if NULL.';
+
+-- ============================================================================
 -- HELPER FUNCTIONS
 -- ============================================================================
 

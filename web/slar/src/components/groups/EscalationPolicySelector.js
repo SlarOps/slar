@@ -2,36 +2,44 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Menu, MenuButton, MenuItems, MenuItem } from '@headlessui/react';
 import { ChevronDownIcon } from '@heroicons/react/20/solid';
 
-export default function EscalationPolicySelector({ 
-  groupId, 
-  selectedPolicyId, 
-  onSelect, 
+export default function EscalationPolicySelector({
+  groupId,
+  selectedPolicyId,
+  onSelect,
   showQuickCreate = false,
   onQuickCreate = null,
   required = false,
-  disabled = false 
+  disabled = false
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (groupId && session?.access_token) {
+    // ReBAC: MUST have session AND org_id for tenant isolation
+    if (groupId && session?.access_token && currentOrg?.id) {
       fetchPolicies();
     }
-  }, [groupId, session]);
+  }, [groupId, session, currentOrg?.id, currentProject?.id]);
 
   const fetchPolicies = async () => {
     setLoading(true);
     setError(null);
     try {
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getGroupEscalationPolicies(groupId);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const response = await apiClient.getGroupEscalationPolicies(groupId, rebacFilters);
       setPolicies(response.policies || []);
     } catch (error) {
       console.error('Failed to fetch escalation policies:', error);

@@ -312,15 +312,16 @@ func (s *SchedulerService) CreateScheduler(groupID string, req db.CreateSchedule
 	}
 
 	scheduler := db.Scheduler{
-		Name:         uniqueName,  // Unique internal name
-		DisplayName:  displayName, // User-friendly display name
-		GroupID:      groupID,
-		Description:  req.Description,
-		IsActive:     true,
-		RotationType: req.RotationType,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    createdBy,
+		Name:           uniqueName,  // Unique internal name
+		DisplayName:    displayName, // User-friendly display name
+		GroupID:        groupID,
+		Description:    req.Description,
+		IsActive:       true,
+		RotationType:   req.RotationType,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		CreatedBy:      createdBy,
+		OrganizationID: req.OrganizationID,
 	}
 
 	// Set default rotation type
@@ -333,13 +334,19 @@ func (s *SchedulerService) CreateScheduler(groupID string, req db.CreateSchedule
 		log.Printf("🔄 Generated unique name: '%s' -> '%s' for group %s", req.Name, uniqueName, groupID)
 	}
 
+	// Handle organization_id - convert empty string to nil for SQL
+	var organizationIDParam interface{}
+	if scheduler.OrganizationID != "" {
+		organizationIDParam = scheduler.OrganizationID
+	}
+
 	// Insert and get the auto-generated ID
 	err = s.PG.QueryRow(`
-		INSERT INTO schedulers (name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO schedulers (name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
 	`, scheduler.Name, scheduler.DisplayName, scheduler.GroupID, scheduler.Description,
-		scheduler.IsActive, scheduler.RotationType, scheduler.CreatedAt, scheduler.UpdatedAt, scheduler.CreatedBy).Scan(&scheduler.ID)
+		scheduler.IsActive, scheduler.RotationType, scheduler.CreatedAt, scheduler.UpdatedAt, scheduler.CreatedBy, organizationIDParam).Scan(&scheduler.ID)
 
 	if err != nil {
 		return scheduler, fmt.Errorf("failed to create scheduler: %w", err)
@@ -371,15 +378,16 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 
 	// Create scheduler
 	scheduler := db.Scheduler{
-		Name:         uniqueName,  // Unique internal name
-		DisplayName:  displayName, // User-friendly display name
-		GroupID:      groupID,
-		Description:  schedulerReq.Description,
-		IsActive:     true,
-		RotationType: schedulerReq.RotationType,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    createdBy,
+		Name:           uniqueName,  // Unique internal name
+		DisplayName:    displayName, // User-friendly display name
+		GroupID:        groupID,
+		Description:    schedulerReq.Description,
+		IsActive:       true,
+		RotationType:   schedulerReq.RotationType,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		CreatedBy:      createdBy,
+		OrganizationID: schedulerReq.OrganizationID,
 	}
 
 	// Set default rotation type
@@ -392,13 +400,19 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 		log.Printf("🔄 Generated unique name: '%s' -> '%s' for group %s", schedulerReq.Name, uniqueName, groupID)
 	}
 
+	// Handle organization_id - convert empty string to nil for SQL
+	var organizationIDParam interface{}
+	if scheduler.OrganizationID != "" {
+		organizationIDParam = scheduler.OrganizationID
+	}
+
 	// Insert scheduler and get auto-generated ID
 	err = tx.QueryRow(`
-		INSERT INTO schedulers (name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO schedulers (name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
 	`, scheduler.Name, scheduler.DisplayName, scheduler.GroupID, scheduler.Description,
-		scheduler.IsActive, scheduler.RotationType, scheduler.CreatedAt, scheduler.UpdatedAt, scheduler.CreatedBy).Scan(&scheduler.ID)
+		scheduler.IsActive, scheduler.RotationType, scheduler.CreatedAt, scheduler.UpdatedAt, scheduler.CreatedBy, organizationIDParam).Scan(&scheduler.ID)
 
 	if err != nil {
 		log.Println("Error creating scheduler:", err)
@@ -409,18 +423,19 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 	var createdShifts []db.Shift
 	for _, shiftReq := range shifts {
 		shift := db.Shift{
-			SchedulerID:  scheduler.ID, // Link to the scheduler
-			GroupID:      groupID,
-			UserID:       shiftReq.UserID,
-			ShiftType:    shiftReq.ShiftType,
-			StartTime:    shiftReq.StartTime,
-			EndTime:      shiftReq.EndTime,
-			IsActive:     true,
-			IsRecurring:  shiftReq.IsRecurring,
-			RotationDays: shiftReq.RotationDays,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-			CreatedBy:    createdBy,
+			SchedulerID:    scheduler.ID, // Link to the scheduler
+			GroupID:        groupID,
+			UserID:         shiftReq.UserID,
+			ShiftType:      shiftReq.ShiftType,
+			StartTime:      shiftReq.StartTime,
+			EndTime:        shiftReq.EndTime,
+			IsActive:       true,
+			IsRecurring:    shiftReq.IsRecurring,
+			RotationDays:   shiftReq.RotationDays,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+			CreatedBy:      createdBy,
+			OrganizationID: scheduler.OrganizationID, // Inherit from scheduler
 		}
 
 		// Set default values
@@ -438,15 +453,15 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 
 		// Insert shift and get auto-generated ID
 		err = tx.QueryRow(`
-			INSERT INTO shifts (scheduler_id, group_id, user_id, shift_type, start_time, end_time, 
+			INSERT INTO shifts (scheduler_id, group_id, user_id, shift_type, start_time, end_time,
 								is_active, is_recurring, rotation_days, service_id, schedule_scope,
-								created_at, updated_at, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+								created_at, updated_at, created_by, organization_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 			RETURNING id
 		`, shift.SchedulerID, shift.GroupID, shift.UserID, shift.ShiftType,
 			shift.StartTime, shift.EndTime, shift.IsActive, shift.IsRecurring,
 			shift.RotationDays, shift.ServiceID, shift.ScheduleScope,
-			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy).Scan(&shift.ID)
+			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy, organizationIDParam).Scan(&shift.ID)
 
 		if err != nil {
 			log.Println("Error creating shift:", err)
@@ -467,7 +482,7 @@ func (s *SchedulerService) CreateSchedulerWithShifts(groupID string, schedulerRe
 // GetSchedulersByGroup gets all schedulers for a group
 func (s *SchedulerService) GetSchedulersByGroup(groupID string) ([]db.Scheduler, error) {
 	query := `
-		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id
 		FROM schedulers
 		WHERE group_id = $1 AND is_active = true
 		ORDER BY name ASC
@@ -482,13 +497,86 @@ func (s *SchedulerService) GetSchedulersByGroup(groupID string) ([]db.Scheduler,
 	var schedulers []db.Scheduler
 	for rows.Next() {
 		var scheduler db.Scheduler
+		var organizationID sql.NullString
 		err := rows.Scan(
 			&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
 			&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
-			&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+			&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
 		)
 		if err != nil {
 			continue
+		}
+		if organizationID.Valid {
+			scheduler.OrganizationID = organizationID.String
+		}
+		schedulers = append(schedulers, scheduler)
+	}
+
+	return schedulers, nil
+}
+
+// GetSchedulersByGroupWithFilters gets all schedulers for a group with ReBAC filtering
+// ReBAC: MANDATORY Tenant Isolation with organization context
+func (s *SchedulerService) GetSchedulersByGroupWithFilters(filters map[string]interface{}) ([]db.Scheduler, error) {
+	// ReBAC: Get user context
+	currentUserID, hasCurrentUser := filters["current_user_id"].(string)
+	if !hasCurrentUser || currentUserID == "" {
+		return []db.Scheduler{}, nil
+	}
+
+	// ReBAC: Get organization context (MANDATORY for Tenant Isolation)
+	currentOrgID, hasOrgContext := filters["current_org_id"].(string)
+	if !hasOrgContext || currentOrgID == "" {
+		fmt.Printf("WARNING: GetSchedulersByGroupWithFilters called without organization context - returning empty\n")
+		return []db.Scheduler{}, nil
+	}
+
+	// Get group_id from filters
+	groupID, hasGroupID := filters["group_id"].(string)
+	if !hasGroupID || groupID == "" {
+		return []db.Scheduler{}, nil
+	}
+
+	// ReBAC: Query with Tenant Isolation
+	// User must be a member of the group to see its schedulers
+	query := `
+		SELECT s.id, s.name, s.display_name, s.group_id, s.description, s.is_active,
+		       s.rotation_type, s.created_at, s.updated_at, s.created_by, s.organization_id
+		FROM schedulers s
+		WHERE s.group_id = $1
+		  AND s.is_active = true
+		  -- TENANT ISOLATION (MANDATORY)
+		  AND s.organization_id = $2
+		  -- ReBAC: User must have access to the group
+		  AND EXISTS (
+			SELECT 1 FROM memberships m
+			WHERE m.user_id = $3
+			AND m.resource_type = 'group'
+			AND m.resource_id = s.group_id
+		  )
+		ORDER BY s.name ASC
+	`
+
+	rows, err := s.PG.Query(query, groupID, currentOrgID, currentUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query schedulers: %w", err)
+	}
+	defer rows.Close()
+
+	var schedulers []db.Scheduler
+	for rows.Next() {
+		var scheduler db.Scheduler
+		var organizationID sql.NullString
+		err := rows.Scan(
+			&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
+			&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
+			&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
+		)
+		if err != nil {
+			continue
+		}
+		if organizationID.Valid {
+			scheduler.OrganizationID = organizationID.String
 		}
 		schedulers = append(schedulers, scheduler)
 	}
@@ -500,19 +588,23 @@ func (s *SchedulerService) GetSchedulersByGroup(groupID string) ([]db.Scheduler,
 func (s *SchedulerService) GetOrCreateDefaultScheduler(groupID, createdBy string) (db.Scheduler, error) {
 	// First try to get existing active default scheduler
 	var scheduler db.Scheduler
+	var organizationID sql.NullString
 	err := s.PG.QueryRow(`
-		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id
 		FROM schedulers
 		WHERE group_id = $1 AND name = 'default' AND is_active = true
 		LIMIT 1
 	`, groupID).Scan(
 		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
 		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
-		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
 	)
 
 	if err == nil {
 		// Found existing active default scheduler
+		if organizationID.Valid {
+			scheduler.OrganizationID = organizationID.String
+		}
 		return scheduler, nil
 	}
 
@@ -523,14 +615,14 @@ func (s *SchedulerService) GetOrCreateDefaultScheduler(groupID, createdBy string
 
 	// No active default scheduler found, check if there's an inactive one to reactivate
 	err = s.PG.QueryRow(`
-		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id
 		FROM schedulers
 		WHERE group_id = $1 AND name = 'default' AND is_active = false
 		LIMIT 1
 	`, groupID).Scan(
 		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
 		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
-		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
 	)
 
 	if err == nil {
@@ -545,6 +637,9 @@ func (s *SchedulerService) GetOrCreateDefaultScheduler(groupID, createdBy string
 			return scheduler, fmt.Errorf("failed to reactivate default scheduler: %w", err)
 		}
 
+		if organizationID.Valid {
+			scheduler.OrganizationID = organizationID.String
+		}
 		scheduler.IsActive = true
 		scheduler.UpdatedAt = time.Now()
 		return scheduler, nil
@@ -617,20 +712,25 @@ func (s *SchedulerService) DeleteScheduler(schedulerID string) error {
 // GetSchedulerWithShifts gets a scheduler with its shifts
 func (s *SchedulerService) GetSchedulerWithShifts(schedulerID string) (db.Scheduler, error) {
 	var scheduler db.Scheduler
+	var organizationID sql.NullString
 
 	// Get scheduler
 	err := s.PG.QueryRow(`
-		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id
 		FROM schedulers
 		WHERE id = $1 AND is_active = true
 	`, schedulerID).Scan(
 		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
 		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
-		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
 	)
 
 	if err != nil {
 		return scheduler, fmt.Errorf("scheduler not found: %w", err)
+	}
+
+	if organizationID.Valid {
+		scheduler.OrganizationID = organizationID.String
 	}
 
 	// Get shifts
@@ -859,15 +959,19 @@ func (s *SchedulerService) UpdateSchedulerWithShifts(schedulerID string, schedul
 
 	// Get existing scheduler
 	var scheduler db.Scheduler
+	var organizationID sql.NullString
 	err = tx.QueryRow(`
-		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by
+		SELECT id, name, display_name, group_id, description, is_active, rotation_type, created_at, updated_at, created_by, organization_id
 		FROM schedulers
 		WHERE id = $1 AND is_active = true
 	`, schedulerID).Scan(
 		&scheduler.ID, &scheduler.Name, &scheduler.DisplayName, &scheduler.GroupID,
 		&scheduler.Description, &scheduler.IsActive, &scheduler.RotationType,
-		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy,
+		&scheduler.CreatedAt, &scheduler.UpdatedAt, &scheduler.CreatedBy, &organizationID,
 	)
+	if organizationID.Valid {
+		scheduler.OrganizationID = organizationID.String
+	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -914,20 +1018,28 @@ func (s *SchedulerService) UpdateSchedulerWithShifts(schedulerID string, schedul
 
 	// Create new shifts
 	var createdShifts []db.Shift
+
+	// Handle organization_id - convert empty string to nil for SQL
+	var organizationIDParam interface{}
+	if scheduler.OrganizationID != "" {
+		organizationIDParam = scheduler.OrganizationID
+	}
+
 	for _, shiftReq := range shifts {
 		shift := db.Shift{
-			SchedulerID:  schedulerID,
-			GroupID:      scheduler.GroupID,
-			UserID:       shiftReq.UserID,
-			ShiftType:    shiftReq.ShiftType,
-			StartTime:    shiftReq.StartTime,
-			EndTime:      shiftReq.EndTime,
-			IsActive:     true,
-			IsRecurring:  shiftReq.IsRecurring,
-			RotationDays: shiftReq.RotationDays,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-			CreatedBy:    updatedBy,
+			SchedulerID:    schedulerID,
+			GroupID:        scheduler.GroupID,
+			UserID:         shiftReq.UserID,
+			ShiftType:      shiftReq.ShiftType,
+			StartTime:      shiftReq.StartTime,
+			EndTime:        shiftReq.EndTime,
+			IsActive:       true,
+			IsRecurring:    shiftReq.IsRecurring,
+			RotationDays:   shiftReq.RotationDays,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+			CreatedBy:      updatedBy,
+			OrganizationID: scheduler.OrganizationID, // Inherit from scheduler
 		}
 
 		// Set default values
@@ -944,16 +1056,16 @@ func (s *SchedulerService) UpdateSchedulerWithShifts(schedulerID string, schedul
 			shift.ServiceID = shiftReq.ServiceID
 		}
 
-		// Insert shift with schedule_scope
+		// Insert shift with schedule_scope and organization_id
 		err = tx.QueryRow(`
 			INSERT INTO shifts (scheduler_id, group_id, user_id, shift_type, start_time, end_time,
 				is_active, is_recurring, rotation_days, service_id, schedule_scope,
-				created_at, updated_at, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+				created_at, updated_at, created_by, organization_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 			RETURNING id
 		`, shift.SchedulerID, shift.GroupID, shift.UserID, shift.ShiftType, shift.StartTime, shift.EndTime,
 			shift.IsActive, shift.IsRecurring, shift.RotationDays, shift.ServiceID, shift.ScheduleScope,
-			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy).Scan(&shift.ID)
+			shift.CreatedAt, shift.UpdatedAt, shift.CreatedBy, organizationIDParam).Scan(&shift.ID)
 
 		if err != nil {
 			log.Printf("Error creating shift: %v", err)

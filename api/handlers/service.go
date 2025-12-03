@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/db"
 	"github.com/vanchonlee/slar/services"
 )
@@ -153,18 +154,43 @@ func (h *ServiceHandler) GetServiceByRoutingKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"service": service})
 }
 
-// ListAllServices returns all services across all groups (admin function)
+// ListAllServices returns all services with ReBAC filtering
 // GET /services
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *ServiceHandler) ListAllServices(c *gin.Context) {
-	// Parse query parameters
-	isActiveStr := c.Query("is_active")
-	var isActive *bool
-	if isActiveStr != "" {
-		val := isActiveStr == "true"
-		isActive = &val
+	// =========================================================================
+	// ReBAC: Get security context from middleware
+	// =========================================================================
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
 	}
 
-	services, err := h.ServiceService.ListAllServices(isActive)
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	// Parse resource-specific query parameters
+	if isActiveStr := c.Query("is_active"); isActiveStr != "" {
+		filters["is_active"] = isActiveStr == "true"
+	}
+	if search := c.Query("search"); search != "" {
+		filters["search"] = search
+	}
+	if groupID := c.Query("group_id"); groupID != "" {
+		filters["group_id"] = groupID
+	}
+
+	services, err := h.ServiceService.ListServices(filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list services: " + err.Error()})
 		return

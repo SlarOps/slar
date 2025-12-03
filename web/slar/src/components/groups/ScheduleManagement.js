@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { createScheduleWorkflow, createSchedulerWorkflow, updateSchedulerWorkflow } from '../../services/scheduleService';
 import { createOptimizedSchedulerWorkflow } from '../../services/optimizedScheduleService';
@@ -50,6 +51,7 @@ function formatScheduleTime(startTime, endTime) {
 
 export default function ScheduleManagement({ groupId, members }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateSchedule, setShowCreateSchedule] = useState(false);
@@ -98,7 +100,8 @@ export default function ScheduleManagement({ groupId, members }) {
 
   // Helper function to fetch schedules and rotations
   const fetchSchedules = async () => {
-    if (!session?.access_token || !groupId) {
+    // ReBAC: MUST have session AND org_id for tenant isolation
+    if (!session?.access_token || !groupId || !currentOrg?.id) {
       setLoading(false);
       return;
     }
@@ -107,11 +110,17 @@ export default function ScheduleManagement({ groupId, members }) {
     try {
       // Set authentication token
       apiClient.setToken(session.access_token);
-      
-              // Fetch group shifts (all shifts with scheduler context)
-        const shiftsData = await apiClient.getGroupShifts(groupId);
-        console.log('🔍 Shifts data:', shiftsData);
-        setSchedules(shiftsData.shifts || []);
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      // Fetch group shifts (all shifts with scheduler context)
+      const shiftsData = await apiClient.getGroupShifts(groupId, rebacFilters);
+      console.log('🔍 Shifts data:', shiftsData);
+      setSchedules(shiftsData.shifts || []);
     } catch (error) {
       console.error('Failed to fetch schedules:', error);
       setSchedules([]);
@@ -122,7 +131,7 @@ export default function ScheduleManagement({ groupId, members }) {
 
   useEffect(() => {
     fetchSchedules();
-  }, [groupId, session]);
+  }, [groupId, session, currentOrg?.id, currentProject?.id]);
 
   const currentOnCall = schedules.find(schedule => {
     const now = new Date();
@@ -140,7 +149,7 @@ export default function ScheduleManagement({ groupId, members }) {
 
   // NEW: Handle edit scheduler (with progressive loading)
   const handleEditScheduler = async (schedulerId) => {
-    if (!session?.access_token) {
+    if (!session?.access_token || !currentOrg?.id) {
       toast.error('Not authenticated');
       return;
     }
@@ -152,16 +161,21 @@ export default function ScheduleManagement({ groupId, members }) {
     try {
       // Fetch scheduler with shifts in background
       apiClient.setToken(session.access_token);
-      const schedulerData = await apiClient.getSchedulerWithShifts(groupId, schedulerId);
-      
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const schedulerData = await apiClient.getSchedulerWithShifts(groupId, schedulerId, rebacFilters);
+
       console.log('📝 Fetched scheduler for editing:', schedulerData);
-      
+
       // Update with actual data
       setEditingScheduler({ ...schedulerData.scheduler, loading: false });
     } catch (error) {
       console.error('Failed to fetch scheduler:', error);
       toast.error('Failed to load scheduler data');
-      
+
       // Close modal on error
       setShowEditSchedule(false);
       setEditingScheduler(null);
@@ -176,8 +190,8 @@ export default function ScheduleManagement({ groupId, members }) {
       'Are you sure you want to delete this schedule? This action cannot be undone.',
       async () => {
         setConfirmationModal(prev => ({ ...prev, isLoading: true }));
-        
-        if (!session?.access_token) {
+
+        if (!session?.access_token || !currentOrg?.id) {
           toast.error('Not authenticated');
           closeConfirmation();
           return;
@@ -185,8 +199,13 @@ export default function ScheduleManagement({ groupId, members }) {
 
         try {
           apiClient.setToken(session.access_token);
-          await apiClient.deleteSchedule(scheduleId);
-          
+          // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+          const rebacFilters = {
+            org_id: currentOrg.id,
+            ...(currentProject?.id && { project_id: currentProject.id })
+          };
+          await apiClient.deleteSchedule(scheduleId, rebacFilters);
+
           // Optimistically update UI
           setSchedules(prev => prev.filter(s => s.id !== scheduleId));
           toast.success('Schedule deleted successfully');
@@ -212,26 +231,32 @@ export default function ScheduleManagement({ groupId, members }) {
   };
 
   const handleShiftSwapRequested = async (swapRequest) => {
-    if (!session?.access_token) {
+    if (!session?.access_token || !currentOrg?.id) {
       throw new Error('Not authenticated');
     }
 
     try {
       // Use the new shift swap API endpoint
       apiClient.setToken(session.access_token);
-      
-      const response = await apiClient.swapSchedules(groupId, swapRequest);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const response = await apiClient.swapSchedules(groupId, swapRequest, rebacFilters);
+
       if (response.success) {
         // Refresh schedules to show the swap
-        const schedulesData = await apiClient.getGroupSchedules(groupId);
+        const schedulesData = await apiClient.getGroupSchedules(groupId, rebacFilters);
         setSchedules(schedulesData.schedules || []);
-        
-        toast.success('✅ Shifts swapped successfully!');
+
+        toast.success('Shifts swapped successfully!');
       } else {
         throw new Error(response.message || 'Swap failed');
       }
-      
+
     } catch (error) {
       console.error('Failed to swap shifts:', error);
       throw error;
@@ -239,18 +264,24 @@ export default function ScheduleManagement({ groupId, members }) {
   };
 
   const handleOverrideCreated = async (overrideRequest) => {
-    if (!session?.access_token) {
+    if (!session?.access_token || !currentOrg?.id) {
       throw new Error('Not authenticated');
     }
 
     try {
       // Set authentication token
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       console.log('🔍 Override Request Data:', overrideRequest);
-      
+
       // Create override using API client
-      const result = await apiClient.createOverride(groupId, overrideRequest);
+      const result = await apiClient.createOverride(groupId, overrideRequest, rebacFilters);
       console.log('✅ Override created:', result);
 
       // Refresh schedules to show the override
@@ -268,8 +299,8 @@ export default function ScheduleManagement({ groupId, members }) {
       'Are you sure you want to remove this override? The original assignment will be restored.',
       async () => {
         setConfirmationModal(prev => ({ ...prev, isLoading: true }));
-        
-        if (!session?.access_token) {
+
+        if (!session?.access_token || !currentOrg?.id) {
           toast.error('Not authenticated');
           closeConfirmation();
           return;
@@ -278,9 +309,15 @@ export default function ScheduleManagement({ groupId, members }) {
         try {
           // Set authentication token
           apiClient.setToken(session.access_token);
-          
+
+          // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+          const rebacFilters = {
+            org_id: currentOrg.id,
+            ...(currentProject?.id && { project_id: currentProject.id })
+          };
+
           // Delete override using API client
-          await apiClient.deleteOverride(groupId , overrideId);
+          await apiClient.deleteOverride(groupId, overrideId, rebacFilters);
           console.log('✅ Override removed:', overrideId);
 
           // Refresh schedules to show the change

@@ -9,6 +9,7 @@ import CreateIncidentModal from '../../components/incidents/CreateIncidentModal'
 import IncidentDetailModal from '../../components/incidents/IncidentDetailModal';
 import IncidentFilters from '../../components/incidents/IncidentFilters';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 
 const INITIAL_FILTERS = {
@@ -25,6 +26,7 @@ const INITIAL_FILTERS = {
 
 export default function IncidentsPage() {
   const { user, session } = useAuth();
+  const { currentOrg, currentProject, loading: orgLoading } = useOrg();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('triggered');
@@ -50,7 +52,8 @@ export default function IncidentsPage() {
   // Fetch real incident stats from API
   useEffect(() => {
     const fetchStats = async () => {
-      if (!session?.access_token) {
+      // ReBAC: MUST have both session AND org_id for tenant isolation
+      if (!session?.access_token || !currentOrg?.id) {
         setLoading(false);
         return;
       }
@@ -59,9 +62,14 @@ export default function IncidentsPage() {
         setLoading(true);
         // Set authentication token
         apiClient.setToken(session.access_token);
-        
-        // Fetch incidents from API
-        const data = await apiClient.getIncidents();
+
+        // Fetch incidents from API with org and project filter
+        // ReBAC: org_id is MANDATORY, project_id is OPTIONAL
+        const filterParams = {
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+        const data = await apiClient.getIncidents('', filterParams);
         
         // Calculate stats from incidents data
         const incidents = data.incidents || [];
@@ -92,37 +100,27 @@ export default function IncidentsPage() {
     };
 
     fetchStats();
-  }, [session, refreshTrigger]);
+  }, [session, refreshTrigger, currentOrg?.id, currentProject?.id]);
 
   // Fetch incidents based on active tab
   useEffect(() => {
     const fetchIncidents = async () => {
-      if (!session?.access_token) return;
+      // ReBAC: MUST have both session AND org_id for tenant isolation
+      if (!session?.access_token || !currentOrg?.id) return;
 
       try {
         setLoading(true);
         apiClient.setToken(session.access_token);
-        
-        let statusFilter = '';
-        switch (activeTab) {
-          case 'triggered':
-            statusFilter = 'status=triggered';
-            break;
-          case 'acknowledged':
-            statusFilter = 'status=acknowledged';
-            break;
-          case 'any_status':
-          default:
-            statusFilter = '';
-            break;
-        }
-        
-        // Build filters object
+
+        // Build filters object with org_id and project_id
+        // ReBAC: org_id is MANDATORY, project_id is OPTIONAL
         const filterParams = {
           ...filters,
-          status: activeTab === 'any_status' ? '' : activeTab
+          status: activeTab === 'any_status' ? '' : activeTab,
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
         };
-        
+
         const data = await apiClient.getIncidents('', filterParams);
         setIncidents(data.incidents || []);
         
@@ -151,7 +149,7 @@ export default function IncidentsPage() {
     };
 
     fetchIncidents();
-  }, [session, activeTab, filters, refreshTrigger]);
+  }, [session, activeTab, filters, refreshTrigger, currentOrg?.id, currentProject?.id]);
 
   const handleIncidentAction = async (action, incidentId) => {
     try {
@@ -236,6 +234,33 @@ export default function IncidentsPage() {
   const handleClearFilters = () => {
     setFilters(INITIAL_FILTERS);
   };
+
+  // Show loading state while org is being loaded
+  if (orgLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading organization...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show message if no organization is selected
+  if (!currentOrg?.id) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+          </svg>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Organization Selected</h3>
+          <p className="text-gray-600 dark:text-gray-400">Please select an organization to view incidents.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 md:space-y-6 p-4 md:p-6">

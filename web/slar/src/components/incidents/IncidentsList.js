@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import IncidentCard from './IncidentCard';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 
-export default function IncidentsList({ 
-  filters, 
-  onIncidentAction, 
+export default function IncidentsList({
+  filters,
+  onIncidentAction,
   session,
   loading: parentLoading = false,
   refreshTrigger = 0
 }) {
+  const { currentOrg, currentProject } = useOrg();
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -24,7 +26,7 @@ export default function IncidentsList({
   // Fetch incidents based on filters
   useEffect(() => {
     const fetchIncidents = async () => {
-      if (!session?.access_token) {
+      if (!session?.access_token || !currentOrg?.id) {
         setIncidents([]);
         return;
       }
@@ -32,12 +34,16 @@ export default function IncidentsList({
       try {
         setLoading(true);
         setError(null);
-        
+
         apiClient.setToken(session.access_token);
-        
+
         // Build query parameters from filters
         const params = new URLSearchParams();
-        
+
+        // ReBAC: org_id is MANDATORY for tenant isolation
+        params.append('org_id', currentOrg.id);
+        if (currentProject?.id) params.append('project_id', currentProject.id);
+
         if (filters.search) params.append('search', filters.search);
         if (filters.status) params.append('status', filters.status);
         if (filters.severity) params.append('severity', filters.severity);
@@ -45,12 +51,12 @@ export default function IncidentsList({
         if (filters.assignedTo) params.append('assigned_to', filters.assignedTo);
         if (filters.service) params.append('service_id', filters.service);
         if (filters.sort) params.append('sort', filters.sort);
-        
+
         params.append('page', pagination.page.toString());
         params.append('limit', pagination.limit.toString());
-        
+
         const data = await apiClient.getIncidents(params.toString());
-        
+
         setIncidents(data.incidents || []);
         setPagination({
           page: data.page || 1,
@@ -58,7 +64,7 @@ export default function IncidentsList({
           total: data.total || 0,
           hasMore: data.has_more || false
         });
-        
+
       } catch (err) {
         console.error('Error fetching incidents:', err);
         setError('Failed to fetch incidents');
@@ -69,7 +75,7 @@ export default function IncidentsList({
     };
 
     fetchIncidents();
-  }, [session, filters, pagination.page, refreshTrigger]);
+  }, [session, filters, pagination.page, refreshTrigger, currentOrg?.id, currentProject?.id]);
 
   const handleIncidentAction = async (action, incidentId) => {
     try {

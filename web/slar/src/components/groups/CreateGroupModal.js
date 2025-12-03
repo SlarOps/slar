@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 
 const GROUP_TYPE_OPTIONS = [
@@ -51,6 +52,7 @@ const ESCALATION_METHOD_OPTIONS = [
 
 export default function CreateGroupModal({ isOpen, onClose, onGroupCreated }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -67,17 +69,29 @@ export default function CreateGroupModal({ isOpen, onClose, onGroupCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!session?.access_token) {
       alert('Not authenticated');
+      return;
+    }
+
+    if (!currentOrg?.id) {
+      alert('Please select an organization first');
       return;
     }
 
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
-      const result = await apiClient.createGroup(formData);
+
+      // Include organization_id (required) and project_id (optional) for ReBAC
+      const groupData = {
+        ...formData,
+        organization_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const result = await apiClient.createGroup(groupData);
       
       // Reset form
       setFormData({

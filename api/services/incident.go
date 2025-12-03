@@ -153,15 +153,36 @@ func (l *LightweightNotificationSender) SendIncidentResolvedNotification(userID,
 }
 
 // ListIncidents returns a paginated list of incidents with filters
+// ReBAC: Explicit OR Inherited access pattern with MANDATORY Tenant Isolation
+// - Direct: User has project membership
+// - Inherited: User is org member AND project is "Open" (no explicit members)
+// - Ad-hoc: Incident assigned directly to user
+// IMPORTANT: All queries MUST be scoped to current organization (Context-Aware)
 func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.IncidentResponse, error) {
+	// ReBAC: Get user context
+	currentUserID, hasCurrentUser := filters["current_user_id"].(string)
+	if !hasCurrentUser || currentUserID == "" {
+		return []db.IncidentResponse{}, nil
+	}
+
+	// ReBAC: Get organization context (MANDATORY for Tenant Isolation)
+	currentOrgID, hasOrgContext := filters["current_org_id"].(string)
+	if !hasOrgContext || currentOrgID == "" {
+		log.Printf("WARNING: ListIncidents called without organization context - returning empty")
+		return []db.IncidentResponse{}, nil
+	}
+
+	// ReBAC: Explicit OR Inherited access with Tenant Isolation
+	// Uses single `memberships` table with resource_type = 'project' or 'org'
+	// $1 = currentUserID, $2 = currentOrgID
 	query := `
-		SELECT 
+		SELECT
 			i.id, i.title, i.description, i.status, i.urgency, i.priority,
 			i.created_at, i.updated_at, i.assigned_to, i.assigned_at,
 			i.acknowledged_by, i.acknowledged_at, i.resolved_by, i.resolved_at,
 			i.source, i.integration_id, i.service_id, i.external_id, i.external_url,
-			i.escalation_policy_id, i.current_escalation_level, i.last_escalated_at, 
-			i.escalation_status, i.group_id, i.api_key_id, i.severity, i.incident_key, 
+			i.escalation_policy_id, i.current_escalation_level, i.last_escalated_at,
+			i.escalation_status, i.group_id, i.api_key_id, i.severity, i.incident_key,
 			i.alert_count, i.labels, i.custom_fields,
 			u_assigned.name as assigned_to_name, u_assigned.email as assigned_to_email,
 			u_acked.name as acknowledged_by_name, u_acked.email as acknowledged_by_email,
@@ -175,19 +196,59 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 		LEFT JOIN groups g ON i.group_id = g.id
 		LEFT JOIN services s ON i.service_id = s.id
 		LEFT JOIN escalation_policies ep ON i.escalation_policy_id = ep.id
-		WHERE 1=1
+		WHERE
+			-- TENANT ISOLATION (MANDATORY): Only incidents in current organization
+			i.organization_id = $2
+			AND (
+				-- Scope A: Direct project membership
+				EXISTS (
+					SELECT 1 FROM memberships m
+					WHERE m.user_id = $1
+					AND m.resource_type = 'project'
+					AND m.resource_id = i.project_id
+				)
+				OR
+				-- Scope B: Inherited access (org member + project is "Open")
+				-- Project is "Open" = no explicit project members exist
+				(
+					i.project_id IS NOT NULL
+					AND EXISTS (
+						SELECT 1 FROM memberships m
+						WHERE m.user_id = $1
+						AND m.resource_type = 'org'
+						AND m.resource_id = $2
+					)
+					AND NOT EXISTS (
+						SELECT 1 FROM memberships pm
+						WHERE pm.resource_type = 'project' AND pm.resource_id = i.project_id
+					)
+				)
+				OR
+				-- Scope C: Org-level incidents (no project_id) - accessible by org members
+				(
+					i.project_id IS NULL
+					AND EXISTS (
+						SELECT 1 FROM memberships m
+						WHERE m.user_id = $1
+						AND m.resource_type = 'org'
+						AND m.resource_id = $2
+					)
+				)
+				OR
+				-- Scope D: Ad-hoc access - incident assigned directly to user
+				i.assigned_to = $1
+			)
 	`
 
-	args := []interface{}{}
-	argIndex := 1
+	args := []interface{}{currentUserID, currentOrgID}
+	argIndex := 3
 	hasSearch := false
 	searchArgIndex := 0
 
-	// Apply filters
+	// Apply resource-specific filters (these are additive, not access control)
 	if search, ok := filters["search"].(string); ok && search != "" {
 		hasSearch = true
 		searchArgIndex = argIndex
-		// Use full-text search if search_vector exists, fallback to ILIKE
 		query += fmt.Sprintf(" AND (i.search_vector @@ plainto_tsquery('english', $%d) OR i.title ILIKE $%d OR i.description ILIKE $%d)", argIndex, argIndex+1, argIndex+2)
 		searchPattern := "%" + search + "%"
 		args = append(args, search, searchPattern, searchPattern)
@@ -231,6 +292,13 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 	if groupID, ok := filters["group_id"].(string); ok && groupID != "" {
 		query += fmt.Sprintf(" AND i.group_id = $%d", argIndex)
 		args = append(args, groupID)
+		argIndex++
+	}
+
+	// Project filtering - additional scope filter (user must still have access via ReBAC)
+	if projectID, ok := filters["project_id"].(string); ok && projectID != "" {
+		query += fmt.Sprintf(" AND (i.project_id = $%d OR g.project_id = $%d OR s.project_id = $%d)", argIndex, argIndex, argIndex)
+		args = append(args, projectID)
 		argIndex++
 	}
 
@@ -429,6 +497,7 @@ func (s *IncidentService) GetIncident(id string) (*db.IncidentResponse, error) {
 			i.escalation_policy_id, i.current_escalation_level, i.last_escalated_at, 
 			i.escalation_status, i.group_id, i.api_key_id, i.severity, i.incident_key, 
 			i.alert_count, i.labels, i.custom_fields,
+			i.organization_id, i.project_id,
 			u_assigned.name as assigned_to_name, u_assigned.email as assigned_to_email,
 			u_acked.name as acknowledged_by_name, u_acked.email as acknowledged_by_email,
 			u_resolved.name as resolved_by_name, u_resolved.email as resolved_by_email,
@@ -457,6 +526,7 @@ func (s *IncidentService) GetIncident(id string) (*db.IncidentResponse, error) {
 	var groupID, groupName, serviceName sql.NullString
 	var apiKeyID, incidentKey sql.NullString
 	var labels, customFields sql.NullString
+	var organizationID, projectID sql.NullString
 
 	err := s.PG.QueryRow(query, id).Scan(
 		&incident.ID, &incident.Title, &incident.Description, &incident.Status, &incident.Urgency, &incident.Priority,
@@ -466,6 +536,7 @@ func (s *IncidentService) GetIncident(id string) (*db.IncidentResponse, error) {
 		&escalationPolicyID, &incident.CurrentEscalationLevel, &lastEscalatedAt,
 		&incident.EscalationStatus, &groupID, &apiKeyID, &incident.Severity, &incidentKey,
 		&incident.AlertCount, &labels, &customFields,
+		&organizationID, &projectID,
 		&assignedToName, &assignedToEmail,
 		&acknowledgedByName, &acknowledgedByEmail,
 		&resolvedByName, &resolvedByEmail,
@@ -552,6 +623,12 @@ func (s *IncidentService) GetIncident(id string) (*db.IncidentResponse, error) {
 	if incidentKey.Valid {
 		incident.IncidentKey = incidentKey.String
 	}
+	if organizationID.Valid {
+		incident.OrganizationID = organizationID.String
+	}
+	if projectID.Valid {
+		incident.ProjectID = projectID.String
+	}
 
 	// Parse JSON fields
 	if labels.Valid && labels.String != "" {
@@ -597,7 +674,9 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 		onCallUser, err := userService.GetCurrentOnCallUser()
 		if err == nil {
 			incident.AssignedTo = onCallUser.ID
-			// Don't set AssignedAt here - let database handle it in the INSERT
+			now := time.Now()
+			incident.AssignedAt = &now // Set AssignedAt so assignment event will be created
+			log.Printf("DEBUG: Auto-assigned incident to on-call user %s at %v", onCallUser.ID, now)
 		}
 	}
 
@@ -613,10 +692,10 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 	}
 
 	// Handle UUID fields properly - convert empty strings to NULL
-	var assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam interface{}
+	var assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam, organizationIDParam, projectIDParam interface{}
 
-	log.Printf("DEBUG: Incident UUID fields before processing - AssignedTo: '%s', EscalationPolicyID: '%s', GroupID: '%s', IntegrationID: '%s', ServiceID: '%s', APIKeyID: '%s'",
-		incident.AssignedTo, incident.EscalationPolicyID, incident.GroupID, incident.IntegrationID, incident.ServiceID, incident.APIKeyID)
+	log.Printf("DEBUG: Incident UUID fields before processing - AssignedTo: '%s', EscalationPolicyID: '%s', GroupID: '%s', IntegrationID: '%s', ServiceID: '%s', APIKeyID: '%s', OrganizationID: '%s', ProjectID: '%s'",
+		incident.AssignedTo, incident.EscalationPolicyID, incident.GroupID, incident.IntegrationID, incident.ServiceID, incident.APIKeyID, incident.OrganizationID, incident.ProjectID)
 
 	if incident.AssignedTo != "" {
 		assignedToParam = incident.AssignedTo
@@ -642,26 +721,97 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 		apiKeyIDParam = incident.APIKeyID
 		log.Printf("DEBUG: Setting apiKeyIDParam to: %s", incident.APIKeyID)
 	}
+	if incident.OrganizationID != "" {
+		organizationIDParam = incident.OrganizationID
+		log.Printf("DEBUG: Setting organizationIDParam to: %s", incident.OrganizationID)
+	}
+	if incident.ProjectID != "" {
+		projectIDParam = incident.ProjectID
+		log.Printf("DEBUG: Setting projectIDParam to: %s", incident.ProjectID)
+	}
 
 	if incident.CurrentEscalationLevel == 0 {
 		incident.CurrentEscalationLevel = 1
 	}
 
-	log.Printf("DEBUG: Final params - assignedToParam: %v, escalationPolicyIDParam: %v, groupIDParam: %v, integrationIDParam: %v, serviceIDParam: %v, apiKeyIDParam: %v",
-		assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam)
+	// ==========================================================================
+	// AUTO-LOOKUP CONTEXT (Hidden Write Pattern)
+	// ==========================================================================
+	// External integrations (Prometheus, Grafana, Datadog) often don't know
+	// org_id/project_id. We auto-fill from related entities for tenant isolation.
+	// ==========================================================================
+
+	// Step 1: Try to lookup from Service
+	if incident.OrganizationID == "" && incident.ServiceID != "" {
+		var serviceOrgID, serviceProjectID sql.NullString
+		err := s.PG.QueryRow(`
+			SELECT organization_id, project_id
+			FROM services
+			WHERE id = $1
+		`, incident.ServiceID).Scan(&serviceOrgID, &serviceProjectID)
+
+		if err == nil {
+			if serviceOrgID.Valid && serviceOrgID.String != "" {
+				incident.OrganizationID = serviceOrgID.String
+				organizationIDParam = serviceOrgID.String
+				log.Printf("DEBUG: Auto-filled OrganizationID from Service: %s", incident.OrganizationID)
+			}
+			if serviceProjectID.Valid && serviceProjectID.String != "" && incident.ProjectID == "" {
+				incident.ProjectID = serviceProjectID.String
+				projectIDParam = serviceProjectID.String
+				log.Printf("DEBUG: Auto-filled ProjectID from Service: %s", incident.ProjectID)
+			}
+		} else if err != sql.ErrNoRows {
+			log.Printf("WARNING: Failed to lookup context from Service %s: %v", incident.ServiceID, err)
+		}
+	}
+
+	// Step 2: Fallback to Group if still missing
+	if incident.OrganizationID == "" && incident.GroupID != "" {
+		var groupOrgID, groupProjectID sql.NullString
+		err := s.PG.QueryRow(`
+			SELECT organization_id, project_id
+			FROM groups
+			WHERE id = $1
+		`, incident.GroupID).Scan(&groupOrgID, &groupProjectID)
+
+		if err == nil {
+			if groupOrgID.Valid && groupOrgID.String != "" {
+				incident.OrganizationID = groupOrgID.String
+				organizationIDParam = groupOrgID.String
+				log.Printf("DEBUG: Auto-filled OrganizationID from Group: %s", incident.OrganizationID)
+			}
+			if groupProjectID.Valid && groupProjectID.String != "" && incident.ProjectID == "" {
+				incident.ProjectID = groupProjectID.String
+				projectIDParam = groupProjectID.String
+				log.Printf("DEBUG: Auto-filled ProjectID from Group: %s", incident.ProjectID)
+			}
+		} else if err != sql.ErrNoRows {
+			log.Printf("WARNING: Failed to lookup context from Group %s: %v", incident.GroupID, err)
+		}
+	}
+
+	// Step 3: Log warning if context still missing (for monitoring/debugging)
+	if incident.OrganizationID == "" {
+		log.Printf("WARNING: Incident created without organization_id - Source: %s, ServiceID: %s, GroupID: %s",
+			incident.Source, incident.ServiceID, incident.GroupID)
+	}
+
+	log.Printf("DEBUG: Final params - assignedToParam: %v, escalationPolicyIDParam: %v, groupIDParam: %v, integrationIDParam: %v, serviceIDParam: %v, apiKeyIDParam: %v, organizationIDParam: %v, projectIDParam: %v",
+		assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam, organizationIDParam, projectIDParam)
 
 	_, err := s.PG.Exec(`
 		INSERT INTO incidents (
 			id, title, description, status, urgency, priority,
 			assigned_to, source, integration_id, service_id, external_id, external_url,
 			escalation_policy_id, current_escalation_level, escalation_status, group_id, api_key_id,
-			severity, incident_key, alert_count, labels, custom_fields
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+			severity, incident_key, alert_count, labels, custom_fields, organization_id, project_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
 		incident.ID, incident.Title, incident.Description, incident.Status, incident.Urgency, incident.Priority,
 		assignedToParam, incident.Source, integrationIDParam, serviceIDParam, incident.ExternalID, incident.ExternalURL,
 		escalationPolicyIDParam, incident.CurrentEscalationLevel, incident.EscalationStatus,
 		groupIDParam, apiKeyIDParam, incident.Severity, incident.IncidentKey, incident.AlertCount,
-		labelsJSON, customFieldsJSON,
+		labelsJSON, customFieldsJSON, organizationIDParam, projectIDParam,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create incident: %w", err)
@@ -731,6 +881,86 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 	}
 
 	return incident, nil
+}
+
+// UpdateIncident updates an incident's fields
+func (s *IncidentService) UpdateIncident(id string, req db.UpdateIncidentRequest) (*db.Incident, error) {
+	// Build dynamic update query
+	query := "UPDATE incidents SET updated_at = NOW()"
+	args := []interface{}{}
+	argIndex := 1
+
+	if req.Title != nil {
+		query += fmt.Sprintf(", title = $%d", argIndex)
+		args = append(args, *req.Title)
+		argIndex++
+	}
+	if req.Description != nil {
+		query += fmt.Sprintf(", description = $%d", argIndex)
+		args = append(args, *req.Description)
+		argIndex++
+	}
+	if req.Status != nil {
+		query += fmt.Sprintf(", status = $%d", argIndex)
+		args = append(args, *req.Status)
+		argIndex++
+	}
+	if req.Urgency != nil {
+		query += fmt.Sprintf(", urgency = $%d", argIndex)
+		args = append(args, *req.Urgency)
+		argIndex++
+	}
+	if req.Priority != nil {
+		query += fmt.Sprintf(", priority = $%d", argIndex)
+		args = append(args, *req.Priority)
+		argIndex++
+	}
+	if req.Severity != nil {
+		query += fmt.Sprintf(", severity = $%d", argIndex)
+		args = append(args, *req.Severity)
+		argIndex++
+	}
+	if req.Labels != nil {
+		labelsJSON, _ := json.Marshal(req.Labels)
+		query += fmt.Sprintf(", labels = $%d", argIndex)
+		args = append(args, string(labelsJSON))
+		argIndex++
+	}
+	if req.CustomFields != nil {
+		customFieldsJSON, _ := json.Marshal(req.CustomFields)
+		query += fmt.Sprintf(", custom_fields = $%d", argIndex)
+		args = append(args, string(customFieldsJSON))
+		argIndex++
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d RETURNING id, title, description, status, urgency, priority, severity, labels, custom_fields, updated_at", argIndex)
+	args = append(args, id)
+
+	var incident db.Incident
+	var labels, customFields sql.NullString
+	
+	err := s.PG.QueryRow(query, args...).Scan(
+		&incident.ID, &incident.Title, &incident.Description, &incident.Status, 
+		&incident.Urgency, &incident.Priority, &incident.Severity, 
+		&labels, &customFields, &incident.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update incident: %w", err)
+	}
+
+	if labels.Valid && labels.String != "" {
+		json.Unmarshal([]byte(labels.String), &incident.Labels)
+	}
+	if customFields.Valid && customFields.String != "" {
+		json.Unmarshal([]byte(customFields.String), &incident.CustomFields)
+	}
+
+	// Create update event
+	s.createIncidentEvent(id, db.IncidentEventUpdated, map[string]interface{}{
+		"updated_fields": req,
+	}, "")
+
+	return &incident, nil
 }
 
 // AcknowledgeIncident acknowledges an incident
@@ -834,9 +1064,24 @@ func (s *IncidentService) AssignIncident(id, userID, assignedBy, note string) er
 	if note != "" {
 		eventData["note"] = note
 	}
-	s.createIncidentEvent(id, db.IncidentEventAssigned, eventData, assignedBy)
-
 	return nil
+}
+
+// AddNote adds a comment/note to an incident without changing its status
+func (s *IncidentService) AddNote(id, userID, note string) error {
+	// Create note event
+	eventData := map[string]interface{}{
+		"note": note,
+	}
+	
+	// Get user name for display
+	var userName string
+	err := s.PG.QueryRow(`SELECT COALESCE(name, email, 'Unknown') FROM users WHERE id = $1`, userID).Scan(&userName)
+	if err == nil {
+		eventData["author_name"] = userName
+	}
+
+	return s.createIncidentEvent(id, db.IncidentEventNoteAdded, eventData, userID)
 }
 
 // GetIncidentEvents returns events for an incident

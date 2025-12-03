@@ -7,7 +7,26 @@ export default function PWAInstallPrompt() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
 
   useEffect(() => {
-    // Register service worker
+    // Only register service worker in production
+    // In development, skip SW to avoid caching issues
+    const isDevelopment = process.env.NODE_ENV === 'development' ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+
+    if (isDevelopment) {
+      // Unregister any existing service workers in development
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          registrations.forEach((registration) => {
+            registration.unregister();
+            console.log('🔧 Dev mode: Service Worker unregistered');
+          });
+        });
+      }
+      return;
+    }
+
+    // Register service worker (production only)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
         .register('/sw.js', { scope: '/' })

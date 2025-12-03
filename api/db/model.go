@@ -24,6 +24,10 @@ type Integration struct {
 	HeartbeatInterval int        `json:"heartbeat_interval"`      // seconds
 	HealthStatus      string     `json:"health_status,omitempty"` // healthy, warning, unhealthy, unknown
 
+	// Tenant isolation (ReBAC)
+	OrganizationID string `json:"organization_id,omitempty"` // MANDATORY for tenant isolation
+	ProjectID      string `json:"project_id,omitempty"`      // OPTIONAL for project scoping
+
 	// Metadata
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -75,6 +79,9 @@ type CreateIntegrationRequest struct {
 	Config            map[string]interface{} `json:"config"`
 	WebhookSecret     string                 `json:"webhook_secret,omitempty"`
 	HeartbeatInterval int                    `json:"heartbeat_interval,omitempty"`
+	// ReBAC: Tenant isolation fields
+	OrganizationID string `json:"organization_id,omitempty"` // MANDATORY for tenant isolation
+	ProjectID      string `json:"project_id,omitempty"`      // OPTIONAL for project scoping
 }
 
 type UpdateIntegrationRequest struct {
@@ -183,6 +190,10 @@ type Service struct {
 	UpdatedAt          time.Time              `json:"updated_at"`
 	CreatedBy          string                 `json:"created_by,omitempty"`
 
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
+	ProjectID      string `json:"project_id,omitempty"`      // Project scoping
+
 	// Integration settings
 	Integrations         map[string]interface{} `json:"integrations,omitempty"` // Datadog, Prometheus configs
 	NotificationSettings map[string]interface{} `json:"notification_settings,omitempty"`
@@ -203,6 +214,10 @@ type CreateServiceRequest struct {
 	EscalationPolicyID   *string                `json:"escalation_policy_id,omitempty"` // Datadog-style escalation policy
 	Integrations         map[string]interface{} `json:"integrations,omitempty"`
 	NotificationSettings map[string]interface{} `json:"notification_settings,omitempty"`
+
+	// Tenant isolation (required for multi-tenant)
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant context
+	ProjectID      string `json:"project_id,omitempty"`      // Project context
 }
 
 type UpdateServiceRequest struct {
@@ -300,6 +315,9 @@ type APIKey struct {
 	Description        string     `json:"description"`
 	Environment        string     `json:"environment"` // prod, dev, test
 	CreatedBy          string     `json:"created_by,omitempty"`
+
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
 }
 
 type APIKeyUsageLog struct {
@@ -454,6 +472,10 @@ type Group struct {
 	UserName          string    `json:"user_name,omitempty"`
 	UserEmail         string    `json:"user_email,omitempty"`
 	UserTeam          string    `json:"user_team,omitempty"`
+
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
+	ProjectID      string `json:"project_id,omitempty"`      // Project scoping
 }
 
 // GroupWithMembers includes member information
@@ -493,6 +515,9 @@ type EscalationPolicy struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 	GroupID              string    `json:"group_id"`
 	CreatedBy            string    `json:"created_by,omitempty"`
+
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
 
 	// Nested levels (populated when needed)
 	Levels []EscalationLevel `json:"levels,omitempty"`
@@ -590,6 +615,9 @@ type Scheduler struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	CreatedBy    string    `json:"created_by,omitempty"`
 
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
+
 	// Nested shifts (populated when needed)
 	Shifts []Shift `json:"shifts,omitempty"`
 }
@@ -610,6 +638,9 @@ type Shift struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	CreatedBy       string    `json:"created_by,omitempty"`
+
+	// Tenant isolation
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant isolation
 
 	// Service-specific scheduling
 	ServiceID     *string `json:"service_id,omitempty"` // For service-specific shifts
@@ -672,6 +703,9 @@ type CreateSchedulerRequest struct {
 	DisplayName  string `json:"display_name"`            // "DevOps Team"
 	Description  string `json:"description"`
 	RotationType string `json:"rotation_type"` // 'manual', 'round_robin', 'weekly'
+
+	// Tenant isolation (required for multi-tenant)
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant context
 }
 
 // CreateShiftRequest represents the request body for creating a shift (formerly schedule)
@@ -752,6 +786,10 @@ type CreateGroupRequest struct {
 	Visibility        string `json:"visibility,omitempty" binding:"omitempty,oneof=private public organization"`
 	EscalationTimeout int    `json:"escalation_timeout,omitempty"`
 	EscalationMethod  string `json:"escalation_method,omitempty"`
+
+	// Tenant isolation (required for multi-tenant)
+	OrganizationID string `json:"organization_id,omitempty"` // Tenant context
+	ProjectID      string `json:"project_id,omitempty"`      // Project context
 }
 
 // UpdateGroupRequest for updating a group

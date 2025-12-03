@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Modal, ModalFooter, ModalButton, Input, Textarea, Select, toast } from '../ui';
 import { 
@@ -64,15 +65,16 @@ const INTEGRATION_TYPES = [
   }
 ];
 
-export default function IntegrationModal({ 
-  isOpen, 
-  onClose, 
+export default function IntegrationModal({
+  isOpen,
+  onClose,
   mode = 'create', // 'create' or 'edit'
   integration = null,
   onIntegrationCreated,
-  onIntegrationUpdated 
+  onIntegrationUpdated
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -112,6 +114,12 @@ export default function IntegrationModal({
       return;
     }
 
+    // ReBAC: Validate organization context (MANDATORY for both create and update)
+    if (!currentOrg?.id) {
+      toast.error('Please select an organization first');
+      return;
+    }
+
     if (isEditMode && !integration?.id) {
       toast.error('Integration ID is required for editing');
       return;
@@ -120,18 +128,30 @@ export default function IntegrationModal({
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       let response;
       if (isEditMode) {
         // Update existing integration
-        response = await apiClient.updateIntegration(integration.id, formData);
+        response = await apiClient.updateIntegration(integration.id, formData, rebacFilters);
         if (response.integration) {
           onIntegrationUpdated && onIntegrationUpdated(response.integration);
           toast.success('Integration updated successfully!');
         }
       } else {
-        // Create new integration
-        response = await apiClient.createIntegration(formData);
+        // Create new integration with ReBAC context
+        // organization_id is MANDATORY, project_id is OPTIONAL
+        const createData = {
+          ...formData,
+          organization_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+        response = await apiClient.createIntegration(createData);
         if (response.integration) {
           onIntegrationCreated && onIntegrationCreated(response.integration);
           toast.success('Integration created successfully!');
