@@ -95,6 +95,13 @@ var OrgPermissions = map[Role]map[Action]bool{
 
 // ProjectPermissions defines what actions each role can perform at project level
 var ProjectPermissions = map[Role]map[Action]bool{
+	RoleOwner: { // Owner has same permissions as Admin at project level
+		ActionView:   true,
+		ActionCreate: true,
+		ActionUpdate: true,
+		ActionDelete: true,
+		ActionManage: true,
+	},
 	RoleAdmin: {
 		ActionView:   true,
 		ActionCreate: true,

@@ -6,6 +6,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { claudeAgentService } from '@/services/claude-agent';
 import type { ChatMessage, ChatRequest, StreamEvent } from '@/types/claude-agent';
 import { v4 as uuidv4 } from 'uuid';
+import { useOrg } from '@/contexts/OrgContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 export interface UseClaudeChatOptions {
   autoSaveSession?: boolean;
@@ -15,6 +17,10 @@ export interface UseClaudeChatOptions {
 
 export function useClaudeChat(options: UseClaudeChatOptions = {}) {
   const { autoSaveSession = true, onSessionIdChange, onError } = options;
+
+  // Get organization and auth context for ReBAC tenant isolation
+  const { currentOrg, currentProject } = useOrg();
+  const { session } = useAuth();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -91,10 +97,13 @@ export function useClaudeChat(options: UseClaudeChatOptions = {}) {
       currentMessageRef.current = assistantMessage;
       addMessage(assistantMessage);
 
-      // Prepare request
+      // Prepare request with ReBAC tenant isolation
       const request: ChatRequest = {
         prompt,
         session_id: sessionId,
+        org_id: currentOrg?.id,  // ReBAC: Required for tenant isolation
+        project_id: currentProject?.id,  // ReBAC: Optional project filtering
+        auth_token: session?.access_token ? `Bearer ${session.access_token}` : undefined,  // JWT for API calls
         ...options,
       };
 
@@ -144,7 +153,7 @@ export function useClaudeChat(options: UseClaudeChatOptions = {}) {
       setIsStreaming(false);
       currentMessageRef.current = null;
     }
-  }, [isStreaming, sessionId, addMessage, onError]);
+  }, [isStreaming, sessionId, addMessage, onError, currentOrg?.id, currentProject?.id, session?.access_token]);
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {

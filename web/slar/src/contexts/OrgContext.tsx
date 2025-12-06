@@ -1,15 +1,68 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { apiClient } from '../lib/api';
 
-const OrgContext = createContext({});
+// Types
+interface Organization {
+  id: string;
+  name: string;
+  slug?: string;
+  [key: string]: any;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  org_id?: string;
+  [key: string]: any;
+}
+
+interface OrgContextValue {
+  // Organizations
+  organizations: Organization[];
+  currentOrg: Organization | null;
+  loading: boolean;
+  error: string | null;
+  switchOrg: (org: Organization) => Promise<void>;
+  refreshOrganizations: () => Promise<void>;
+  addOrganization: (org: Organization) => void;
+  hasOrganizations: boolean;
+  // Projects
+  projects: Project[];
+  currentProject: Project | null;
+  projectsLoading: boolean;
+  switchProject: (project: Project) => void;
+  refreshProjects: () => Promise<void>;
+  addProject: (project: Project) => void;
+  hasProjects: boolean;
+}
+
+const defaultContextValue: OrgContextValue = {
+  organizations: [],
+  currentOrg: null,
+  loading: true,
+  error: null,
+  switchOrg: async () => {},
+  refreshOrganizations: async () => {},
+  addOrganization: () => {},
+  hasOrganizations: false,
+  projects: [],
+  currentProject: null,
+  projectsLoading: false,
+  switchProject: () => {},
+  refreshProjects: async () => {},
+  addProject: () => {},
+  hasProjects: false,
+};
+
+const OrgContext = createContext<OrgContextValue>(defaultContextValue);
 
 const ORG_STORAGE_KEY = 'slar-current-org';
 const PROJECT_STORAGE_KEY = 'slar-current-project';
 
-export const useOrg = () => {
+export const useOrg = (): OrgContextValue => {
   const context = useContext(OrgContext);
   if (!context) {
     throw new Error('useOrg must be used within an OrgProvider');
@@ -17,18 +70,22 @@ export const useOrg = () => {
   return context;
 };
 
-export const OrgProvider = ({ children }) => {
+interface OrgProviderProps {
+  children: ReactNode;
+}
+
+export const OrgProvider = ({ children }: OrgProviderProps) => {
   const { session, isAuthenticated } = useAuth();
-  const [organizations, setOrganizations] = useState([]);
-  const [currentOrg, setCurrentOrg] = useState(null);
-  const [projects, setProjects] = useState([]);
-  const [currentProject, setCurrentProject] = useState(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [projectsLoading, setProjectsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Load projects for current organization
-  const loadProjects = useCallback(async (orgId) => {
+  const loadProjects = useCallback(async (orgId: string) => {
     if (!session?.access_token || !orgId) {
       setProjects([]);
       setCurrentProject(null);
@@ -38,8 +95,8 @@ export const OrgProvider = ({ children }) => {
     try {
       setProjectsLoading(true);
       apiClient.setToken(session.access_token);
-      const data = await apiClient.getOrgProjects(orgId);
-      const projectList = Array.isArray(data) ? data : (data?.projects || []);
+      const data = await apiClient.getOrgProjects(orgId) as any;
+      const projectList: Project[] = Array.isArray(data) ? data : (data?.projects || []);
       setProjects(projectList);
 
       // Try to restore previously selected project from localStorage
@@ -80,8 +137,8 @@ export const OrgProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       apiClient.setToken(session.access_token);
-      const data = await apiClient.getOrganizations();
-      const orgs = Array.isArray(data) ? data : (data?.organizations || []);
+      const data = await apiClient.getOrganizations() as any;
+      const orgs: Organization[] = Array.isArray(data) ? data : (data?.organizations || []);
       setOrganizations(orgs);
 
       // Try to restore previously selected org from localStorage
@@ -105,7 +162,7 @@ export const OrgProvider = ({ children }) => {
         localStorage.removeItem(ORG_STORAGE_KEY);
         localStorage.removeItem(PROJECT_STORAGE_KEY);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load organizations:', err);
       setError(err.message);
       setOrganizations([]);
@@ -130,7 +187,7 @@ export const OrgProvider = ({ children }) => {
   }, [isAuthenticated, loadOrganizations]);
 
   // Switch to a different organization
-  const switchOrg = useCallback(async (org) => {
+  const switchOrg = useCallback(async (org: Organization) => {
     if (org && org.id) {
       setCurrentOrg(org);
       localStorage.setItem(ORG_STORAGE_KEY, org.id);
@@ -145,7 +202,7 @@ export const OrgProvider = ({ children }) => {
   }, [loadProjects]);
 
   // Switch to a different project
-  const switchProject = useCallback((project) => {
+  const switchProject = useCallback((project: Project) => {
     if (project && project.id) {
       setCurrentProject(project);
       localStorage.setItem(PROJECT_STORAGE_KEY, project.id);
@@ -167,7 +224,7 @@ export const OrgProvider = ({ children }) => {
   }, [currentOrg?.id, loadProjects]);
 
   // Add a new organization to the list
-  const addOrganization = useCallback((org) => {
+  const addOrganization = useCallback((org: Organization) => {
     setOrganizations(prev => [...prev, org]);
     // If no current org, set this as current
     if (!currentOrg) {
@@ -176,7 +233,7 @@ export const OrgProvider = ({ children }) => {
   }, [currentOrg, switchOrg]);
 
   // Add a new project to the list
-  const addProject = useCallback((project) => {
+  const addProject = useCallback((project: Project) => {
     setProjects(prev => [...prev, project]);
     // If no current project, set this as current
     if (!currentProject) {
@@ -184,7 +241,7 @@ export const OrgProvider = ({ children }) => {
     }
   }, [currentProject, switchProject]);
 
-  const value = {
+  const value: OrgContextValue = {
     // Organizations
     organizations,
     currentOrg,

@@ -1,0 +1,38 @@
+{{- if .Values.cloudflared.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "slar.fullname" . }}-cloudflared
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cloudflared
+spec:
+  replicas: {{ .Values.cloudflared.replicas }}
+  selector:
+    matchLabels:
+      {{- include "slar.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cloudflared
+  template:
+    metadata:
+      labels:
+        {{- include "slar.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: "{{ .Values.cloudflared.image.repository }}:{{ .Values.cloudflared.image.tag }}"
+          imagePullPolicy: {{ .Values.cloudflared.image.pullPolicy }}
+          args:
+            - tunnel
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.cloudflared.existingSecret }}{{ .Values.cloudflared.existingSecret }}{{ else }}{{ include "slar.fullname" . }}-cloudflared-token{{ end }}
+                  key: tunnel-token
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

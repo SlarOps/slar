@@ -66,14 +66,12 @@ export default function ProjectSwitcher({ collapsed = false }) {
     return null;
   }
 
-  const getProjectInitials = (name) => {
-    return name
-      .split(' ')
-      .map(word => word[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
+  // Project icon component (cube/folder style)
+  const ProjectIcon = ({ className = "w-4 h-4" }) => (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+    </svg>
+  );
 
   return (
     <div className="relative px-2 py-1" ref={dropdownRef}>
@@ -85,9 +83,7 @@ export default function ProjectSwitcher({ collapsed = false }) {
         title={collapsed ? currentProject.name : undefined}
       >
         {/* Project Icon */}
-        <div className="w-6 h-6 rounded-md bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-          {getProjectInitials(currentProject.name)}
-        </div>
+        <ProjectIcon className="w-4 h-4 text-gray-500 dark:text-gray-400 flex-shrink-0" />
 
         {!collapsed && (
           <>
@@ -135,9 +131,7 @@ export default function ProjectSwitcher({ collapsed = false }) {
                   project.id === currentProject.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                 }`}
               >
-                <div className="w-6 h-6 rounded-md bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-                  {getProjectInitials(project.name)}
-                </div>
+                <ProjectIcon className="w-4 h-4 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                 <div className="flex-1 text-left min-w-0">
                   <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                     {project.name}

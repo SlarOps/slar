@@ -126,7 +126,7 @@ affinity: {}
 
 # Migration job configuration
 migration:
-  enabled: true
+  enabled: false
   image:
     repository: migration:latest
     name: slar-migration
@@ -146,7 +146,7 @@ components:
   ai:
     replicas: 1
     image:
-      tag: 1.0.1
+      tag: latest
       name: slar-ai
       pullPolicy: Always
     service:
@@ -174,6 +174,11 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-service-role-key
+      - name: SUPABASE_JWT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: supabase-jwt-secret
       - name: ANTHROPIC_API_KEY
         valueFrom:
           secretKeyRef:
@@ -183,14 +188,10 @@ components:
       # Optional environment variables
       - name: SLAR_API_URL
         value: "http://slar-api.slar:8080"
+      - name: SLAR_BACKEND_URL
+        value: "http://slar-api.slar:8080"
       - name: USER_WORKSPACES_DIR
         value: "/app/workspaces"
-      - name: ENABLE_CODE_EXECUTOR
-        value: "false"
-      - name: OPENAI_MODEL
-        value: "gpt-4o"
-      - name: CHROMA_COLLECTION_NAME
-        value: "autogen_docs"
 
     # Resource limits
     resources:
@@ -244,7 +245,7 @@ components:
   api:
     image:
       name: slar-api
-      tag: 1.0.1
+      tag: latest
       pullPolicy: Always
     service:
       enabled: true
@@ -275,8 +276,21 @@ components:
             key: supabase-jwt-secret
       - name: SLAR_ENV
         value: "production"
+      - name: SLAR_CLOUD_URL
+        value: "https://relay-slar-saas.slarhq.com"
+      - name: SLAR_CLOUD_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: slar-secrets
+            key: slar-cloud-token
+      - name: SLAR_INSTANCE_ID
+        value: ""  # Set this to your instance ID
+      - name: SLAR_PUBLIC_URL
+        value: "https://api.yourdomain.com"  # Set this to your public API URL
+      - name: SLAR_AGENT_URL
+        value: "https://agent.yourdomain.com"  # Set this to your public AI agent URL
     ingress:
-      enabled: true
+      enabled: false
       hosts:
         - host: dev-api.slarhq.com
           paths:
@@ -286,7 +300,7 @@ components:
   slack-worker:
     image:
       name: slar-slack-worker
-      tag: 1.0.1
+      tag: latest
       pullPolicy: Always
     service:
       enabled: false
@@ -322,7 +336,7 @@ components:
   web:
     image:
       name: slar-web
-      tag: 1.0.1
+      tag: latest
       pullPolicy: Always
     service:
       enabled: true
@@ -339,10 +353,16 @@ components:
           secretKeyRef:
             name: slar-secrets
             key: supabase-anon-key
+      - name: NEXT_PUBLIC_API_URL
+        value: "https://api.yourdomain.com"  # Set this to your public API URL
+      - name: NEXT_PUBLIC_AI_API_URL
+        value: "https://agent.yourdomain.com"  # Set this to your public AI agent URL
+      - name: NEXT_PUBLIC_AI_WS_URL
+        value: "wss://agent.yourdomain.com/ws/chat"  # Set this to your public AI WebSocket URL
 
   kong:
     ingress:
-      enabled: true
+      enabled: false
       hosts:
         - host: dev.slarhq.com
           paths:
@@ -389,3 +409,14 @@ components:
     configMap:
       enabled: true
       name: kong-config
+
+cloudflared:
+  enabled: false
+  image:
+    repository: cloudflare/cloudflared
+    tag: latest
+    pullPolicy: Always
+  replicas: 1
+  tunnelToken: "" # Set this or use a secret
+  existingSecret: "" # Name of an existing secret containing the token
+

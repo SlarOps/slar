@@ -35,7 +35,7 @@ from claude_agent_sdk import (
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from incident_tools import create_incident_tools_server, set_auth_token
+from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id
 from zero_trust_verifier import get_verifier, init_verifier
 from supabase_storage import (
     extract_user_id_from_token,
@@ -459,6 +459,18 @@ async def agent_task(
 
             # Set the auth token for incident_tools to use
             set_auth_token(current_auth_token or "")
+
+            # Set org_id for ReBAC tenant isolation (MANDATORY for API calls)
+            org_id = data.get("org_id", "")
+            if org_id:
+                set_org_id(org_id)
+                logger.info(f"🏢 Organization ID set: {org_id}")
+
+            # Set project_id for ReBAC project filtering (OPTIONAL)
+            project_id = data.get("project_id", "")
+            if project_id:
+                set_project_id(project_id)
+                logger.info(f"📁 Project ID set: {project_id}")
 
             # Use the current user_id (from Zero-Trust or JWT)
             user_id = current_user_id

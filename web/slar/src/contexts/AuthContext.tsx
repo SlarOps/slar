@@ -1,12 +1,55 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { auth, initSupabase } from '../lib/supabase';
 import apiClient from '../lib/api';
 
-const AuthContext = createContext({});
+// Types
+interface User {
+  id: string;
+  email?: string;
+  [key: string]: any;
+}
 
-export const useAuth = () => {
+interface Session {
+  access_token: string;
+  refresh_token?: string;
+  user?: User;
+  [key: string]: any;
+}
+
+interface AuthResult<T = any> {
+  data: T | null;
+  error: Error | null;
+}
+
+interface AuthContextValue {
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  signUp: (email: string, password: string, metadata?: Record<string, any>) => Promise<AuthResult>;
+  signOut: () => Promise<{ error: Error | null }>;
+  resetPassword: (email: string) => Promise<AuthResult>;
+  updatePassword: (password: string) => Promise<AuthResult>;
+  isAuthenticated: boolean;
+}
+
+const defaultContextValue: AuthContextValue = {
+  user: null,
+  session: null,
+  loading: true,
+  signIn: async () => ({ data: null, error: null }),
+  signUp: async () => ({ data: null, error: null }),
+  signOut: async () => ({ error: null }),
+  resetPassword: async () => ({ data: null, error: null }),
+  updatePassword: async () => ({ data: null, error: null }),
+  isAuthenticated: false,
+};
+
+const AuthContext = createContext<AuthContextValue>(defaultContextValue);
+
+export const useAuth = (): AuthContextValue => {
   const context = useContext(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
@@ -14,13 +57,17 @@ export const useAuth = () => {
   return context;
 };
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [session, setSession] = useState(null);
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthProvider = ({ children }: AuthProviderProps) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let subscription = null;
+    let subscription: { unsubscribe: () => void } | null = null;
 
     // Initialize Supabase and setup auth
     const initAuth = async () => {
@@ -69,7 +116,7 @@ export const AuthProvider = ({ children }) => {
 
         // Listen for auth changes (use async version)
         const { data } = await auth.onAuthStateChangeAsync(
-          async (event, session) => {
+          async (event: string, session: Session | null) => {
             console.log('Auth state changed:', event, session);
 
             if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
@@ -115,7 +162,7 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  const signIn = async (email, password) => {
+  const signIn = async (email: string, password: string): Promise<AuthResult> => {
     setLoading(true);
     try {
       const { data, error } = await auth.signIn(email, password);
@@ -123,13 +170,13 @@ export const AuthProvider = ({ children }) => {
       return { data, error: null };
     } catch (error) {
       console.error('Sign in error:', error);
-      return { data: null, error };
+      return { data: null, error: error as Error };
     } finally {
       setLoading(false);
     }
   };
 
-  const signUp = async (email, password, metadata = {}) => {
+  const signUp = async (email: string, password: string, metadata: Record<string, any> = {}): Promise<AuthResult> => {
     setLoading(true);
     try {
       const { data, error } = await auth.signUp(email, password, metadata);
@@ -137,13 +184,13 @@ export const AuthProvider = ({ children }) => {
       return { data, error: null };
     } catch (error) {
       console.error('Sign up error:', error);
-      return { data: null, error };
+      return { data: null, error: error as Error };
     } finally {
       setLoading(false);
     }
   };
 
-  const signOut = async () => {
+  const signOut = async (): Promise<{ error: Error | null }> => {
     setLoading(true);
     try {
       const { error } = await auth.signOut();
@@ -165,35 +212,35 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setSession(null);
 
-      return { error };
+      return { error: error as Error };
     } finally {
       setLoading(false);
     }
   };
 
-  const resetPassword = async (email) => {
+  const resetPassword = async (email: string): Promise<AuthResult> => {
     try {
       const { data, error } = await auth.resetPassword(email);
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
       console.error('Reset password error:', error);
-      return { data: null, error };
+      return { data: null, error: error as Error };
     }
   };
 
-  const updatePassword = async (password) => {
+  const updatePassword = async (password: string): Promise<AuthResult> => {
     try {
       const { data, error } = await auth.updatePassword(password);
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
       console.error('Update password error:', error);
-      return { data: null, error };
+      return { data: null, error: error as Error };
     }
   };
 
-  const value = {
+  const value: AuthContextValue = {
     user,
     session,
     loading,
