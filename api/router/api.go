@@ -10,6 +10,7 @@ import (
 
 	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/handlers"
+	"github.com/vanchonlee/slar/internal/config"
 	"github.com/vanchonlee/slar/internal/monitor"
 	"github.com/vanchonlee/slar/services"
 )
@@ -52,7 +53,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
 	serviceService := services.NewServiceService(pg)         // NEW: Service management
 	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
-	identityService, err := services.NewIdentityService("./data") // Initialize IdentityService
+	identityService, err := services.NewIdentityService(config.App.DataDir) // Initialize IdentityService
 	if err != nil {
 		log.Printf("Warning: Failed to initialize identity service: %v", err)
 	}

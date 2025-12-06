@@ -1,6 +1,6 @@
 // API client for SLAR backend
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai'
+export const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
 
 class APIClient {
   constructor() {
@@ -1791,6 +1791,101 @@ class APIClient {
     return this.request(`/projects/${projectId}/members/${userId}`, {
       method: 'DELETE'
     });
+  }
+
+  // ============================================================
+  // AI API METHODS (MCP Servers, Memory, Workspace)
+  // ============================================================
+
+  /**
+   * Get MCP servers from AI backend
+   * @returns {Promise<object>} MCP servers result
+   */
+  async getMCPServers() {
+    return this.request('/api/mcp-servers', {}, this.aiBaseURL);
+  }
+
+  /**
+   * Save MCP server to AI backend
+   * @param {string} serverName - Server name
+   * @param {object} serverConfig - Server configuration
+   * @returns {Promise<object>} Save result
+   */
+  async saveMCPServer(serverName, serverConfig) {
+    return this.request('/api/mcp-servers', {
+      method: 'POST',
+      body: JSON.stringify({
+        server_name: serverName,
+        ...serverConfig
+      })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete MCP server from AI backend
+   * @param {string} serverName - Server name
+   * @returns {Promise<object>} Delete result
+   */
+  async deleteMCPServer(serverName) {
+    return this.request(`/api/mcp-servers/${encodeURIComponent(serverName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Get memory (CLAUDE.md) from AI backend
+   * @param {string} scope - Memory scope ('local' or 'user')
+   * @returns {Promise<object>} Memory content
+   */
+  async getMemory(scope = 'local') {
+    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Save memory (CLAUDE.md) to AI backend
+   * @param {string} content - Markdown content
+   * @param {string} scope - Memory scope ('local' or 'user')
+   * @returns {Promise<object>} Save result
+   */
+  async saveMemory(content, scope = 'local') {
+    return this.request('/api/memory', {
+      method: 'POST',
+      body: JSON.stringify({ content, scope })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete memory (CLAUDE.md) from AI backend
+   * @param {string} scope - Memory scope ('local' or 'user')
+   * @returns {Promise<object>} Delete result
+   */
+  async deleteMemory(scope = 'local') {
+    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Sync workspace to AI backend
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Sync result
+   */
+  async syncWorkspace(userId) {
+    return this.request('/api/sync-workspace', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete marketplace asynchronously
+   * @param {string} marketplaceName - Marketplace name
+   * @returns {Promise<object>} Delete result
+   */
+  async deleteMarketplace(marketplaceName) {
+    return this.request(`/api/marketplace/${encodeURIComponent(marketplaceName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
   }
 }
 

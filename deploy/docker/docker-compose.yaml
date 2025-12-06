@@ -16,7 +16,6 @@ services:
     restart: "no"
     profiles: ["migration"]
 
-
   ai:
     container_name: slar-ai
     build:

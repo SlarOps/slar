@@ -10,23 +10,30 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 
+	"github.com/vanchonlee/slar/internal/config"
 	"github.com/vanchonlee/slar/router"
 	"github.com/vanchonlee/slar/services"
 	"github.com/vanchonlee/slar/workers"
 )
 
 func main() {
-	// Load .env file if it exists
-	if err := godotenv.Load(); err != nil {
-		log.Println("ℹ️  No .env file found, using system environment variables")
-	} else {
-		log.Println("✅ Loaded .env file successfully")
+	// Load Config
+	configPath := os.Getenv("SLAR_CONFIG_PATH")
+	if configPath == "" {
+		// Fallback to config.dev.yaml if it exists (convenience for local dev)
+		if _, err := os.Stat("config.dev.yaml"); err == nil {
+			log.Println("ℹ️  SLAR_CONFIG_PATH not set, defaulting to config.dev.yaml")
+			configPath = "config.dev.yaml"
+		}
 	}
 
-	// Set Gin mode to debug to see more logs
+	if err := config.LoadConfig(configPath); err != nil {
+		log.Fatalf("❌ Failed to load config: %v", err)
+	}
+
+	// Set Gin mode
 	gin.SetMode(gin.DebugMode)
 
 	log.Println("🚀 Starting SLAR API Server with Workers...")
@@ -36,12 +43,11 @@ func main() {
 	var err error
 
 	// Database connection is required for workers
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("❌ DATABASE_URL environment variable is required")
+	if config.App.DatabaseURL == "" {
+		log.Fatal("❌ DATABASE_URL environment variable (or config) is required")
 	}
 
-	db, err = sql.Open("postgres", dbURL)
+	db, err = sql.Open("postgres", config.App.DatabaseURL)
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to database: %v", err)
 	}
@@ -63,8 +69,8 @@ func main() {
 
 	// Initialize Redis connection (optional)
 	var redisClient *redis.Client
-	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
-		opt, err := redis.ParseURL(redisURL)
+	if config.App.RedisURL != "" {
+		opt, err := redis.ParseURL(config.App.RedisURL)
 		if err != nil {
 			log.Printf("⚠️  Failed to parse Redis URL: %v", err)
 		} else {
@@ -125,10 +131,7 @@ func main() {
 	log.Println("✅ Workers started successfully")
 
 	// Start server in a goroutine
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	port := config.App.Port
 
 	serverErrors := make(chan error, 1)
 	go func() {

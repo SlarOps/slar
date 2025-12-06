@@ -41,7 +41,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{  $repository }}{{ $comp.image.name }}:{{ $comp.image.tag | default $root.Chart.AppVersion }}"
+          image: "{{  $repository }}{{ $comp.image.name }}:{{ $comp.image.tag | default $root.Values.image.tag }}"
           imagePullPolicy: {{ default $root.Values.image.pullPolicy $comp.image.pullPolicy | default "IfNotPresent" }}
           {{- if eq $name "kong" }}
           {{- if and $comp.service $comp.service.ports }}

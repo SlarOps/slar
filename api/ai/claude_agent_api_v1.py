@@ -11,6 +11,13 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
+# Load config from YAML (unifies config with Go API)
+try:
+    import config_loader
+    config_loader.load_config()
+except ImportError:
+    pass # config_loader might not exist in all environments yet, or during refactor
+
 from asyncio import Lock
 from collections import defaultdict
 from contextlib import asynccontextmanager

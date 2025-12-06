@@ -16,6 +16,7 @@
  */
 
 import { initSupabase } from './supabase';
+import apiClient from './api';
 
 const WORKSPACE_PATHS = {
   MCP_CONFIG: '.mcp.json',
@@ -231,20 +232,7 @@ export async function getMCPServersFromDB(userId) {
   try {
     console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
-      { method: 'GET' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.getMCPServers();
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get MCP servers');
@@ -287,30 +275,7 @@ export async function saveMCPServerToDB(userId, serverName, serverConfig) {
   try {
     console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig });
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const requestBody = {
-      auth_token: 'Bearer ' + session.access_token,
-      server_name: serverName,
-      ...serverConfig
-    };
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.saveMCPServer(serverName, serverConfig);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save MCP server');
@@ -334,20 +299,7 @@ export async function deleteMCPServerFromDB(userId, serverName) {
   try {
     console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', serverName);
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers/${encodeURIComponent(serverName)}?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
-      { method: 'DELETE' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.deleteMCPServer(serverName);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete MCP server');
@@ -377,20 +329,7 @@ export async function getMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 📂 Loading CLAUDE.md from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
-      { method: 'GET' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.getMemory(scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get memory');
@@ -420,30 +359,7 @@ export async function saveMemoryToDB(userId, content, scope = 'local') {
   try {
     console.log('[workspaceManager] 💾 Saving CLAUDE.md to PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const requestBody = {
-      auth_token: 'Bearer ' + session.access_token,
-      content,
-      scope
-    };
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.saveMemory(content, scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save memory');
@@ -467,20 +383,7 @@ export async function deleteMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 🗑️ Deleting CLAUDE.md from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
-      { method: 'DELETE' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.deleteMemory(scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete memory');
@@ -1152,18 +1055,7 @@ export async function loadMarketplaceFromBucket(userId, marketplaceName) {
  */
 export async function syncWorkspace(userId, authToken) {
   try {
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-
-    const response = await fetch(`${agentApiUrl}/api/sync-workspace`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
-      body: JSON.stringify({ user_id: userId })
-    });
-
-    const result = await response.json();
+    const result = await apiClient.syncWorkspace(userId);
     return result;
   } catch (error) {
     console.error('Failed to sync workspace:', error);
@@ -1218,37 +1110,21 @@ export async function getWorkspaceInfo(userId) {
  */
 export async function deleteMarketplaceAsync(marketplaceName, authToken) {
   try {
-    const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8002';
-
     console.log(`[deleteMarketplaceAsync] Deleting marketplace: ${marketplaceName}`);
 
-    const response = await fetch(
-      `${AI_BASE_URL}/api/marketplace/${encodeURIComponent(marketplaceName)}?auth_token=${encodeURIComponent(authToken)}`,
-      {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const result = await apiClient.deleteMarketplace(marketplaceName);
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete marketplace');
     }
 
-    if (!data.success) {
-      throw new Error(data.error || 'Failed to delete marketplace');
-    }
-
-    console.log(`[deleteMarketplaceAsync] ✅ Marketplace deletion initiated (job_id: ${data.job_id})`);
+    console.log(`[deleteMarketplaceAsync] ✅ Marketplace deletion initiated (job_id: ${result.job_id})`);
 
     return {
       success: true,
-      message: data.message,
-      job_id: data.job_id,
-      status: data.status
+      message: result.message,
+      job_id: result.job_id,
+      status: result.status
     };
   } catch (error) {
     console.error('[deleteMarketplaceAsync] Error:', error);

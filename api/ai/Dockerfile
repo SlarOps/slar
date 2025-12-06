@@ -44,8 +44,8 @@ RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -
     && apt-get update && apt-get install -y google-cloud-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude CLI globally
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Install Claude Code CLI globally (required by claude-agent-sdk)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Copy installed packages from builder
 COPY --from=builder /root/.local /root/.local
@@ -63,8 +63,8 @@ ENV USER_WORKSPACES_DIR=/app/workspaces
 ENV HOST=0.0.0.0
 ENV HOME=/root
 
-# Node.js environment variables to prevent stack overflow
-ENV NODE_OPTIONS="--stack-size=4096 --max-old-space-size=4096"
+# Node.js environment variables for memory limits
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Expose port
 EXPOSE 8002

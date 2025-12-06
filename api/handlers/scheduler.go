@@ -314,6 +314,16 @@ func (h *SchedulerHandler) CreateScheduler(c *gin.Context) {
 		return
 	}
 
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.OrganizationID = orgID
+		}
+	}
+
 	// Create scheduler
 	scheduler, err := h.SchedulerService.CreateScheduler(groupID, req, userID.(string))
 	if err != nil {
@@ -351,6 +361,16 @@ func (h *SchedulerHandler) CreateSchedulerWithShifts(c *gin.Context) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
+	}
+
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.Scheduler.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.Scheduler.OrganizationID = orgID
+		}
 	}
 
 	// Set default values for shifts
@@ -526,6 +546,16 @@ func (h *SchedulerHandler) CreateSchedulerWithShiftsOptimized(c *gin.Context) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
+	}
+
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.Scheduler.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.Scheduler.OrganizationID = orgID
+		}
 	}
 
 	// Validate request

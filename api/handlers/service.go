@@ -39,6 +39,25 @@ func (h *ServiceHandler) CreateService(c *gin.Context) {
 		return
 	}
 
+	// =========================================================================
+	// ReBAC: Auto-fill tenant context if not provided in request
+	// =========================================================================
+	filters := authz.GetReBACFilters(c)
+
+	// Auto-fill organization_id from context (if not provided in request)
+	if req.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.OrganizationID = orgID
+		}
+	}
+
+	// Auto-fill project_id from context (if not provided in request)
+	if req.ProjectID == "" {
+		if projectID, ok := filters["current_project_id"].(string); ok && projectID != "" {
+			req.ProjectID = projectID
+		}
+	}
+
 	// Create service
 	service, err := h.ServiceService.CreateService(groupID, req, userID.(string))
 	if err != nil {

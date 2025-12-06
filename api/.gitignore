@@ -1,9 +1,9 @@
 # Environment files
-.env
-.env.local
-.env.production
-.env.staging
-.envrc
+# .env
+# .env.local
+# .env.production
+# .env.staging
+# .envrc
 
 # Firebase credentials
 firebase-service-account-key.json
@@ -39,8 +39,7 @@ bin/
 *.dylib
 
 # Go build outputs
-main
-server
-worker
-*.out
-*.testmain
+# server
+# worker
+# *.out
+# *.testmain

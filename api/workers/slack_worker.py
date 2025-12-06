@@ -30,6 +30,13 @@ import ast
 # Load environment variables from .env file
 load_dotenv()
 
+# Load config from YAML (unifies config with Go API)
+try:
+    import config_loader
+    config_loader.load_config()
+except ImportError:
+    pass # config_loader might not exist in all environments yet, or during refactor
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
