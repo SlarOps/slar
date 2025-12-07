@@ -53,7 +53,7 @@ func (h *ServiceHandler) CreateService(c *gin.Context) {
 
 	// Auto-fill project_id from context (if not provided in request)
 	if req.ProjectID == "" {
-		if projectID, ok := filters["current_project_id"].(string); ok && projectID != "" {
+		if projectID, ok := filters["project_id"].(string); ok && projectID != "" {
 			req.ProjectID = projectID
 		}
 	}

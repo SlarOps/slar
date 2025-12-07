@@ -131,7 +131,7 @@ func (s *ServiceService) GetService(serviceID string) (db.Service, error) {
 	return service, nil
 }
 
-// GetGroupServices returns all services in a group
+// GetGroupServices returns all active services in a group
 func (s *ServiceService) GetGroupServices(groupID string) ([]db.Service, error) {
 	query := `
 		SELECT s.id, s.group_id, s.name, s.description, s.routing_key, s.escalation_policy_id,
@@ -139,7 +139,7 @@ func (s *ServiceService) GetGroupServices(groupID string) ([]db.Service, error) 
 		       COALESCE(s.integrations, '{}') as integrations,
 		       COALESCE(s.notification_settings, '{}') as notification_settings
 		FROM services s
-		WHERE s.group_id = $1
+		WHERE s.group_id = $1 AND s.is_active = true
 		ORDER BY s.name ASC
 	`
 
@@ -369,10 +369,14 @@ func (s *ServiceService) ListServices(filters map[string]interface{}) ([]db.Serv
 	argIndex := 3
 
 	// Apply resource-specific filters
+	// Default to showing only active services unless explicitly set to false
 	if isActive, ok := filters["is_active"].(bool); ok {
 		query += fmt.Sprintf(" AND s.is_active = $%d", argIndex)
 		args = append(args, isActive)
 		argIndex++
+	} else {
+		// Default: only show active services
+		query += " AND s.is_active = true"
 	}
 
 	if search, ok := filters["search"].(string); ok && search != "" {

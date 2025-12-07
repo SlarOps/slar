@@ -479,7 +479,15 @@ func GetReBACFilters(c *gin.Context) map[string]interface{} {
 	}
 
 	// Optional: Project scoping (if explicitly provided)
-	if projectID := GetProjectIDFromContext(c); projectID != "" {
+	// Priority: context (set by middleware) > query param > header
+	projectID := GetProjectIDFromContext(c)
+	if projectID == "" {
+		projectID = c.Query("project_id")
+	}
+	if projectID == "" {
+		projectID = c.GetHeader("X-Project-ID")
+	}
+	if projectID != "" {
 		filters["project_id"] = projectID
 	}
 
