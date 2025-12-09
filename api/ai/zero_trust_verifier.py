@@ -386,6 +386,8 @@ class ZeroTrustVerifier:
         # 6. Verify Ed25519 signature
         try:
             canonical_json = self._canonical_json(payload)
+            logger.info(f"📜 Canonical JSON for verification: {canonical_json[:200]}...")
+            logger.info(f"📜 Signature hex: {signature_hex[:64]}...")
             signature_bytes = bytes.fromhex(signature_hex)
 
             # Create Ed25519 public key from bytes

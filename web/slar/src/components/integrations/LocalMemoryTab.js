@@ -118,30 +118,6 @@ export default function LocalMemoryTab() {
 
     return (
         <div className="space-y-3 sm:space-y-4">
-            {/* Header with Info */}
-            <div className="bg-blue-50/50 dark:bg-blue-900/20 rounded-lg p-3 sm:p-4">
-                <div className="flex items-start gap-2 sm:gap-3">
-                    <div className="flex-shrink-0 mt-0.5">
-                        <DocumentTextIcon className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <h3 className="text-xs sm:text-sm font-medium text-blue-900 dark:text-blue-100">
-                            Local Memory (Project-Specific)
-                        </h3>
-                        <p className="text-xs sm:text-sm text-blue-700 dark:text-blue-300 mt-1">
-                            This memory is specific to your current project (./.claude/CLAUDE.md).
-                            Store project-specific commands, configurations, and context here.
-                        </p>
-                        {lastUpdated && (
-                            <div className="flex items-center gap-1 sm:gap-2 mt-2 text-xs text-blue-600 dark:text-blue-400">
-                                <ClockIcon className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
-                                <span className="truncate">Last updated: {formatDate(lastUpdated)}</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
             {/* Editor */}
             <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
                 {/* Toolbar */}

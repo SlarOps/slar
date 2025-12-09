@@ -1,11 +1,11 @@
 # ==========================================
 # Environment & Secrets
 # ==========================================
-# .env
-# .env.*
-# .env.local
-# .env.production
-# .env.development
+.env
+.env.*
+.env.local
+.env.production
+.env.development
 !.env.example
 *.key
 *.pem
@@ -137,3 +137,4 @@ Icon
 ._*
 .Spotlight-V100
 .Trashes
+.config.*

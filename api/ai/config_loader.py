@@ -9,15 +9,26 @@ def load_config():
     """
     Load configuration from YAML file specified by SLAR_CONFIG_PATH.
     If file exists, load it and set environment variables for compatibility.
+
+    Priority:
+    1. SLAR_CONFIG_PATH env var
+    2. /app/config/config.yaml (production)
+    3. ./config.dev.yaml (local development)
     """
     config_path = os.getenv("SLAR_CONFIG_PATH")
     if not config_path:
-        # Check default location if not set
-        default_path = "/app/config/config.yaml"
-        if os.path.exists(default_path):
-            config_path = default_path
-        else:
-            logger.info("ℹ️  SLAR_CONFIG_PATH not set and default not found, skipping config file load")
+        # Check default locations
+        default_paths = [
+            "/app/config/config.yaml",  # Production (Docker)
+            os.path.join(os.path.dirname(__file__), ".config.dev.yaml"),  # Local dev
+        ]
+        for path in default_paths:
+            if os.path.exists(path):
+                config_path = path
+                break
+
+        if not config_path:
+            logger.info("ℹ️  No config file found, skipping config file load")
             return
 
     try:
@@ -49,6 +60,7 @@ def load_config():
             if config_key in config and config[config_key]:
                 if env_key not in os.environ:
                     os.environ[env_key] = str(config[config_key])
+                    print(f"[config_loader] Set {env_key}={config[config_key][:30]}...")
 
     except Exception as e:
         logger.error(f"❌ Failed to load config file: {e}")

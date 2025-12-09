@@ -1,6 +1,6 @@
 # Multi-stage build for AI Agent Service
 # Stage 1: Builder
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -23,6 +23,8 @@ WORKDIR /app
 # Install runtime dependencies including Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    zip \
+    unzip \
     ca-certificates \
     gnupg \
     apt-transport-https \
@@ -37,6 +39,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install kubectl
 RUN curl -fsSL https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
+
+# Install awscli
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install
 
 # Install Google Cloud SDK
 RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \

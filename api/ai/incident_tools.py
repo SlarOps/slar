@@ -140,8 +140,9 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
         params["status"] = status
 
     # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-    org_id = get_org_id()
-    project_id = get_project_id()
+    # Priority: 1. Argument 2. Context 3. Environment Variable
+    org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+    project_id = args.get("project_id") or get_project_id()
     if org_id:
         params["org_id"] = org_id
     if project_id:
@@ -279,8 +280,9 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
         }
 
         # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        org_id = get_org_id()
-        project_id = get_project_id()
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
         params = {}
         if org_id:
             params["org_id"] = org_id
@@ -415,8 +417,9 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
         }
 
         # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        org_id = get_org_id()
-        project_id = get_project_id()
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
         if org_id:
             headers["X-Org-ID"] = org_id
         if project_id:
@@ -492,6 +495,7 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
     {
         "start_time": str,  # ISO 8601 format: 2024-01-01T00:00:00Z
         "end_time": str,  # ISO 8601 format: 2024-01-01T23:59:59Z
+        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
         "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
         "limit": int,  # Optional: Max number of incidents to return (default: 50)
     },
@@ -606,8 +610,9 @@ async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
         }
 
         # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        org_id = get_org_id()
-        project_id = get_project_id()
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
         if org_id:
             headers["X-Org-ID"] = org_id
         if project_id:

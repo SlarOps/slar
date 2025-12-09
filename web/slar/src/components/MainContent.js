@@ -19,14 +19,13 @@ export default function MainContent({ children }) {
   const showSidebarMargin = !isMobile && isAuthenticated && !isAuthPage && !isOnboardingPage;
 
   return (
-    <main 
-      className={`transition-all duration-300 ${
-        showSidebarMargin 
-          ? collapsed 
-            ? 'md:ml-16' 
-            : 'md:ml-60'
-          : ''
-      } ${isMobile ? 'pt-14' : 'pt-0'} ${isFullBleed ? 'h-screen' : 'min-h-screen'}`}
+    <main
+      className={`transition-all duration-300 ${showSidebarMargin
+        ? collapsed
+          ? 'md:ml-16'
+          : 'md:ml-60'
+        : ''
+        } ${isMobile ? 'pt-14' : 'pt-0'} ${isFullBleed ? 'h-screen' : 'min-h-screen'}`}
     >
       {isFullBleed ? (
         // Full-bleed layout for chat/AI pages - scrollbar at edge
@@ -35,7 +34,7 @@ export default function MainContent({ children }) {
         </div>
       ) : (
         // Standard container layout
-        <div className={`mx-auto px-4 py-6 ${isAuthPage ? '' : 'max-w-7xl'}`}>
+        <div className={`mx-auto py-6 ${isAuthPage ? '' : 'max-w-7xl'}`}>
           {children}
         </div>
       )}

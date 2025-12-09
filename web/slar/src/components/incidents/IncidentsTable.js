@@ -31,7 +31,7 @@ export default function IncidentsTable({
     };
 
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'bg-gray-100 text-gray-800'}`}>
+      <span className={`inline-flex items-center py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'bg-gray-100 text-gray-800'}`}>
         {status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown'}
       </span>
     );
@@ -413,7 +413,7 @@ export default function IncidentsTable({
 
 
 
-                  <td className="px-6 py-4">
+                  <td className="px-6">
                     <div className="text-sm text-gray-900 dark:text-white">
                       <div className="font-medium">{incident.title}</div>
                       {incident.description && (
@@ -464,7 +464,7 @@ export default function IncidentsTable({
                         className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 p-2 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                         title="Acknowledge"
                       >
-                        Acknowledge
+                        ACK
                       </button>
                     )}
                   </td>

@@ -44,7 +44,7 @@ export default function IncidentsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [filters, setFilters] = useState(INITIAL_FILTERS);
-  
+
   // Modal state from URL
   const modalIncidentId = searchParams.get('modal');
   const isModalOpen = !!modalIncidentId;
@@ -70,7 +70,7 @@ export default function IncidentsPage() {
           ...(currentProject?.id && { project_id: currentProject.id })
         };
         const data = await apiClient.getIncidents('', filterParams);
-        
+
         // Calculate stats from incidents data
         const incidents = data.incidents || [];
         const calculatedStats = {
@@ -80,7 +80,7 @@ export default function IncidentsPage() {
           resolved: incidents.filter(incident => incident.status === 'resolved').length,
           high_urgency: incidents.filter(incident => incident.urgency === 'high').length
         };
-        
+
         setStats(calculatedStats);
         setError(null);
       } catch (err) {
@@ -123,7 +123,7 @@ export default function IncidentsPage() {
 
         const data = await apiClient.getIncidents('', filterParams);
         setIncidents(data.incidents || []);
-        
+
       } catch (err) {
         console.error('Error fetching incidents:', err);
         setError('Failed to load incidents');
@@ -166,10 +166,10 @@ export default function IncidentsPage() {
         default:
           console.log(`Incident ${action}:`, incidentId);
       }
-      
+
       // Refresh stats after action
       setRefreshTrigger(prev => prev + 1);
-      
+
     } catch (err) {
       console.error(`Error ${action} incident:`, err);
       setError(`Failed to ${action} incident`);
@@ -203,16 +203,16 @@ export default function IncidentsPage() {
   const handleBulkAction = async (action, value) => {
     try {
       console.log(`Bulk ${action} for incidents:`, selectedIncidents, value);
-      
+
       // Perform bulk action
       for (const incidentId of selectedIncidents) {
         await handleIncidentAction(action, incidentId);
       }
-      
+
       // Clear selection and refresh
       setSelectedIncidents([]);
       setRefreshTrigger(prev => prev + 1);
-      
+
     } catch (err) {
       console.error(`Error performing bulk ${action}:`, err);
       setError(`Failed to ${action} selected incidents`);
@@ -279,7 +279,7 @@ export default function IncidentsPage() {
             <span className="sm:hidden">New</span>
           </button>
         </div>
-        
+
         {/* Error State */}
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
@@ -334,7 +334,7 @@ export default function IncidentsPage() {
       </div>
 
       {/* Tabs */}
-      <IncidentTabs 
+      <IncidentTabs
         activeTab={activeTab}
         onTabChange={setActiveTab}
         stats={stats}
