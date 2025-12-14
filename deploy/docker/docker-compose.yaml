@@ -11,8 +11,6 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-    networks:
-      - slar-network
     restart: "no"
     profiles: ["migration"]
 
@@ -50,7 +48,8 @@ services:
   api:
     container_name: slar-api
     build:
-      context: ../../api
+      context: ../../
+      dockerfile: api/Dockerfile
     expose:
       - "8080"
     ports:
@@ -59,10 +58,10 @@ services:
       - PORT=8080
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-supabase-anon-key}
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-your-supabase-jwt-secret}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - SLAR_ENV=production
-      - SLAR_CLOUD_URL=${SLAR_CLOUD_URL}
+      - SLAR_CLOUD_URL=${SLAR_CLOUD_URL} 
       - SLAR_CLOUD_TOKEN=${SLAR_CLOUD_TOKEN}
       - SLAR_INSTANCE_ID=${SLAR_INSTANCE_ID}
     restart: unless-stopped
@@ -80,9 +79,9 @@ services:
     build:
       context: ../../api/workers
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres?sslmode=disable}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-your-slack-bot-token}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-your-slack-app-token}
+      - DATABASE_URL=${DATABASE_URL}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
       - API_BASE_URL=http://api:8080
       - POLL_INTERVAL=1
       - BATCH_SIZE=10
@@ -147,15 +146,6 @@ services:
     networks:
       - slar-network
     entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
-
-  cloudflared:
-    container_name: slar-cloudflared
-    image: cloudflare/cloudflared:latest
-    command: tunnel run --token ${TUNNEL_TOKEN}
-    restart: unless-stopped
-    networks:
-      - slar-network
-
 
 networks:
   slar-network:

@@ -1555,6 +1555,62 @@ class APIClient {
   }
 
   // ===========================
+  // INSTALLED PLUGINS (AI Backend)
+  // ===========================
+
+  /**
+   * Get all installed plugins for current user
+   * @returns {Promise<object>} { success, plugins: [...] }
+   */
+  async getInstalledPlugins() {
+    return this.request('/api/installed-plugins', {}, this.aiBaseURL);
+  }
+
+  /**
+   * Add or update an installed plugin
+   * @param {object} plugin - Plugin data { plugin_name, marketplace_name, plugin_type, config }
+   * @returns {Promise<object>} { success, plugin: {...} }
+   */
+  async addInstalledPlugin(plugin) {
+    return this.request('/api/installed-plugins', {
+      method: 'POST',
+      body: JSON.stringify(plugin)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Remove an installed plugin by ID
+   * @param {string} pluginId - Plugin UUID to remove
+   * @returns {Promise<object>} { success, message }
+   */
+  async removeInstalledPlugin(pluginId) {
+    return this.request(`/api/installed-plugins/${pluginId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  // ===========================
+  // MARKETPLACES (AI Backend)
+  // ===========================
+
+  /**
+   * Get all marketplaces for current user
+   * @returns {Promise<object>} { success, marketplaces: [...] }
+   */
+  async getAllMarketplaces() {
+    return this.request('/api/marketplaces', {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get a single marketplace by name
+   * @param {string} marketplaceName - Name of the marketplace
+   * @returns {Promise<object>} { success, marketplace: {...} }
+   */
+  async getMarketplaceByName(marketplaceName) {
+    return this.request(`/api/marketplaces/${encodeURIComponent(marketplaceName)}`, {}, this.aiBaseURL);
+  }
+
+  // ===========================
   // MOBILE APP CONNECTION
   // ===========================
 

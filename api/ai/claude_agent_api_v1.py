@@ -60,6 +60,9 @@ from supabase_storage import (
     delete_user_allowed_tool,
 )
 
+# Import database routes (split for better organization)
+from routes_db import router as db_router
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -234,6 +237,10 @@ app.add_middleware(
 # Apply rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
 logger.info(f"✅ Rate limiting enabled: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
+
+# Include database routes (installed_plugins, marketplaces)
+app.include_router(db_router)
+logger.info("✅ Database routes loaded from routes_db.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -870,7 +877,8 @@ async def get_mcp_servers(request: Request):
         }
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         # Get auth token from query or header
         auth_token = request.query_params.get("auth_token") or request.headers.get(
@@ -885,17 +893,18 @@ async def get_mcp_servers(request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Query from PostgreSQL
-        supabase = get_supabase_client()
-        result = (
-            supabase.table("user_mcp_servers")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .execute()
+        # Query from PostgreSQL using raw SQL
+        servers = execute_query(
+            """
+            SELECT * FROM user_mcp_servers
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+            fetch="all"
         )
 
-        return {"success": True, "servers": result.data or []}
+        return {"success": True, "servers": servers or []}
 
     except Exception as e:
         return {
@@ -1046,7 +1055,8 @@ async def create_mcp_server(request: Request):
         {"success": bool, "server": {...}}
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         body = await request.json()
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
@@ -1091,7 +1101,6 @@ async def create_mcp_server(request: Request):
             return {"success": False, "error": "Invalid auth token"}
 
         # Build server record based on type
-        supabase = get_supabase_client()
         server_record = {
             "user_id": user_id,
             "server_name": server_name,
@@ -1108,11 +1117,33 @@ async def create_mcp_server(request: Request):
             server_record["url"] = body.get("url")
             server_record["headers"] = body.get("headers", {})
 
-        # Upsert to PostgreSQL
-        result = (
-            supabase.table("user_mcp_servers")
-            .upsert(server_record, on_conflict="user_id,server_name")
-            .execute()
+        # Upsert to PostgreSQL using raw SQL
+        execute_query(
+            """
+            INSERT INTO user_mcp_servers (user_id, server_name, server_type, status, command, args, env, url, headers)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, server_name) DO UPDATE SET
+                server_type = EXCLUDED.server_type,
+                status = EXCLUDED.status,
+                command = EXCLUDED.command,
+                args = EXCLUDED.args,
+                env = EXCLUDED.env,
+                url = EXCLUDED.url,
+                headers = EXCLUDED.headers,
+                updated_at = NOW()
+            """,
+            (
+                user_id,
+                server_name,
+                server_type,
+                "active",
+                server_record.get("command"),
+                json.dumps(server_record.get("args", [])),
+                json.dumps(server_record.get("env", {})),
+                server_record.get("url"),
+                json.dumps(server_record.get("headers", {})),
+            ),
+            fetch="none"
         )
 
         logger.info(
@@ -1128,7 +1159,7 @@ async def create_mcp_server(request: Request):
 
         return {
             "success": True,
-            "server": result.data[0] if result.data else server_record,
+            "server": server_record,
         }
 
     except Exception as e:
@@ -1153,7 +1184,8 @@ async def delete_mcp_server(server_name: str, request: Request):
         {"success": bool, "message": str}
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         # Get auth token from query or header
         auth_token = request.query_params.get("auth_token") or request.headers.get(
@@ -1168,11 +1200,12 @@ async def delete_mcp_server(server_name: str, request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Delete from PostgreSQL
-        supabase = get_supabase_client()
-        supabase.table("user_mcp_servers").delete().eq("user_id", user_id).eq(
-            "server_name", server_name
-        ).execute()
+        # Delete from PostgreSQL using raw SQL
+        execute_query(
+            "DELETE FROM user_mcp_servers WHERE user_id = %s AND server_name = %s",
+            (user_id, server_name),
+            fetch="none"
+        )
 
         logger.info(f"✅ Deleted MCP server: {server_name} for user {user_id}")
 
@@ -1212,7 +1245,8 @@ async def get_memory(request: Request):
         }
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         # Get auth token from query or header
         auth_token = request.query_params.get("auth_token") or request.headers.get(
@@ -1228,33 +1262,24 @@ async def get_memory(request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Query from PostgreSQL
-        supabase = get_supabase_client()
-        result = (
-            supabase.table("claude_memory")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("scope", scope)
-            .single()
-            .execute()
+        # Query from PostgreSQL using raw SQL
+        result = execute_query(
+            "SELECT * FROM claude_memory WHERE user_id = %s AND scope = %s",
+            (user_id, scope),
+            fetch="one"
         )
 
-        if result.data:
+        if result:
             return {
                 "success": True,
-                "content": result.data.get("content", ""),
-                "updated_at": result.data.get("updated_at"),
+                "content": result.get("content", ""),
+                "updated_at": str(result.get("updated_at")) if result.get("updated_at") else None,
             }
         else:
             # No memory yet, return empty
             return {"success": True, "content": "", "updated_at": None}
 
     except Exception as e:
-        # User doesn't have memory yet - this is normal
-        if "PGRST116" in str(e) or "not found" in str(e).lower():
-            logger.info("ℹ️  No memory found for user (first time)")
-            return {"success": True, "content": "", "updated_at": None}
-
         return {
             "success": False,
             "error": sanitize_error_message(e, "getting memory")
@@ -1281,7 +1306,8 @@ async def update_memory(request: Request):
         }
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         body = await request.json()
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
@@ -1296,14 +1322,17 @@ async def update_memory(request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Upsert to PostgreSQL (instant, no S3 lag!)
-        supabase = get_supabase_client()
-        memory_record = {"user_id": user_id, "content": content, "scope": scope}
-
-        result = (
-            supabase.table("claude_memory")
-            .upsert(memory_record, on_conflict="user_id,scope")
-            .execute()
+        # Upsert to PostgreSQL using raw SQL
+        execute_query(
+            """
+            INSERT INTO claude_memory (user_id, content, scope)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, scope) DO UPDATE SET
+                content = EXCLUDED.content,
+                updated_at = NOW()
+            """,
+            (user_id, content, scope),
+            fetch="none"
         )
 
         logger.info(f"✅ Memory updated for user {user_id} ({len(content)} chars)")
@@ -1317,8 +1346,8 @@ async def update_memory(request: Request):
 
         return {
             "success": True,
-            "content": result.data[0].get("content") if result.data else content,
-            "updated_at": result.data[0].get("updated_at") if result.data else None,
+            "content": content,
+            "updated_at": datetime.utcnow().isoformat(),
         }
 
     except Exception as e:
@@ -1341,7 +1370,8 @@ async def delete_memory(request: Request):
         {"success": bool, "message": str}
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         # Get auth token from query or header
         auth_token = request.query_params.get("auth_token") or request.headers.get(
@@ -1357,9 +1387,12 @@ async def delete_memory(request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Delete from PostgreSQL
-        supabase = get_supabase_client()
-        supabase.table("claude_memory").delete().eq("user_id", user_id).eq("scope", scope).execute()
+        # Delete from PostgreSQL using raw SQL
+        execute_query(
+            "DELETE FROM claude_memory WHERE user_id = %s AND scope = %s",
+            (user_id, scope),
+            fetch="none"
+        )
 
         logger.info(f"✅ Memory deleted for user {user_id}")
 
@@ -1484,7 +1517,8 @@ async def install_plugin_from_marketplace(request: Request):
         }
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         body = await request.json()
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
@@ -1511,20 +1545,15 @@ async def install_plugin_from_marketplace(request: Request):
         # (marketplace.json might not be unzipped yet from bucket)
         install_path = f".claude/plugins/marketplaces/{marketplace_name}/{plugin_name}"  # Default fallback
 
-        supabase = get_supabase_client()
-
         def get_marketplace_metadata_sync():
-            """Get marketplace metadata from PostgreSQL"""
+            """Get marketplace metadata from PostgreSQL using raw SQL"""
             try:
-                result = (
-                    supabase.table("marketplaces")
-                    .select("*")
-                    .eq("user_id", user_id)
-                    .eq("name", marketplace_name)
-                    .execute()
+                result = execute_query(
+                    "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+                    (user_id, marketplace_name),
+                    fetch="one"
                 )
-                if result.data and len(result.data) > 0:
-                    return result.data[0]
+                return result
             except Exception as e:
                 logger.error(f"Failed to fetch marketplace from PostgreSQL: {e}")
             return None
@@ -1591,15 +1620,22 @@ async def install_plugin_from_marketplace(request: Request):
                 "is_local": False,
             }
 
-            result = (
-                supabase.table("installed_plugins")
-                .upsert(
-                    plugin_record, on_conflict="user_id,plugin_name,marketplace_name"
-                )
-                .execute()
+            execute_query(
+                """
+                INSERT INTO installed_plugins (user_id, plugin_name, marketplace_name, version, install_path, status, is_local)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, plugin_name, marketplace_name) DO UPDATE SET
+                    version = EXCLUDED.version,
+                    install_path = EXCLUDED.install_path,
+                    status = EXCLUDED.status,
+                    is_local = EXCLUDED.is_local,
+                    updated_at = NOW()
+                """,
+                (user_id, plugin_name, marketplace_name, version, install_path, "active", False),
+                fetch="none"
             )
 
-            return result.data[0] if result.data else plugin_record
+            return plugin_record
 
         plugin_record = await asyncio.get_event_loop().run_in_executor(
             None, add_to_db_sync
@@ -1826,7 +1862,8 @@ async def fetch_marketplace_metadata(request: Request):
         import json
 
         import httpx
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         body = await request.json()
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
@@ -1892,8 +1929,7 @@ async def fetch_marketplace_metadata(request: Request):
         logger.info("💾 Saving marketplace metadata to PostgreSQL...")
 
         def save_to_db_sync():
-            """Save marketplace to PostgreSQL via Supabase PostgREST"""
-            supabase = get_supabase_client()
+            """Save marketplace to PostgreSQL using raw SQL"""
             marketplace_record = {
                 "user_id": user_id,
                 "name": marketplace_name,
@@ -1906,17 +1942,36 @@ async def fetch_marketplace_metadata(request: Request):
                 "zip_path": None,  # No ZIP file
                 "zip_size": 0,
                 "status": "active",
-                "last_synced_at": "now()",
             }
 
-            # Upsert to PostgreSQL
-            result = (
-                supabase.table("marketplaces")
-                .upsert(marketplace_record, on_conflict="user_id,name")
-                .execute()
+            # Upsert to PostgreSQL using raw SQL
+            execute_query(
+                """
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (user_id, name) DO UPDATE SET
+                    repository_url = EXCLUDED.repository_url,
+                    branch = EXCLUDED.branch,
+                    display_name = EXCLUDED.display_name,
+                    description = EXCLUDED.description,
+                    version = EXCLUDED.version,
+                    plugins = EXCLUDED.plugins,
+                    zip_path = EXCLUDED.zip_path,
+                    zip_size = EXCLUDED.zip_size,
+                    status = EXCLUDED.status,
+                    last_synced_at = NOW(),
+                    updated_at = NOW()
+                """,
+                (
+                    user_id, marketplace_name, repository_url, branch,
+                    marketplace_record["display_name"], marketplace_record["description"],
+                    marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
+                    None, 0, "active"
+                ),
+                fetch="none"
             )
 
-            return result.data[0] if result.data else marketplace_record
+            return marketplace_record
 
         db_record = await asyncio.get_event_loop().run_in_executor(
             None, save_to_db_sync
@@ -1981,6 +2036,7 @@ async def download_repo_zip(request: Request):
 
         import httpx
         from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from database_util import execute_query
 
         body = await request.json()
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
@@ -2075,7 +2131,7 @@ async def download_repo_zip(request: Request):
         logger.info("💾 Saving marketplace metadata to PostgreSQL...")
 
         def save_to_db_sync():
-            """Save marketplace to PostgreSQL via Supabase PostgREST"""
+            """Save marketplace to PostgreSQL using raw SQL"""
             marketplace_record = {
                 "user_id": user_id,
                 "name": marketplace_name,
@@ -2088,17 +2144,36 @@ async def download_repo_zip(request: Request):
                 "zip_path": storage_path,
                 "zip_size": zip_size,
                 "status": "active",
-                "last_synced_at": "now()",
             }
 
-            # Upsert to PostgreSQL
-            result = (
-                supabase.table("marketplaces")
-                .upsert(marketplace_record, on_conflict="user_id,name")
-                .execute()
+            # Upsert to PostgreSQL using raw SQL
+            execute_query(
+                """
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (user_id, name) DO UPDATE SET
+                    repository_url = EXCLUDED.repository_url,
+                    branch = EXCLUDED.branch,
+                    display_name = EXCLUDED.display_name,
+                    description = EXCLUDED.description,
+                    version = EXCLUDED.version,
+                    plugins = EXCLUDED.plugins,
+                    zip_path = EXCLUDED.zip_path,
+                    zip_size = EXCLUDED.zip_size,
+                    status = EXCLUDED.status,
+                    last_synced_at = NOW(),
+                    updated_at = NOW()
+                """,
+                (
+                    user_id, marketplace_name, repository_url, branch,
+                    marketplace_record["display_name"], marketplace_record["description"],
+                    marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
+                    storage_path, zip_size, "active"
+                ),
+                fetch="none"
             )
 
-            return result.data[0] if result.data else marketplace_record
+            return marketplace_record
 
         db_record = await asyncio.get_event_loop().run_in_executor(
             None, save_to_db_sync
@@ -2154,7 +2229,8 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         }
     """
     try:
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
+        from supabase_storage import extract_user_id_from_token
+        from database_util import execute_query
 
         # Get auth token from query or header
         auth_token = request.query_params.get("auth_token") or request.headers.get(
@@ -2171,21 +2247,15 @@ async def delete_marketplace(marketplace_name: str, request: Request):
 
         logger.info(f"🗑️  User {user_id}: Deleting marketplace '{marketplace_name}'")
 
-        supabase = get_supabase_client()
-
-        # Check if marketplace exists
-        marketplace_result = (
-            supabase.table("marketplaces")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("name", marketplace_name)
-            .execute()
+        # Check if marketplace exists using raw SQL
+        marketplace = execute_query(
+            "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+            (user_id, marketplace_name),
+            fetch="one"
         )
 
-        if not marketplace_result.data or len(marketplace_result.data) == 0:
+        if not marketplace:
             return {"success": False, "error": "Marketplace not found"}
-
-        marketplace = marketplace_result.data[0]
 
         # Perform cleanup directly (no PGMQ, no background worker)
         cleanup_result = await cleanup_marketplace_task(
@@ -2216,6 +2286,9 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         }
 
 
+# NOTE: installed_plugins and marketplaces endpoints moved to routes_db.py
+
+
 async def cleanup_marketplace_task(
     user_id: str, marketplace_name: str, marketplace_id: str, zip_path: str = None
 ):
@@ -2240,13 +2313,14 @@ async def cleanup_marketplace_task(
     from pathlib import Path
 
     from supabase_storage import get_supabase_client, get_user_workspace_path
+    from database_util import execute_query
 
     logger.info(
         f"🧹 Starting cleanup for marketplace '{marketplace_name}' (user: {user_id})"
     )
 
     try:
-        supabase = get_supabase_client()
+        supabase = get_supabase_client()  # Keep for storage operations only
         cleaned_items = []
 
         # Step 1: Cleanup workspace directory
@@ -2290,24 +2364,25 @@ async def cleanup_marketplace_task(
 
         # Step 3: Delete installed plugins (CASCADE will handle this, but let's be explicit)
         try:
-            plugin_result = (
-                supabase.table("installed_plugins")
-                .delete()
-                .eq("user_id", user_id)
-                .eq("marketplace_name", marketplace_name)
-                .execute()
+            execute_query(
+                "DELETE FROM installed_plugins WHERE user_id = %s AND marketplace_name = %s",
+                (user_id, marketplace_name),
+                fetch="none"
             )
-            deleted_count = len(plugin_result.data) if plugin_result.data else 0
-            cleaned_items.append(f"plugins:{deleted_count}")
+            cleaned_items.append(f"plugins:deleted")
             logger.info(
-                f"✅ Deleted {deleted_count} installed plugins for marketplace"
+                f"✅ Deleted installed plugins for marketplace"
             )
         except Exception as e:
             logger.warning(f"⚠️  Failed to delete installed plugins: {e}")
 
         # Step 4: Delete marketplace record from PostgreSQL
         try:
-            supabase.table("marketplaces").delete().eq("id", marketplace_id).execute()
+            execute_query(
+                "DELETE FROM marketplaces WHERE id = %s",
+                (marketplace_id,),
+                fetch="none"
+            )
             cleaned_items.append(f"metadata:marketplace")
             logger.info(f"✅ Deleted marketplace metadata from PostgreSQL")
         except Exception as e:

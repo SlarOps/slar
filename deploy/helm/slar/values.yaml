@@ -338,14 +338,3 @@ components:
     configMap:
       enabled: true
       name: kong-config
-
-cloudflared:
-  enabled: true
-  image:
-    repository: cloudflare/cloudflared
-    tag: latest
-    pullPolicy: Always
-  replicas: 1
-  tunnelToken: "" # Set this or use a secret
-  existingSecret: "" # Name of an existing secret containing the token
-

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/viper"
+	"github.com/joho/godotenv"
 )
 
 // Config holds all application configuration
@@ -47,6 +48,15 @@ var App Config
 
 // LoadConfig loads configuration from file and environment variables
 func LoadConfig(path string) error {
+	// Auto-load .env file if present (Local Development Convenience)
+	// This makes 'go run' work without manually exporting env vars
+	if err := godotenv.Load(); err != nil {
+		// Ignore error if .env doesn't exist (e.g. in Production/Docker)
+		// But if it fails for other reasons, it's fine, we continue
+	} else {
+		log.Println("✅ Loaded .env file")
+	}
+
 	v := viper.New()
 
 	// Set default values
@@ -63,10 +73,31 @@ func LoadConfig(path string) error {
 	}
 
 	// Environment variable settings
-	v.SetEnvPrefix("SLAR") // e.g. SLAR_DATABASE_URL
+	v.SetEnvPrefix("SLAR") // Legacy support
 	v.SetDefault("backend_url", "http://localhost:8080")
-	
 	v.SetDefault("data_dir", "./data")
+
+	// Bind standard environment variables (Docker/deploy compatibility)
+	// This allows using standard keys like DATABASE_URL instead of SLAR_DATABASE_URL
+	v.BindEnv("database_url", "DATABASE_URL")
+	v.BindEnv("redis_url", "REDIS_URL")
+	v.BindEnv("port", "PORT")
+	
+	// Bind Supabase Env Vars
+	v.BindEnv("supabase_url", "SUPABASE_URL")
+	v.BindEnv("supabase_anon_key", "SUPABASE_ANON_KEY")
+	v.BindEnv("supabase_service_role_key", "SUPABASE_SERVICE_ROLE_KEY")
+	v.BindEnv("supabase_jwt_secret", "SUPABASE_JWT_SECRET")
+
+	// Bind External Services Env Vars
+	v.BindEnv("anthropic_api_key", "ANTHROPIC_API_KEY")
+	v.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN")
+	v.BindEnv("slack_app_token", "SLACK_APP_TOKEN")
+
+	// Bind Notification Gateway Env Vars
+	v.BindEnv("notification_gateway.url", "SLAR_CLOUD_URL")
+	v.BindEnv("notification_gateway.api_token", "SLAR_CLOUD_TOKEN")
+	v.BindEnv("notification_gateway.instance_id", "SLAR_INSTANCE_ID")
 
 	v.AutomaticEnv()
 

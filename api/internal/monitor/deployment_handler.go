@@ -77,17 +77,26 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 	}
 
 	// 2. Read Worker Script
-	// Assuming running from project root
-	scriptPath := filepath.Join("worker", "src", "index.js")
-	scriptContent, err := os.ReadFile(scriptPath)
-	if err != nil {
-		// Try looking in ../worker/src/index.js (if running from cmd/server)
-		scriptPath = filepath.Join("..", "worker", "src", "index.js")
-		scriptContent, err = os.ReadFile(scriptPath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script: " + err.Error()})
-			return
+	projectRoot, _ := os.Getwd()
+	possiblePaths := []string{
+		filepath.Join(projectRoot, "worker", "src", "index.js"),              // Local development (root)
+		filepath.Join(projectRoot, "..", "worker", "src", "index.js"),        // Local development (cmd/server)
+		filepath.Join("cloudflare-worker", "src", "index.js"),                // Docker (custom path)
+	}
+
+	var scriptContent []byte
+	var scriptErr error
+
+	for _, path := range possiblePaths {
+		scriptContent, scriptErr = os.ReadFile(path)
+		if scriptErr == nil {
+			break
 		}
+	}
+
+	if scriptErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script from any known path: " + scriptErr.Error()})
+		return
 	}
 
 	// 3. Upload Worker
@@ -308,11 +317,25 @@ func (h *DeploymentHandler) RedeployWorker(c *gin.Context) {
 	}
 
 	// Read worker script from file
-	// API runs from api/ directory, so we need to go up one level to reach worker/
-	workerPath := filepath.Join("..", "worker", "src", "index.js")
-	scriptContent, err := os.ReadFile(workerPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script: " + err.Error()})
+	projectRoot, _ := os.Getwd()
+	possiblePaths := []string{
+		filepath.Join(projectRoot, "worker", "src", "index.js"),              // Local development (root)
+		filepath.Join(projectRoot, "..", "worker", "src", "index.js"),        // Local development (cmd/server)
+		filepath.Join("cloudflare-worker", "src", "index.js"),                // Docker (custom path)
+	}
+
+	var scriptContent []byte
+	var scriptErr error
+
+	for _, path := range possiblePaths {
+		scriptContent, scriptErr = os.ReadFile(path)
+		if scriptErr == nil {
+			break
+		}
+	}
+
+	if scriptErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script from any known path: " + scriptErr.Error()})
 		return
 	}
 
