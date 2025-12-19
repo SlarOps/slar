@@ -6,9 +6,8 @@ import Select from '../ui/Select';
 
 function getRoleColor(role) {
   switch (role) {
-    case 'leader': return 'text-purple-600 bg-purple-50 border-purple-200 dark:bg-purple-900/30 dark:border-purple-800';
+    case 'admin': return 'text-purple-600 bg-purple-50 border-purple-200 dark:bg-purple-900/30 dark:border-purple-800';
     case 'member': return 'text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-900/30 dark:border-blue-800';
-    case 'backup': return 'text-green-600 bg-green-50 border-green-200 dark:bg-green-900/30 dark:border-green-800';
     default: return 'text-gray-600 bg-gray-50 border-gray-200 dark:bg-gray-900/30 dark:border-gray-700';
   }
 }
@@ -108,8 +107,7 @@ export default function MembersTab({
                       onChange={(newRole) => handleUpdateMemberRole(member.id, member.user_id, newRole)}
                       options={[
                         { value: 'member', label: 'Member' },
-                        { value: 'leader', label: 'Leader' },
-                        { value: 'backup', label: 'Backup' }
+                        { value: 'admin', label: 'Admin' }
                       ]}
                       disabled={memberLoading === member.id}
                       className="!py-1.5 !px-2 text-xs"

@@ -8,11 +8,12 @@ ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 RUN apk add --no-cache git
 
 # Cache dependencies
-COPY go.mod go.sum ./
+# Context is set to project root (../../) in docker-compose.yaml
+COPY api/go.mod api/go.sum ./
 RUN go mod download
 
 # Copy source and build both binaries (server and worker)
-COPY . .
+COPY api/ .
 RUN go build -o /out/server ./cmd/server && \
     go build -o /out/worker ./cmd/worker
 
@@ -25,8 +26,10 @@ WORKDIR /app
 COPY --from=build /out/server /app/server
 COPY --from=build /out/worker /app/worker
 
+# Copy worker script for deployment handler (context is project root)
+COPY worker /app/cloudflare-worker
+
 USER appuser
 EXPOSE 8080
 # Default to API server; docker-compose will override for worker
 CMD ["./server"]
-

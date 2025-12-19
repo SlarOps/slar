@@ -127,9 +127,9 @@ export default function IncidentDetailModal({
               <div className="space-y-4">
                 {/* Alert Title and Description */}
                 <div>
-                  <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
+                  {/* <h4 className="text-base font-bold text-gray-900 dark:text-white mb-2 break-words">
                     {incident.title}
-                  </h4>
+                  </h4> */}
                   {incident.description && (
                     <MarkdownRenderer
                       content={incident.description}

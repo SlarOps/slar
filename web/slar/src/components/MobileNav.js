@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '../contexts/AuthContext';
+import { useOrg } from '../contexts/OrgContext';
 import { usePathname } from 'next/navigation';
 
 const NAV_LINKS = [
@@ -11,6 +12,8 @@ const NAV_LINKS = [
   { href: '/monitors', label: 'Monitors' },
   { href: '/groups', label: 'Schedules' },
   { href: '/agent-config', label: 'Integrations' },
+  { href: '/organizations', label: 'Organizations' },
+  { href: '/projects', label: 'Projects' },
 ];
 
 export default function MobileNav() {
@@ -18,6 +21,7 @@ export default function MobileNav() {
   const [isVisible, setIsVisible] = useState(true);
   const [isMobile, setIsMobile] = useState(true);
   const { user, signOut, isAuthenticated } = useAuth();
+  const { organizations, currentOrg, switchOrg } = useOrg();
   const pathname = usePathname();
 
   // Check if mobile
@@ -60,8 +64,8 @@ export default function MobileNav() {
     };
   }, [isOpen]);
 
-  // Don't show nav on auth pages or desktop (use Sidebar instead)
-  if (pathname === '/login' || pathname === '/signup' || !isMobile) {
+  // Don't show nav on auth pages, onboarding, or desktop (use Sidebar instead)
+  if (pathname === '/login' || pathname === '/signup' || pathname === '/onboarding' || !isMobile) {
     return null;
   }
 
@@ -117,6 +121,29 @@ export default function MobileNav() {
           <div className="flex flex-col h-full pt-20 pb-6 px-6">
             {isAuthenticated ? (
               <>
+                {/* Organization Switcher */}
+                {currentOrg && organizations.length > 0 && (
+                  <div className="mb-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 px-2">
+                      Organization
+                    </div>
+                    <select
+                      value={currentOrg.id}
+                      onChange={(e) => {
+                        const org = organizations.find(o => o.id === e.target.value);
+                        if (org) switchOrg(org);
+                      }}
+                      className="w-full px-3 py-2.5 rounded-xl text-sm font-medium bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name} {org.user_role ? `(${org.user_role})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="flex-1 space-y-1">
                   {NAV_LINKS.map((link) => (
                     <Link

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -37,7 +38,40 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 
 	if req.WorkerName == "" {
 		req.WorkerName = "slar-uptime-worker"
+	} else {
+		req.WorkerName = strings.TrimSpace(req.WorkerName)
 	}
+
+	req.CFAPIToken = strings.TrimSpace(req.CFAPIToken)
+	req.CFAccountID = strings.TrimSpace(req.CFAccountID)
+
+	// Remove "Bearer " prefix if user accidentally included it
+	req.CFAPIToken = strings.TrimPrefix(req.CFAPIToken, "Bearer ")
+	req.CFAPIToken = strings.TrimPrefix(req.CFAPIToken, "bearer ")
+
+	// Validate Account ID format (32-character hex string)
+	if len(req.CFAccountID) != 32 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid Account ID format. Expected 32-character hex string, got %d characters. Make sure you're using Account ID, not Zone ID.", len(req.CFAccountID)),
+		})
+		return
+	}
+
+	// Validate API Token format (should not be empty and reasonable length)
+	if len(req.CFAPIToken) < 20 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid API Token format. Token seems too short. Make sure you're using an API Token (not Global API Key).",
+		})
+		return
+	}
+
+	// Log for debugging (mask token)
+	tokenPreview := req.CFAPIToken
+	if len(tokenPreview) > 8 {
+		tokenPreview = tokenPreview[:8]
+	}
+	fmt.Printf("[Cloudflare Deploy] Account ID: %s, Token length: %d, Token prefix: %s...\n",
+		req.CFAccountID, len(req.CFAPIToken), tokenPreview)
 
 	// Validate integration if provided
 	var webhookURL sql.NullString
@@ -65,7 +99,11 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 	// 1. Get or Create D1 Database (reuse if exists)
 	dbID, err := cf.GetOrCreateD1Database(req.CFAccountID, "SLAR_DB")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get or create SLAR_DB: " + err.Error()})
+		errorMsg := "Failed to get or create SLAR_DB: " + err.Error()
+		if strings.Contains(err.Error(), "Authentication error") || strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "10000") {
+			errorMsg = fmt.Sprintf("Authentication failed. Please check your API Token and Account ID. Ensure the token has these permissions: Account:Workers Scripts:Edit, Account:D1:Edit, Account:Account Settings:Read. Original error: %v", err)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
 		return
 	}
 
@@ -77,17 +115,26 @@ func (h *DeploymentHandler) DeployWorker(c *gin.Context) {
 	}
 
 	// 2. Read Worker Script
-	// Assuming running from project root
-	scriptPath := filepath.Join("worker", "src", "index.js")
-	scriptContent, err := os.ReadFile(scriptPath)
-	if err != nil {
-		// Try looking in ../worker/src/index.js (if running from cmd/server)
-		scriptPath = filepath.Join("..", "worker", "src", "index.js")
-		scriptContent, err = os.ReadFile(scriptPath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script: " + err.Error()})
-			return
+	projectRoot, _ := os.Getwd()
+	possiblePaths := []string{
+		filepath.Join(projectRoot, "worker", "src", "index.js"),              // Local development (root)
+		filepath.Join(projectRoot, "..", "worker", "src", "index.js"),        // Local development (cmd/server)
+		filepath.Join("cloudflare-worker", "src", "index.js"),                // Docker (custom path)
+	}
+
+	var scriptContent []byte
+	var scriptErr error
+
+	for _, path := range possiblePaths {
+		scriptContent, scriptErr = os.ReadFile(path)
+		if scriptErr == nil {
+			break
 		}
+	}
+
+	if scriptErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script from any known path: " + scriptErr.Error()})
+		return
 	}
 
 	// 3. Upload Worker
@@ -308,11 +355,25 @@ func (h *DeploymentHandler) RedeployWorker(c *gin.Context) {
 	}
 
 	// Read worker script from file
-	// API runs from api/ directory, so we need to go up one level to reach worker/
-	workerPath := filepath.Join("..", "worker", "src", "index.js")
-	scriptContent, err := os.ReadFile(workerPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script: " + err.Error()})
+	projectRoot, _ := os.Getwd()
+	possiblePaths := []string{
+		filepath.Join(projectRoot, "worker", "src", "index.js"),              // Local development (root)
+		filepath.Join(projectRoot, "..", "worker", "src", "index.js"),        // Local development (cmd/server)
+		filepath.Join("cloudflare-worker", "src", "index.js"),                // Docker (custom path)
+	}
+
+	var scriptContent []byte
+	var scriptErr error
+
+	for _, path := range possiblePaths {
+		scriptContent, scriptErr = os.ReadFile(path)
+		if scriptErr == nil {
+			break
+		}
+	}
+
+	if scriptErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read worker script from any known path: " + scriptErr.Error()})
 		return
 	}
 

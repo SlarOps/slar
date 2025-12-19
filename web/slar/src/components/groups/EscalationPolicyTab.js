@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import toast from 'react-hot-toast';
 import EscalationPoliciesList from './EscalationPoliciesList';
@@ -10,6 +11,7 @@ import PolicyUsageModal from './PolicyUsageModal';
 
 export default function EscalationPolicyTab({ groupId, members = [] }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -22,13 +24,22 @@ export default function EscalationPolicyTab({ groupId, members = [] }) {
 
   // Fetch escalation policies
   const fetchPolicies = async () => {
-    if (!session?.access_token || !groupId) return;
+    // ReBAC: MUST have session AND org_id for tenant isolation
+    if (!session?.access_token || !groupId || !currentOrg?.id) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
     try {
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getGroupEscalationPolicies(groupId);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const response = await apiClient.getGroupEscalationPolicies(groupId, rebacFilters);
       setPolicies(response.policies || []);
     } catch (error) {
       console.error('Failed to fetch escalation policies:', error);
@@ -41,7 +52,7 @@ export default function EscalationPolicyTab({ groupId, members = [] }) {
 
   useEffect(() => {
     fetchPolicies();
-  }, [session, groupId]);
+  }, [session, groupId, currentOrg?.id, currentProject?.id]);
 
   // Handlers
   const handlePolicyCreated = (newPolicy) => {
@@ -71,9 +82,19 @@ export default function EscalationPolicyTab({ groupId, members = [] }) {
       return;
     }
 
+    if (!session?.access_token || !currentOrg?.id) {
+      toast.error('Not authenticated');
+      return;
+    }
+
     try {
       apiClient.setToken(session.access_token);
-      await apiClient.deleteEscalationPolicy(policyId);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      await apiClient.deleteEscalationPolicy(groupId, policyId, rebacFilters);
       setPolicies(prev => prev.filter(p => p.id !== policyId));
       toast.success('Escalation policy deleted successfully!');
     } catch (error) {

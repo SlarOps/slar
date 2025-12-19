@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../contexts/AuthContext';
-import { supabase } from '../../../lib/supabase';
+import { auth } from '../../../lib/supabase';
 
 export default function AuthCallback() {
   const router = useRouter();
@@ -12,7 +12,7 @@ export default function AuthCallback() {
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
+        const { session, error } = await auth.getSession();
         
         if (error) {
           console.error('Auth callback error:', error);
@@ -20,7 +20,7 @@ export default function AuthCallback() {
           return;
         }
 
-        if (data?.session) {
+        if (session) {
           // Successfully authenticated, redirect to dashboard
           router.push('/dashboard');
         } else {

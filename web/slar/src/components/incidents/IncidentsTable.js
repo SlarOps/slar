@@ -31,7 +31,7 @@ export default function IncidentsTable({
     };
 
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'bg-gray-100 text-gray-800'}`}>
+      <span className={`inline-flex items-center py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'bg-gray-100 text-gray-800'}`}>
         {status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown'}
       </span>
     );
@@ -39,10 +39,10 @@ export default function IncidentsTable({
 
   const getPriorityBadge = (priority) => {
     if (!priority) return <span className="text-gray-400 text-sm">--</span>;
-    
+
     const priorityStyles = {
       P1: 'text-red-800 bg-red-100 dark:bg-red-900/20',
-      P2: 'text-orange-800 bg-orange-100 dark:bg-orange-900/20', 
+      P2: 'text-orange-800 bg-orange-100 dark:bg-orange-900/20',
       P3: 'text-yellow-800 bg-yellow-100 dark:bg-yellow-900/20',
       P4: 'text-blue-800 bg-blue-100 dark:bg-blue-900/20'
     };
@@ -70,7 +70,7 @@ export default function IncidentsTable({
     const date = new Date(dateString);
     const now = new Date();
     const diffInHours = Math.floor((now - date) / (1000 * 60 * 60));
-    
+
     if (diffInHours < 1) {
       const diffInMinutes = Math.floor((now - date) / (1000 * 60));
       return `${diffInMinutes}m ago`;
@@ -100,134 +100,134 @@ export default function IncidentsTable({
         <div className="hidden md:block bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            {/* Header Skeleton */}
-            <thead className="bg-gray-50 dark:bg-gray-700">
-              <tr>
-                <th scope="col" className="w-8 px-6 py-3">
-                  <div className="animate-pulse">
-                    <div className="h-4 w-4 bg-gray-300 dark:bg-gray-600 rounded"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-3 py-3 text-left w-24">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-3 py-3 text-left w-20">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-14"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-3 py-3 text-left w-24">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-14"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-6 py-3 text-left">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-10"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-4 py-3 text-left w-28">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-4 py-3 text-left w-32">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-4 py-3 text-left w-32">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-16"></div>
-                  </div>
-                </th>
-                <th scope="col" className="px-4 py-3 text-center w-20">
-                  <div className="animate-pulse">
-                    <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-6 mx-auto"></div>
-                  </div>
-                </th>
-              </tr>
-            </thead>
-            
-            {/* Body Skeleton */}
-            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {[...Array(5)].map((_, i) => (
-                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                  {/* Checkbox */}
-                  <td className="px-6 py-4 whitespace-nowrap">
+              {/* Header Skeleton */}
+              <thead className="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th scope="col" className="w-8 px-6 py-3">
                     <div className="animate-pulse">
-                      <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                      <div className="h-4 w-4 bg-gray-300 dark:bg-gray-600 rounded"></div>
                     </div>
-                  </td>
-                  
-                  {/* Status */}
-                  <td className="px-3 py-4 whitespace-nowrap">
+                  </th>
+                  <th scope="col" className="px-3 py-3 text-left w-24">
                     <div className="animate-pulse">
-                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full w-16"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
                     </div>
-                  </td>
-                  
-                  {/* Priority */}
-                  <td className="px-3 py-4 whitespace-nowrap">
+                  </th>
+                  <th scope="col" className="px-3 py-3 text-left w-20">
                     <div className="animate-pulse">
-                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full w-14"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-14"></div>
                     </div>
-                  </td>
-                  
-                  {/* Urgency */}
-                  <td className="px-3 py-4 whitespace-nowrap">
-                    <div className="animate-pulse flex items-center">
-                      <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded mr-2"></div>
-                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
-                    </div>
-                  </td>
-                  
-                  {/* Title */}
-                  <td className="px-6 py-4">
+                  </th>
+                  <th scope="col" className="px-3 py-3 text-left w-24">
                     <div className="animate-pulse">
-                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-48 mb-2"></div>
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-32 mb-1"></div>
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-14"></div>
                     </div>
-                  </td>
-                  
-                  {/* Created */}
-                  <td className="px-4 py-4 whitespace-nowrap">
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left">
                     <div className="animate-pulse">
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-16 mb-1"></div>
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-10"></div>
                     </div>
-                  </td>
-                  
-                  {/* Service */}
-                  <td className="px-4 py-4 whitespace-nowrap">
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left w-28">
                     <div className="animate-pulse">
-                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
                     </div>
-                  </td>
-                  
-                  {/* Assignee */}
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <div className="animate-pulse flex items-center">
-                      <div className="h-6 w-6 bg-gray-200 dark:bg-gray-700 rounded-full mr-2"></div>
-                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-16"></div>
-                    </div>
-                  </td>
-                  
-                  {/* Ack */}
-                  <td className="px-4 py-4 whitespace-nowrap text-center">
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left w-32">
                     <div className="animate-pulse">
-                      <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded mx-auto"></div>
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-12"></div>
                     </div>
-                  </td>
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left w-32">
+                    <div className="animate-pulse">
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-16"></div>
+                    </div>
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-center w-20">
+                    <div className="animate-pulse">
+                      <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-6 mx-auto"></div>
+                    </div>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+
+              {/* Body Skeleton */}
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                {[...Array(5)].map((_, i) => (
+                  <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                    {/* Checkbox */}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="animate-pulse">
+                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                      </div>
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-3 py-4 whitespace-nowrap">
+                      <div className="animate-pulse">
+                        <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full w-16"></div>
+                      </div>
+                    </td>
+
+                    {/* Priority */}
+                    <td className="px-3 py-4 whitespace-nowrap">
+                      <div className="animate-pulse">
+                        <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full w-14"></div>
+                      </div>
+                    </td>
+
+                    {/* Urgency */}
+                    <td className="px-3 py-4 whitespace-nowrap">
+                      <div className="animate-pulse flex items-center">
+                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded mr-2"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                      </div>
+                    </td>
+
+                    {/* Title */}
+                    <td className="px-6 py-4">
+                      <div className="animate-pulse">
+                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-48 mb-2"></div>
+                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-32 mb-1"></div>
+                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
+                      </div>
+                    </td>
+
+                    {/* Created */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="animate-pulse">
+                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-16 mb-1"></div>
+                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                      </div>
+                    </td>
+
+                    {/* Service */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="animate-pulse">
+                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
+                      </div>
+                    </td>
+
+                    {/* Assignee */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="animate-pulse flex items-center">
+                        <div className="h-6 w-6 bg-gray-200 dark:bg-gray-700 rounded-full mr-2"></div>
+                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-16"></div>
+                      </div>
+                    </td>
+
+                    {/* Ack */}
+                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                      <div className="animate-pulse">
+                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded mx-auto"></div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
         {/* Mobile Loading Skeleton */}
         <div className="md:hidden space-y-3">
@@ -284,196 +284,196 @@ export default function IncidentsTable({
       <div className="hidden md:block bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className="bg-gray-50 dark:bg-gray-700">
-            <tr>
-              <th scope="col" className="w-8 px-6 py-3">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  checked={isAllSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = isIndeterminate;
-                  }}
-                  onChange={(e) => onSelectAll(e.target.checked)}
-                />
-              </th>
-              
-              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">
-                <button
-                  onClick={() => handleSort('status')}
-                  className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
-                >
-                  <span>Status</span>
-                  {sortConfig.key === 'status' && (
-                    <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                </button>
-              </th>
-
-              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-20">
-                Priority
-              </th>
-
-              <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-24">
-                <button
-                  onClick={() => handleSort('urgency')}
-                  className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
-                >
-                  <span>Urgency</span>
-                  {sortConfig.key === 'urgency' && (
-                    <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                </button>
-              </th>
-
-
-
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                <button
-                  onClick={() => handleSort('title')}
-                  className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
-                >
-                  <span>Title</span>
-                  {sortConfig.key === 'title' && (
-                    <svg className={`w-4 h-4 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                </button>
-              </th>
-
-              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-28">
-                <button
-                  onClick={() => handleSort('created_at')}
-                  className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
-                >
-                  <span>Created</span>
-                  {sortConfig.key === 'created_at' && (
-                    <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                </button>
-              </th>
-
-              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32">
-                Service
-              </th>
-
-              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32">
-                Assignee
-              </th>
-
-              <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">
-                Ack
-              </th>
-            </tr>
-          </thead>
-          
-          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {incidents.map((incident) => (
-              <tr
-                key={incident.id}
-                className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onClick={() => handleIncidentClick(incident.id)}
-              >
-                <td className="px-6 py-4 whitespace-nowrap">
+            <thead className="bg-gray-50 dark:bg-gray-700">
+              <tr>
+                <th scope="col" className="w-8 px-6 py-3">
                   <input
                     type="checkbox"
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    checked={selectedIncidents.includes(incident.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      onIncidentSelect(incident.id, e.target.checked);
+                    checked={isAllSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isIndeterminate;
                     }}
+                    onChange={(e) => onSelectAll(e.target.checked)}
                   />
-                </td>
+                </th>
 
-                <td className="px-3 py-4 whitespace-nowrap">
-                  {getStatusBadge(incident.status)}
-                </td>
+                <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">
+                  <button
+                    onClick={() => handleSort('status')}
+                    className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
+                  >
+                    <span>Status</span>
+                    {sortConfig.key === 'status' && (
+                      <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                </th>
 
-                <td className="px-3 py-4 whitespace-nowrap">
-                  {getPriorityBadge(incident.priority)}
-                </td>
+                <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-20">
+                  Priority
+                </th>
 
-                <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    {getUrgencyIcon(incident.urgency)}
-                    <span className="ml-1 text-sm text-gray-900 dark:text-white capitalize">
-                      {incident.urgency || 'Normal'}
-                    </span>
-                  </div>
-                </td>
+                <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 tracking-wider w-24">
+                  <button
+                    onClick={() => handleSort('urgency')}
+                    className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
+                  >
+                    <span>Urgency</span>
+                    {sortConfig.key === 'urgency' && (
+                      <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                </th>
 
 
 
-                <td className="px-6 py-4">
-                  <div className="text-sm text-gray-900 dark:text-white">
-                    <div className="font-medium">{incident.title}</div>
-                    {incident.description && (
-                      <div className="max-w-md line-clamp-1">
-                        <MarkdownRenderer
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <button
+                    onClick={() => handleSort('title')}
+                    className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
+                  >
+                    <span>Title</span>
+                    {sortConfig.key === 'title' && (
+                      <svg className={`w-4 h-4 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                </th>
+
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-28">
+                  <button
+                    onClick={() => handleSort('created_at')}
+                    className="flex items-center space-x-1 hover:text-gray-700 dark:hover:text-gray-100"
+                  >
+                    <span>Created</span>
+                    {sortConfig.key === 'created_at' && (
+                      <svg className={`w-3 h-3 ${sortConfig.direction === 'asc' ? 'transform rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                </th>
+
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32">
+                  Service
+                </th>
+
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32">
+                  Assignee
+                </th>
+
+                <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">
+                  Ack
+                </th>
+              </tr>
+            </thead>
+
+            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+              {incidents.map((incident) => (
+                <tr
+                  key={incident.id}
+                  className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                  onClick={() => handleIncidentClick(incident.id)}
+                >
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      checked={selectedIncidents.includes(incident.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onIncidentSelect(incident.id, e.target.checked);
+                      }}
+                    />
+                  </td>
+
+                  <td className="px-3 py-4 whitespace-nowrap">
+                    {getStatusBadge(incident.status)}
+                  </td>
+
+                  <td className="px-3 py-4 whitespace-nowrap">
+                    {getPriorityBadge(incident.priority)}
+                  </td>
+
+                  <td className="px-3 py-4 whitespace-nowrap">
+                    <div className="flex items-center">
+                      {getUrgencyIcon(incident.urgency)}
+                      <span className="ml-1 text-sm text-gray-900 dark:text-white capitalize">
+                        {incident.urgency || 'Normal'}
+                      </span>
+                    </div>
+                  </td>
+
+
+
+                  <td className="px-6">
+                    <div className="text-sm text-gray-900 dark:text-white">
+                      <div className="font-medium">{incident.title}</div>
+                      {incident.description && (
+                        <div className="max-w-md line-clamp-1">
+                          {/* <MarkdownRenderer
                           content={incident.description}
                           size="sm"
                           className="text-gray-500 dark:text-gray-400"
-                        />
-                      </div>
+                        /> */}
+                        </div>
+                      )}
+                      {incident.incident_number && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          #{incident.incident_number}
+                        </div>
+                      )}
+                    </div>
+                  </td>
+
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {formatDate(incident.created_at)}
+                  </td>
+
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                    {incident.service_name ? (
+                      <span className="text-blue-600 dark:text-blue-400 hover:underline truncate block max-w-28">
+                        {incident.service_name}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">--</span>
                     )}
-                    {incident.incident_number && (
-                      <div className="text-xs text-gray-400 mt-1">
-                        #{incident.incident_number}
-                      </div>
+                  </td>
+
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                    {incident.assigned_to_name ? (
+                      <span className="text-blue-600 dark:text-blue-400 hover:underline truncate block max-w-28">
+                        {incident.assigned_to_name}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">Unassigned</span>
                     )}
-                  </div>
-                </td>
+                  </td>
 
-                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                  {formatDate(incident.created_at)}
-                </td>
-
-                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                  {incident.service_name ? (
-                    <span className="text-blue-600 dark:text-blue-400 hover:underline truncate block max-w-28">
-                      {incident.service_name}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">--</span>
-                  )}
-                </td>
-
-                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                  {incident.assigned_to_name ? (
-                    <span className="text-blue-600 dark:text-blue-400 hover:underline truncate block max-w-28">
-                      {incident.assigned_to_name}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">Unassigned</span>
-                  )}
-                </td>
-
-                <td className="px-4 py-4 whitespace-nowrap text-center text-sm font-medium">
-                  {incident.status === 'triggered' && (
-                    <button
-                      onClick={(e) => handleActionClick(e, 'acknowledge', incident.id)}
-                      className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 p-2 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                      title="Acknowledge"
-                    >
-                      Acknowledge
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <td className="px-4 py-4 whitespace-nowrap text-center text-sm font-medium">
+                    {incident.status === 'triggered' && (
+                      <button
+                        onClick={(e) => handleActionClick(e, 'acknowledge', incident.id)}
+                        className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 p-2 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                        title="Acknowledge"
+                      >
+                        ACK
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
 
       {/* Mobile Card View - Hidden on Desktop */}
       <div className="md:hidden space-y-3">

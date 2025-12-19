@@ -16,7 +16,7 @@ if [ -z "$SUPABASE_URL" ]; then
     exit 1
 fi
 
-echo "✓ Environment variables validated"
+echo "[OK] Environment variables validated"
 
 # Extract project reference from SUPABASE_URL
 # Format: https://xxx.supabase.co -> xxx
@@ -28,7 +28,7 @@ if [ -z "$PROJECT_REF" ]; then
     # For self-hosted Supabase, we'll use the DATABASE_URL directly
     USE_DIRECT_DB=true
 else
-    echo "✓ Project reference: $PROJECT_REF"
+    echo "[OK] Project reference: $PROJECT_REF"
     USE_DIRECT_DB=false
 fi
 
@@ -40,7 +40,7 @@ MIGRATION_COUNT=$(find supabase/migrations -name "*.sql" 2>/dev/null | wc -l || 
 echo "Found $MIGRATION_COUNT migration files"
 
 if [ "$MIGRATION_COUNT" -eq 0 ]; then
-    echo "⚠ No migration files found, skipping migration"
+    echo "WARNING: No migration files found, skipping migration"
     exit 0
 fi
 
@@ -96,7 +96,7 @@ else
 fi
 
 echo "----------------------------------------"
-echo "✅ Database migrations completed successfully"
+echo "[OK] Database migrations completed successfully"
 echo "========================================="
 
 exit 0

@@ -26,6 +26,9 @@ export interface ChatRequest {
   system_prompt?: string;
   permission_mode?: 'acceptEdits' | 'approveOnly' | 'denyEdits';
   model?: 'sonnet' | 'opus' | 'haiku';
+  org_id?: string;  // Organization ID for ReBAC tenant isolation (MANDATORY)
+  project_id?: string;  // Project ID for ReBAC project filtering (OPTIONAL)
+  auth_token?: string;  // JWT auth token
 }
 
 export interface SessionInfo {

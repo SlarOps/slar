@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import apiClient from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 
 const ROTATION_TYPES = [
   {
@@ -38,6 +39,7 @@ const TIME_PRESETS = [
 
 function CreateRotationCycleModal({ isOpen, onClose, groupId, groupMembers, onRotationCreated }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [step, setStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -185,12 +187,24 @@ function CreateRotationCycleModal({ isOpen, onClose, groupId, groupMembers, onRo
       return;
     }
 
+    if (!currentOrg?.id) {
+      setError('Organization context required');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
 
     try {
       apiClient.setToken(session.access_token);
-      const response = await apiClient.createRotationCycle(groupId, formData);
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const response = await apiClient.createRotationCycle(groupId, formData, rebacFilters);
       onRotationCreated?.(response);
       onClose();
     } catch (error) {

@@ -9,7 +9,7 @@ replicaCount: 1
 image:
   repository: 192.168.100.137:5000/
   pullPolicy: Always
-  tag: ""
+  tag: "latest"
 
 # Image pull secrets for private registries
 imagePullSecrets: []
@@ -126,7 +126,7 @@ affinity: {}
 
 # Migration job configuration
 migration:
-  enabled: true
+  enabled: false
   image:
     repository: migration:latest
     name: slar-migration
@@ -146,9 +146,7 @@ components:
   ai:
     replicas: 1
     image:
-      tag: 1.0.1
       name: slar-ai
-      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
@@ -159,38 +157,12 @@ components:
         value: "8002"
       - name: HOST
         value: "0.0.0.0"
-      - name: SUPABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-url
-      - name: SUPABASE_ANON_KEY
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-anon-key
-      - name: SUPABASE_SERVICE_ROLE_KEY
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-service-role-key
-      - name: ANTHROPIC_API_KEY
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: anthropic-api-key
-
-      # Optional environment variables
-      - name: SLAR_API_URL
-        value: "http://slar-api.slar:8080"
       - name: USER_WORKSPACES_DIR
         value: "/app/workspaces"
-      - name: ENABLE_CODE_EXECUTOR
-        value: "false"
-      - name: OPENAI_MODEL
-        value: "gpt-4o"
-      - name: CHROMA_COLLECTION_NAME
-        value: "autogen_docs"
+      - name: SLAR_CONFIG_PATH
+        value: "/app/config/config.yaml"
+    ingress:
+      enabled: false
 
     # Resource limits
     resources:
@@ -222,6 +194,9 @@ components:
         mountPath: /app/workspaces
       - name: ai-claude
         mountPath: /root/.claude
+      - name: app-config
+        mountPath: /app/config
+        readOnly: true
 
     # Volumes definition
     volumes:
@@ -231,6 +206,12 @@ components:
       - name: ai-claude
         persistentVolumeClaim:
           claimName: '{{ include "slar.componentFullname" (dict "root" . "name" "ai") }}-claude'
+      - name: app-config
+        secret:
+          secretName: slar-secrets
+          items:
+            - key: config.dev.yaml
+              path: config.yaml
 
     # RBAC configuration for AI pod
     rbac:
@@ -244,8 +225,6 @@ components:
   api:
     image:
       name: slar-api
-      tag: 1.0.1
-      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
@@ -253,61 +232,38 @@ components:
     env:
       - name: PORT
         value: "8080"
-      - name: DATABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: database-url
-      - name: SUPABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-url
-      - name: SUPABASE_ANON_KEY
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-anon-key
-      - name: SUPABASE_JWT_SECRET
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-jwt-secret
       - name: SLAR_ENV
         value: "production"
+      - name: SLAR_CONFIG_PATH
+        value: "/app/config/config.yaml"
+    
+    # Mount config file from secret
+    volumeMounts:
+      - name: app-config
+        mountPath: /app/config
+        readOnly: true
+      - name: api-data
+        mountPath: /app/data
+    volumes:
+      - name: app-config
+        secret:
+          secretName: slar-secrets
+          items:
+            - key: config.dev.yaml
+              path: config.yaml
+      - name: api-data
+        emptyDir: {}
     ingress:
-      enabled: true
-      hosts:
-        - host: dev-api.slarhq.com
-          paths:
-            - path: /
-              pathType: Prefix
+      enabled: false
 
   slack-worker:
     image:
       name: slar-slack-worker
-      tag: 1.0.1
-      pullPolicy: Always
     service:
       enabled: false
     env:
-      - name: DATABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: database-url
-      - name: SLACK_BOT_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: slack-bot-token
-      - name: SLACK_APP_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: slack-app-token
-      - name: API_BASE_URL
-        value: "http://slar-api:8080"
+      - name: SLAR_CONFIG_PATH
+        value: "/app/config/config.yaml"
       - name: POLL_INTERVAL
         value: "1"
       - name: BATCH_SIZE
@@ -318,36 +274,29 @@ components:
         value: "DEBUG"
       - name: LOG_FILE
         value: "/app/slack_worker.log"
+    
+    # Mount config file from secret
+    volumeMounts:
+      - name: app-config
+        mountPath: /app/config
+        readOnly: true
+    volumes:
+      - name: app-config
+        secret:
+          secretName: slar-secrets
+          items:
+            - key: config.dev.yaml
+              path: config.yaml
 
   web:
     image:
       name: slar-web
-      tag: 1.0.1
-      pullPolicy: Always
     service:
       enabled: true
       type: ClusterIP
       port: 3000
-    env:
-      - name: NEXT_PUBLIC_SUPABASE_URL
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-url
-      - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
-        valueFrom:
-          secretKeyRef:
-            name: slar-secrets
-            key: supabase-anon-key
 
   kong:
-    ingress:
-      enabled: true
-      hosts:
-        - host: dev.slarhq.com
-          paths:
-            - path: /
-              pathType: Prefix
     image:
       repository: kong
       tag: "2.8.1"

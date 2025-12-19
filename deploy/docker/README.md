@@ -263,10 +263,10 @@ The `dev.sh` script handles cross-platform builds automatically using Docker Bui
 The web service requires a local Next.js build before Docker build due to native dependencies (lightningcss, @tailwindcss/oxide) that don't work well in Docker multi-stage builds.
 
 **Benefits:**
-- ✅ Avoids native module issues
-- ✅ Faster builds
-- ✅ Smaller final image (~200MB)
-- ✅ More reliable
+- Avoids native module issues
+- Faster builds
+- Smaller final image (~200MB)
+- More reliable
 
 The `dev.sh` script handles this automatically.
 

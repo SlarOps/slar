@@ -6,8 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const MEMBER_ROLES = [
   { value: 'member', label: 'Member', description: 'Regular group member' },
-  { value: 'leader', label: 'Leader', description: 'Group leader with admin privileges' },
-  { value: 'backup', label: 'Backup', description: 'Backup member for escalations' }
+  { value: 'admin', label: 'Admin', description: 'Group admin with management privileges' }
 ];
 
 export default function AddMemberModal({ isOpen, onClose, onSubmit, existingMembers = [] }) {

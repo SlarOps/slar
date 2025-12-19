@@ -16,6 +16,7 @@
  */
 
 import { initSupabase } from './supabase';
+import apiClient from './api';
 
 const WORKSPACE_PATHS = {
   MCP_CONFIG: '.mcp.json',
@@ -231,20 +232,7 @@ export async function getMCPServersFromDB(userId) {
   try {
     console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
-      { method: 'GET' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.getMCPServers();
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get MCP servers');
@@ -287,30 +275,7 @@ export async function saveMCPServerToDB(userId, serverName, serverConfig) {
   try {
     console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig });
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const requestBody = {
-      auth_token: 'Bearer ' + session.access_token,
-      server_name: serverName,
-      ...serverConfig
-    };
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.saveMCPServer(serverName, serverConfig);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save MCP server');
@@ -334,20 +299,7 @@ export async function deleteMCPServerFromDB(userId, serverName) {
   try {
     console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', serverName);
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/mcp-servers/${encodeURIComponent(serverName)}?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}`,
-      { method: 'DELETE' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.deleteMCPServer(serverName);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete MCP server');
@@ -377,20 +329,7 @@ export async function getMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 📂 Loading CLAUDE.md from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
-      { method: 'GET' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.getMemory(scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get memory');
@@ -420,30 +359,7 @@ export async function saveMemoryToDB(userId, content, scope = 'local') {
   try {
     console.log('[workspaceManager] 💾 Saving CLAUDE.md to PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const requestBody = {
-      auth_token: 'Bearer ' + session.access_token,
-      content,
-      scope
-    };
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.saveMemory(content, scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save memory');
@@ -467,20 +383,7 @@ export async function deleteMemoryFromDB(userId, scope = 'local') {
   try {
     console.log('[workspaceManager] 🗑️ Deleting CLAUDE.md from PostgreSQL');
 
-    const supabase = await initSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      throw new Error('Not authenticated');
-    }
-
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(
-      `${agentApiUrl}/api/memory?auth_token=${encodeURIComponent('Bearer ' + session.access_token)}&scope=${encodeURIComponent(scope)}`,
-      { method: 'DELETE' }
-    );
-
-    const result = await response.json();
+    const result = await apiClient.deleteMemory(scope);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete memory');
@@ -566,26 +469,21 @@ export async function deleteSkill(userId, skillName) {
  */
 export async function getInstalledPluginsFromDB(userId) {
   try {
-    console.log('[workspaceManager] 📂 Loading installed plugins from PostgreSQL:', userId);
+    console.log('[workspaceManager] 📂 Loading installed plugins from AI API:', userId);
 
-    const supabase = await initSupabase();
+    // Use AI API endpoint instead of direct Supabase call
+    const result = await apiClient.getInstalledPlugins();
 
-    const { data, error } = await supabase
-      .from('installed_plugins')
-      .select('*')
-      .eq('user_id', userId)
-      .order('installed_at', { ascending: false });
-
-    if (error) {
-      console.error('[workspaceManager] ❌ Error loading plugins from DB:', error);
-      return { success: false, error: error.message };
+    if (!result.success) {
+      console.error('[workspaceManager] ❌ Error loading plugins from API:', result.error);
+      return { success: false, error: result.error };
     }
 
-    console.log('[workspaceManager] ✅ Loaded', data?.length || 0, 'plugins from PostgreSQL');
+    console.log('[workspaceManager] ✅ Loaded', result.plugins?.length || 0, 'plugins from AI API');
 
-    return { success: true, plugins: data || [] };
+    return { success: true, plugins: result.plugins || [] };
   } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to load plugins from DB:', error);
+    console.error('[workspaceManager] ❌ Failed to load plugins from API:', error);
     return { success: false, error: error.message };
   }
 }
@@ -597,39 +495,32 @@ export async function getInstalledPluginsFromDB(userId) {
  */
 export async function addInstalledPluginToDB(userId, plugin) {
   try {
-    console.log('[workspaceManager] 💾 Adding plugin to PostgreSQL:', { userId, plugin });
+    console.log('[workspaceManager] 💾 Adding plugin via AI API:', { userId, plugin });
 
-    const supabase = await initSupabase();
-
-    const pluginRecord = {
-      user_id: userId,
+    // Use AI API endpoint instead of direct Supabase call
+    const result = await apiClient.addInstalledPlugin({
       plugin_name: plugin.name,
       marketplace_name: plugin.marketplaceName,
-      marketplace_id: plugin.marketplaceId || null,
-      version: plugin.version || 'unknown',
-      install_path: plugin.installPath || `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${plugin.marketplaceName}/${plugin.name}`,
-      status: plugin.status || 'active',
-      is_local: plugin.isLocal || false,
-      git_commit_sha: plugin.gitCommitSha || null
-    };
+      plugin_type: plugin.type || 'skill',
+      config: {
+        marketplace_id: plugin.marketplaceId || null,
+        version: plugin.version || 'unknown',
+        install_path: plugin.installPath || `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${plugin.marketplaceName}/${plugin.name}`,
+        status: plugin.status || 'active',
+        is_local: plugin.isLocal || false,
+        git_commit_sha: plugin.gitCommitSha || null
+      }
+    });
 
-    const { data, error } = await supabase
-      .from('installed_plugins')
-      .upsert(pluginRecord, {
-        onConflict: 'user_id,plugin_name,marketplace_name'
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[workspaceManager] ❌ Error adding plugin to DB:', error);
-      return { success: false, error: error.message };
+    if (!result.success) {
+      console.error('[workspaceManager] ❌ Error adding plugin via API:', result.error);
+      return { success: false, error: result.error };
     }
 
-    console.log('[workspaceManager] ✅ Plugin added to PostgreSQL');
-    return { success: true, plugin: data };
+    console.log('[workspaceManager] ✅ Plugin added via AI API');
+    return { success: true, plugin: result.plugin };
   } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to add plugin to DB:', error);
+    console.error('[workspaceManager] ❌ Failed to add plugin via API:', error);
     return { success: false, error: error.message };
   }
 }
@@ -641,25 +532,20 @@ export async function addInstalledPluginToDB(userId, plugin) {
  */
 export async function removeInstalledPluginFromDB(userId, pluginId) {
   try {
-    console.log('[workspaceManager] 🗑️ Removing plugin from PostgreSQL:', { userId, pluginId });
+    console.log('[workspaceManager] 🗑️ Removing plugin via AI API:', { userId, pluginId });
 
-    const supabase = await initSupabase();
+    // Use AI API endpoint instead of direct Supabase call
+    const result = await apiClient.removeInstalledPlugin(pluginId);
 
-    const { error } = await supabase
-      .from('installed_plugins')
-      .delete()
-      .eq('id', pluginId)
-      .eq('user_id', userId);
-
-    if (error) {
-      console.error('[workspaceManager] ❌ Error removing plugin from DB:', error);
-      return { success: false, error: error.message };
+    if (!result.success) {
+      console.error('[workspaceManager] ❌ Error removing plugin via API:', result.error);
+      return { success: false, error: result.error };
     }
 
-    console.log('[workspaceManager] ✅ Plugin removed from PostgreSQL');
+    console.log('[workspaceManager] ✅ Plugin removed via AI API');
     return { success: true };
   } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to remove plugin from DB:', error);
+    console.error('[workspaceManager] ❌ Failed to remove plugin via API:', error);
     return { success: false, error: error.message };
   }
 }
@@ -1035,33 +921,27 @@ export async function saveMarketplace(userId, marketplaceName, allFiles) {
  */
 export async function loadMarketplaceFromDB(userId, marketplaceName) {
   try {
-    console.log('[workspaceManager] 📂 Loading marketplace from PostgreSQL:', { userId, marketplaceName });
+    console.log('[workspaceManager] 📂 Loading marketplace from AI API:', { userId, marketplaceName });
 
-    const supabase = await initSupabase();
+    // Use AI API endpoint instead of direct Supabase call
+    const result = await apiClient.getMarketplaceByName(marketplaceName);
 
-    const { data, error } = await supabase
-      .from('marketplaces')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('name', marketplaceName)
-      .single();
-
-    if (error) {
-      console.error('[workspaceManager] ❌ Error loading marketplace from DB:', error);
-      return { success: false, error: error.message };
+    if (!result.success) {
+      console.error('[workspaceManager] ❌ Error loading marketplace from API:', result.error);
+      return { success: false, error: result.error };
     }
 
-    if (!data) {
-      console.log('[workspaceManager] ❌ Marketplace not found in database');
+    if (!result.marketplace) {
+      console.log('[workspaceManager] ❌ Marketplace not found');
       return { success: false, error: 'Marketplace not found' };
     }
 
-    console.log('[workspaceManager] ✅ Loaded marketplace from PostgreSQL:', data.name);
-    console.log('[workspaceManager]    Plugins:', data.plugins?.length || 0);
+    console.log('[workspaceManager] ✅ Loaded marketplace from AI API:', result.marketplace.name);
+    console.log('[workspaceManager]    Plugins:', result.marketplace.plugins?.length || 0);
 
-    return { success: true, marketplace: data };
+    return { success: true, marketplace: result.marketplace };
   } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to load marketplace from DB:', error);
+    console.error('[workspaceManager] ❌ Failed to load marketplace from API:', error);
     return { success: false, error: error.message };
   }
 }
@@ -1072,26 +952,21 @@ export async function loadMarketplaceFromDB(userId, marketplaceName) {
  */
 export async function loadAllMarketplacesFromDB(userId) {
   try {
-    console.log('[workspaceManager] 📂 Loading all marketplaces from PostgreSQL:', { userId });
+    console.log('[workspaceManager] 📂 Loading all marketplaces from AI API:', { userId });
 
-    const supabase = await initSupabase();
+    // Use AI API endpoint instead of direct Supabase call
+    const result = await apiClient.getAllMarketplaces();
 
-    const { data, error } = await supabase
-      .from('marketplaces')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('[workspaceManager] ❌ Error loading marketplaces from DB:', error);
-      return { success: false, error: error.message };
+    if (!result.success) {
+      console.error('[workspaceManager] ❌ Error loading marketplaces from API:', result.error);
+      return { success: false, error: result.error };
     }
 
-    console.log('[workspaceManager] ✅ Loaded', data?.length || 0, 'marketplaces from PostgreSQL');
+    console.log('[workspaceManager] ✅ Loaded', result.marketplaces?.length || 0, 'marketplaces from AI API');
 
-    return { success: true, marketplaces: data || [] };
+    return { success: true, marketplaces: result.marketplaces || [] };
   } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to load marketplaces from DB:', error);
+    console.error('[workspaceManager] ❌ Failed to load marketplaces from API:', error);
     return { success: false, error: error.message };
   }
 }
@@ -1152,18 +1027,7 @@ export async function loadMarketplaceFromBucket(userId, marketplaceName) {
  */
 export async function syncWorkspace(userId, authToken) {
   try {
-    const agentApiUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-
-    const response = await fetch(`${agentApiUrl}/api/sync-workspace`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
-      body: JSON.stringify({ user_id: userId })
-    });
-
-    const result = await response.json();
+    const result = await apiClient.syncWorkspace(userId);
     return result;
   } catch (error) {
     console.error('Failed to sync workspace:', error);
@@ -1218,37 +1082,21 @@ export async function getWorkspaceInfo(userId) {
  */
 export async function deleteMarketplaceAsync(marketplaceName, authToken) {
   try {
-    const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8002';
-
     console.log(`[deleteMarketplaceAsync] Deleting marketplace: ${marketplaceName}`);
 
-    const response = await fetch(
-      `${AI_BASE_URL}/api/marketplace/${encodeURIComponent(marketplaceName)}?auth_token=${encodeURIComponent(authToken)}`,
-      {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const result = await apiClient.deleteMarketplace(marketplaceName);
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete marketplace');
     }
 
-    if (!data.success) {
-      throw new Error(data.error || 'Failed to delete marketplace');
-    }
-
-    console.log(`[deleteMarketplaceAsync] ✅ Marketplace deletion initiated (job_id: ${data.job_id})`);
+    console.log(`[deleteMarketplaceAsync] ✅ Marketplace deletion initiated (job_id: ${result.job_id})`);
 
     return {
       success: true,
-      message: data.message,
-      job_id: data.job_id,
-      status: data.status
+      message: result.message,
+      job_id: result.job_id,
+      status: result.status
     };
   } catch (error) {
     console.error('[deleteMarketplaceAsync] Error:', error);

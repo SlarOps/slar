@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 import Select from '../ui/Select';
 
 export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess }) {
+    const { currentOrg, currentProject } = useOrg();
     const [formData, setFormData] = useState({
         deployment_id: deploymentId,
         name: monitor?.name || '',
@@ -41,8 +43,20 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         setSaving(true);
         try {
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
             // Prepare data based on method type
             const submitData = { ...formData };
 
@@ -88,10 +102,16 @@ export default function MonitorModal({ deploymentId, monitor, onClose, onSuccess
             }
 
             if (monitor) {
-                await apiClient.updateMonitor(monitor.id, submitData);
+                await apiClient.updateMonitor(monitor.id, submitData, rebacFilters);
                 toast.success('Monitor updated successfully!');
             } else {
-                await apiClient.createMonitor(submitData);
+                // Include org_id and project_id in body for creation
+                const createData = {
+                    ...submitData,
+                    organization_id: currentOrg.id,
+                    ...(currentProject?.id && { project_id: currentProject.id })
+                };
+                await apiClient.createMonitor(createData);
                 toast.success('Monitor created successfully!');
             }
 

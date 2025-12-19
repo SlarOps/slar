@@ -714,18 +714,20 @@ func (s *EscalationService) ListEscalationPolicies(activeOnly bool) ([]db.Escala
 }
 
 // GetGroupEscalationPolicies retrieves escalation policies for a group with usage statistics
+// DEPRECATED: Use GetGroupEscalationPoliciesWithFilters for ReBAC support
 func (s *EscalationService) GetGroupEscalationPolicies(groupID string, activeOnly bool) ([]EscalationPolicyWithUsage, error) {
+	fmt.Printf("WARNING: GetGroupEscalationPolicies is deprecated - use GetGroupEscalationPoliciesWithFilters with ReBAC filters\n")
 	var policiesWithUsage []EscalationPolicyWithUsage
 
 	query := `
-		SELECT 
+		SELECT
 			ep.id, ep.name, ep.description, ep.is_active, ep.repeat_max_times,
 			ep.created_at, ep.updated_at, COALESCE(ep.created_by, '') as created_by,
 			COALESCE(usage.services_count, 0) as services_count
 		FROM escalation_policies ep
 		LEFT JOIN (
 			SELECT escalation_policy_id, COUNT(*) as services_count
-			FROM services 
+			FROM services
 			WHERE group_id = $1 AND is_active = true AND escalation_policy_id IS NOT NULL
 			GROUP BY escalation_policy_id
 		) usage ON ep.id = usage.escalation_policy_id`
@@ -753,6 +755,97 @@ func (s *EscalationService) GetGroupEscalationPolicies(groupID string, activeOnl
 			&policyWithUsage.ServicesCount)
 		if err != nil {
 			return policiesWithUsage, fmt.Errorf("failed to scan escalation policy with usage: %w", err)
+		}
+		policiesWithUsage = append(policiesWithUsage, policyWithUsage)
+	}
+
+	return policiesWithUsage, nil
+}
+
+// GetGroupEscalationPoliciesWithFilters retrieves escalation policies for a group with ReBAC filtering
+// ReBAC: MANDATORY Tenant Isolation with organization context
+func (s *EscalationService) GetGroupEscalationPoliciesWithFilters(filters map[string]interface{}) ([]EscalationPolicyWithUsage, error) {
+	// ReBAC: Get user context
+	currentUserID, hasCurrentUser := filters["current_user_id"].(string)
+	if !hasCurrentUser || currentUserID == "" {
+		return []EscalationPolicyWithUsage{}, nil
+	}
+
+	// ReBAC: Get organization context (MANDATORY for Tenant Isolation)
+	currentOrgID, hasOrgContext := filters["current_org_id"].(string)
+	if !hasOrgContext || currentOrgID == "" {
+		fmt.Printf("WARNING: GetGroupEscalationPoliciesWithFilters called without organization context - returning empty\n")
+		return []EscalationPolicyWithUsage{}, nil
+	}
+
+	// Get group_id from filters
+	groupID, hasGroupID := filters["group_id"].(string)
+	if !hasGroupID || groupID == "" {
+		return []EscalationPolicyWithUsage{}, nil
+	}
+
+	// Get active_only filter
+	activeOnly := true // Default
+	if val, ok := filters["active_only"].(bool); ok {
+		activeOnly = val
+	}
+
+	// ReBAC: Query with Tenant Isolation
+	// User must be a member of the group to see its escalation policies
+	query := `
+		SELECT
+			ep.id, ep.name, ep.description, ep.is_active, ep.repeat_max_times,
+			ep.created_at, ep.updated_at, COALESCE(ep.created_by, '') as created_by,
+			COALESCE(usage.services_count, 0) as services_count
+		FROM escalation_policies ep
+		LEFT JOIN (
+			SELECT escalation_policy_id, COUNT(*) as services_count
+			FROM services
+			WHERE group_id = $1 AND is_active = true AND escalation_policy_id IS NOT NULL
+			GROUP BY escalation_policy_id
+		) usage ON ep.id = usage.escalation_policy_id
+		WHERE ep.group_id = $1
+		  -- TENANT ISOLATION (MANDATORY): Via group's organization
+		  AND EXISTS (
+			SELECT 1 FROM groups g
+			WHERE g.id = ep.group_id
+			AND g.organization_id = $2
+		  )
+		  -- ReBAC: User must have access to the group
+		  AND EXISTS (
+			SELECT 1 FROM memberships m
+			WHERE m.user_id = $3
+			AND m.resource_type = 'group'
+			AND m.resource_id = ep.group_id
+		  )`
+
+	args := []interface{}{groupID, currentOrgID, currentUserID}
+	argIndex := 4
+
+	if activeOnly {
+		query += fmt.Sprintf(" AND ep.is_active = $%d", argIndex)
+		args = append(args, true)
+		argIndex++
+	}
+
+	query += " ORDER BY ep.created_at DESC"
+
+	rows, err := s.PG.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group escalation policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policiesWithUsage []EscalationPolicyWithUsage
+	for rows.Next() {
+		var policyWithUsage EscalationPolicyWithUsage
+		err := rows.Scan(
+			&policyWithUsage.ID, &policyWithUsage.Name, &policyWithUsage.Description,
+			&policyWithUsage.IsActive, &policyWithUsage.RepeatMaxTimes,
+			&policyWithUsage.CreatedAt, &policyWithUsage.UpdatedAt, &policyWithUsage.CreatedBy,
+			&policyWithUsage.ServicesCount)
+		if err != nil {
+			continue
 		}
 		policiesWithUsage = append(policiesWithUsage, policyWithUsage)
 	}

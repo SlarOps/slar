@@ -27,7 +27,7 @@ const MessagesList = memo(({ messages, isSending, endRef, onRegenerate, onApprov
     <main
       className="flex-1 overflow-y-auto scroll-smooth will-change-scroll [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar]:w-2 [-ms-overflow-style:none] [scrollbar-width:thin] [scrollbar-color:rgb(209_213_219)_transparent]"
     >
-      <div className="max-w-3xl mx-auto px-3 sm:px-4 pt-4 pb-28 sm:pb-32">
+      <div className="max-w-3xl mx-auto px-2 sm:px-4 pt-4 pb-28 sm:pb-32">
         {visibleMessages.map((message, idx) => (
           <MessageComponent
             key={`${message.role}-${idx}-${message.content?.slice(0, 50) || ''}`}

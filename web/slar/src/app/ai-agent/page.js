@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { ChatInput } from '../../components/ui';
 import {
   ChatHeader,
@@ -18,6 +19,7 @@ import { useSyncBucket } from '../../hooks/useSyncBucket';
 
 function AIAgentContent() {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const searchParams = useSearchParams();
   const incidentId = searchParams.get('incident');
   const [input, setInput] = useState("");
@@ -71,7 +73,10 @@ function AIAgentContent() {
     const message = input.trim();
     setInput("");
 
-    await sendMessage(message);
+    await sendMessage(message, {
+      orgId: currentOrg?.id,
+      projectId: currentProject?.id
+    });
   }, [input, sendMessage]);
 
   // Handle session reset
@@ -183,7 +188,7 @@ function AIAgentContent() {
             ref={messageAreaRef}
             className="flex-1 overflow-y-auto overflow-x-hidden"
           >
-            <div className="max-w-4xl mx-auto px-4 pb-32 pt-4">
+            <div className="max-w-4xl mx-auto pb-32 pt-4">
               {/* Messages List */}
               <MessagesList
                 messages={messages}

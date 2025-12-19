@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to SLAR! We welcome contributions from the community and are excited to see what you'll build.
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -40,7 +40,7 @@ Before you begin, ensure you have the following installed:
    npm run dev
    ```
 
-## 📝 How to Contribute
+## How to Contribute
 
 ### Reporting Issues
 
@@ -74,7 +74,7 @@ Before you begin, ensure you have the following installed:
 - **Follow the existing code style**
 - **Ensure CI passes** before requesting review
 
-## 🧪 Testing
+## Testing
 
 ### Backend Tests
 ```bash
@@ -94,7 +94,7 @@ npm test
 make test
 ```
 
-## 📋 Code Style
+## Code Style
 
 ### Go Code Style
 - Follow standard Go conventions
@@ -120,7 +120,7 @@ Fixes #issue-number
 
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 ├── api/                    # Go backend
@@ -136,24 +136,24 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 └── docs/                  # Documentation
 ```
 
-## 🤝 Community Guidelines
+## Community Guidelines
 
 - **Be respectful** and inclusive
 - **Help others** learn and grow
 - **Give constructive feedback**
 - **Follow our Code of Conduct**
 
-## 📚 Resources
+## Resources
 
 - [Project Documentation](./README.md)
 - [API Documentation](./docs/api.md)
 - [Architecture Overview](./docs/architecture.md)
 - [Deployment Guide](./docs/deployment.md)
 
-## ❓ Questions?
+## Questions?
 
 - **GitHub Discussions** for general questions
 - **GitHub Issues** for bugs and feature requests
 - **Discord** (coming soon) for real-time chat
 
-Thank you for contributing to SLAR! 🎉
+Thank you for contributing to SLAR!

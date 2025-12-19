@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Modal, ModalFooter, ModalButton, Select, toast } from '../ui';
 import { LinkIcon, XMarkIcon } from '@heroicons/react/24/outline';
@@ -13,24 +14,32 @@ export default function MonitorIntegrationModal({
     onIntegrationUpdated
 }) {
     const { session } = useAuth();
+    const { currentOrg, currentProject } = useOrg();
     const [loading, setLoading] = useState(false);
     const [integrations, setIntegrations] = useState([]);
     const [selectedIntegrationId, setSelectedIntegrationId] = useState('');
     const [currentIntegration, setCurrentIntegration] = useState(null);
 
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && currentOrg?.id) {
             loadIntegrations();
             loadCurrentIntegration();
         }
-    }, [isOpen, deployment]);
+    }, [isOpen, deployment, currentOrg?.id, currentProject?.id]);
 
     const loadIntegrations = async () => {
         try {
-            if (!session?.access_token) return;
+            if (!session?.access_token || !currentOrg?.id) return;
 
             apiClient.setToken(session.access_token);
-            const response = await apiClient.getIntegrations({ active_only: true });
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id }),
+                active_only: true
+            };
+            const response = await apiClient.getIntegrations(rebacFilters);
 
             // Handle both response formats: {integrations: [...]} or {count: N, integrations: [...]}
             const allIntegrations = response.integrations || [];
@@ -53,11 +62,18 @@ export default function MonitorIntegrationModal({
     };
 
     const loadCurrentIntegration = async () => {
-        if (!deployment?.id || !session?.access_token) return;
+        if (!deployment?.id || !session?.access_token || !currentOrg?.id) return;
 
         try {
             apiClient.setToken(session.access_token);
-            const response = await apiClient.getDeploymentIntegration(deployment.id);
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            const response = await apiClient.getDeploymentIntegration(deployment.id, rebacFilters);
             setCurrentIntegration(response.integration);
             setSelectedIntegrationId(response.integration?.id || '');
         } catch (error) {
@@ -71,10 +87,22 @@ export default function MonitorIntegrationModal({
             return;
         }
 
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         setLoading(true);
         try {
             apiClient.setToken(session.access_token);
-            await apiClient.updateDeploymentIntegration(deployment.id, selectedIntegrationId);
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            await apiClient.updateDeploymentIntegration(deployment.id, selectedIntegrationId, rebacFilters);
 
             toast.success('Integration linked successfully! Please redeploy the worker for changes to take effect.');
             onIntegrationUpdated && onIntegrationUpdated();
@@ -88,10 +116,22 @@ export default function MonitorIntegrationModal({
     };
 
     const handleUnlink = async () => {
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         setLoading(true);
         try {
             apiClient.setToken(session.access_token);
-            await apiClient.updateDeploymentIntegration(deployment.id, null);
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            await apiClient.updateDeploymentIntegration(deployment.id, null, rebacFilters);
 
             toast.success('Integration unlinked successfully! Please redeploy the worker for changes to take effect.');
             onIntegrationUpdated && onIntegrationUpdated();

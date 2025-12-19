@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/db"
 	"github.com/vanchonlee/slar/services"
 )
@@ -24,12 +25,39 @@ func NewIntegrationHandler(integrationService *services.IntegrationService) *Int
 // ===========================
 
 // CreateIntegration creates a new integration
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 // POST /api/integrations
 func (h *IntegrationHandler) CreateIntegration(c *gin.Context) {
 	var req db.CreateIntegrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
 		return
+	}
+
+	// =========================================================================
+	// ReBAC: Inject organization context (required for tenant isolation)
+	// =========================================================================
+	// Priority: request body > query param > header
+	if req.OrganizationID == "" {
+		req.OrganizationID = c.Query("org_id")
+	}
+	if req.OrganizationID == "" {
+		req.OrganizationID = c.GetHeader("X-Org-ID")
+	}
+	if req.OrganizationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide organization_id in request body, org_id query param, or X-Org-ID header",
+		})
+		return
+	}
+
+	// Optional: Inject project context
+	if req.ProjectID == "" {
+		req.ProjectID = c.Query("project_id")
+	}
+	if req.ProjectID == "" {
+		req.ProjectID = c.GetHeader("X-Project-ID")
 	}
 
 	// Validate integration type
@@ -54,6 +82,8 @@ func (h *IntegrationHandler) CreateIntegration(c *gin.Context) {
 		}
 	}
 
+	log.Printf("CreateIntegration: org_id=%s, project_id=%s, type=%s", req.OrganizationID, req.ProjectID, req.Type)
+
 	integration, err := h.IntegrationService.CreateIntegration(req, createdBy)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create integration", "details": err.Error()})
@@ -67,13 +97,39 @@ func (h *IntegrationHandler) CreateIntegration(c *gin.Context) {
 }
 
 // GetIntegrations returns all integrations with optional filtering
-// GET /api/integrations?type=prometheus&active_only=true
+// ReBAC: Uses organization context for MANDATORY tenant isolation
+// GET /api/integrations?type=prometheus&active_only=true&org_id=xxx
 func (h *IntegrationHandler) GetIntegrations(c *gin.Context) {
-	integType := c.Query("type")
-	activeOnlyStr := c.Query("active_only")
-	activeOnly := activeOnlyStr == "true"
+	// =========================================================================
+	// ReBAC: Get security context from middleware
+	// =========================================================================
+	filters := authz.GetReBACFilters(c)
 
-	integrations, err := h.IntegrationService.GetIntegrations(integType, activeOnly)
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
+	}
+
+	// Add resource-specific filters
+	if integType := c.Query("type"); integType != "" {
+		filters["type"] = integType
+	}
+	if activeOnlyStr := c.Query("active_only"); activeOnlyStr == "true" {
+		filters["active_only"] = true
+	}
+
+	// Optional: Filter by project_id (if provided)
+	if projectID := c.Query("project_id"); projectID != "" {
+		filters["project_id"] = projectID
+	} else if projectID := c.GetHeader("X-Project-ID"); projectID != "" {
+		filters["project_id"] = projectID
+	}
+
+	integrations, err := h.IntegrationService.GetIntegrationsWithFilters(filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get integrations", "details": err.Error()})
 		return

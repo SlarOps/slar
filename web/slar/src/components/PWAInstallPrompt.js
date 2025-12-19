@@ -7,7 +7,26 @@ export default function PWAInstallPrompt() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
 
   useEffect(() => {
-    // Register service worker
+    // Only register service worker in production
+    // In development, skip SW to avoid caching issues
+    const isDevelopment = process.env.NODE_ENV === 'development' ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+
+    if (isDevelopment) {
+      // Unregister any existing service workers in development
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          registrations.forEach((registration) => {
+            registration.unregister();
+            console.log('🔧 Dev mode: Service Worker unregistered');
+          });
+        });
+      }
+      return;
+    }
+
+    // Register service worker (production only)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
         .register('/sw.js', { scope: '/' })
@@ -38,6 +57,21 @@ export default function PWAInstallPrompt() {
       e.preventDefault();
       // Stash the event so it can be triggered later
       setDeferredPrompt(e);
+
+      // Check if user has permanently dismissed the prompt
+      if (localStorage.getItem('pwa-install-never') === 'true') {
+        return;
+      }
+
+      // Check if temporarily dismissed (within 7 days)
+      const dismissed = localStorage.getItem('pwa-install-dismissed');
+      if (dismissed) {
+        const daysSinceDismissed = (Date.now() - parseInt(dismissed)) / (1000 * 60 * 60 * 24);
+        if (daysSinceDismissed < 7) {
+          return;
+        }
+      }
+
       // Show custom install prompt
       setShowInstallPrompt(true);
     };
@@ -82,8 +116,21 @@ export default function PWAInstallPrompt() {
     localStorage.setItem('pwa-install-dismissed', Date.now().toString());
   };
 
-  // Check if dismissed recently
+  const handleNeverShow = () => {
+    setShowInstallPrompt(false);
+    // Permanently disable install prompt
+    localStorage.setItem('pwa-install-never', 'true');
+  };
+
+  // Check if dismissed recently or permanently
   useEffect(() => {
+    // Check for permanent dismissal
+    if (localStorage.getItem('pwa-install-never') === 'true') {
+      setShowInstallPrompt(false);
+      return;
+    }
+
+    // Check for temporary dismissal (7 days)
     const dismissed = localStorage.getItem('pwa-install-dismissed');
     if (dismissed) {
       const daysSinceDismissed = (Date.now() - parseInt(dismissed)) / (1000 * 60 * 60 * 24);
@@ -124,10 +171,10 @@ export default function PWAInstallPrompt() {
                 Install
               </button>
               <button
-                onClick={handleDismiss}
+                onClick={handleNeverShow}
                 className="flex-shrink-0 bg-white/10 backdrop-blur-sm text-white font-medium py-2 px-4 rounded-lg hover:bg-white/20 transition-colors text-sm"
               >
-                Later
+                Don't show
               </button>
             </div>
           </div>

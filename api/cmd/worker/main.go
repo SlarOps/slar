@@ -8,8 +8,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/vanchonlee/slar/internal/config"
 	"github.com/vanchonlee/slar/services"
 	"github.com/vanchonlee/slar/workers"
 )
@@ -17,27 +17,28 @@ import (
 func main() {
 	log.Println("Starting workers...")
 
-	if err := godotenv.Load(); err != nil {
-		log.Println("ℹ️  No .env file found, using system environment variables")
-	} else {
-		log.Println("✅ Loaded .env file successfully")
+	// Load Config
+	configPath := os.Getenv("SLAR_CONFIG_PATH")
+
+
+	if err := config.LoadConfig(configPath); err != nil {
+		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
 	// Database connection
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("DATABASE_URL environment variable is required")
+	if config.App.DatabaseURL == "" {
+		log.Fatal("❌ DATABASE_URL environment variable (or config) is required")
 	}
 
-	pg, err := sql.Open("postgres", dbURL)
+	pg, err := sql.Open("postgres", config.App.DatabaseURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatalf("❌ Failed to connect to database: %v", err)
 	}
 	defer pg.Close()
 
 	// Test database connection
 	if err := pg.Ping(); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
+		log.Fatalf("❌ Failed to ping database: %v", err)
 	}
 
 	// Set timezone to UTC for consistent time handling
@@ -47,7 +48,7 @@ func main() {
 		log.Println("✅ Set database timezone to UTC")
 	}
 
-	log.Println("Connected to database successfully")
+	log.Println("✅ Connected to database successfully")
 
 	// Initialize services
 	fcmService, _ := services.NewFCMService(pg)

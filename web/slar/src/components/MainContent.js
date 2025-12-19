@@ -12,20 +12,20 @@ export default function MainContent({ children }) {
   const { isAuthenticated } = useAuth();
   const pathname = usePathname();
 
-  // No sidebar margin for auth pages or unauthenticated users
+  // No sidebar margin for auth pages, onboarding, or unauthenticated users
   const isAuthPage = pathname === '/login' || pathname === '/signup';
-  const isFullBleed = FULL_BLEED_PAGES.includes(pathname);
-  const showSidebarMargin = !isMobile && isAuthenticated && !isAuthPage;
+  const isOnboardingPage = pathname === '/onboarding';
+  const isFullBleed = FULL_BLEED_PAGES.includes(pathname) || isOnboardingPage;
+  const showSidebarMargin = !isMobile && isAuthenticated && !isAuthPage && !isOnboardingPage;
 
   return (
-    <main 
-      className={`transition-all duration-300 ${
-        showSidebarMargin 
-          ? collapsed 
-            ? 'md:ml-16' 
-            : 'md:ml-60'
-          : ''
-      } ${isMobile ? 'pt-14' : 'pt-0'} ${isFullBleed ? 'h-screen' : 'min-h-screen'}`}
+    <main
+      className={`transition-all duration-300 ${showSidebarMargin
+        ? collapsed
+          ? 'md:ml-16'
+          : 'md:ml-60'
+        : ''
+        } ${isMobile ? 'pt-14' : 'pt-0'} ${isFullBleed ? 'h-screen' : 'min-h-screen'}`}
     >
       {isFullBleed ? (
         // Full-bleed layout for chat/AI pages - scrollbar at edge
@@ -34,7 +34,7 @@ export default function MainContent({ children }) {
         </div>
       ) : (
         // Standard container layout
-        <div className={`mx-auto px-4 py-6 ${isAuthPage ? '' : 'max-w-7xl'}`}>
+        <div className={`mx-auto py-6 ${isAuthPage ? '' : 'max-w-7xl'}`}>
           {children}
         </div>
       )}

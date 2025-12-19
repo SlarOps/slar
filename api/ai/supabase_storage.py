@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any, List
 from supabase import create_client, Client
 import jwt
+from database_util import execute_query
 
 logger = logging.getLogger(__name__)
 
@@ -377,19 +378,17 @@ async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[
         return {}
 
     try:
-        # Get Supabase client (uses SERVICE_ROLE_KEY, bypasses RLS)
-        supabase = get_supabase_client()
+        # Query MCP servers from PostgreSQL using raw SQL
+        query = "SELECT * FROM user_mcp_servers WHERE user_id = %s AND status = 'active'"
+        results = execute_query(query, (effective_user_id,), fetch="all")
 
-        # Query MCP servers from PostgreSQL
-        result = supabase.table("user_mcp_servers").select("*").eq("user_id", effective_user_id).eq("status", "active").execute()
-
-        if not result.data:
+        if not results:
             logger.debug(f"ℹ️  No MCP servers found for user {effective_user_id}")
             return {}
 
         # Convert to MCP server format based on server_type
         mcp_servers = {}
-        for server in result.data:
+        for server in results:
             server_name = server.get("server_name")
             server_type = server.get("server_type", "stdio")
 
@@ -440,13 +439,13 @@ async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
     try:
         from datetime import datetime
         
-        # Get all active MCP servers from PostgreSQL
-        supabase = get_supabase_client()
-        result = supabase.table("user_mcp_servers").select("*").eq("user_id", user_id).eq("status", "active").execute()
+        # Get all active MCP servers from PostgreSQL using raw SQL
+        query = "SELECT * FROM user_mcp_servers WHERE user_id = %s AND status = 'active'"
+        results = execute_query(query, (user_id,), fetch="all")
         
         # Convert to .mcp.json format
         mcp_servers = {}
-        for server in result.data or []:
+        for server in results or []:
             server_name = server.get("server_name")
             server_type = server.get("server_type", "stdio")
             
@@ -540,20 +539,18 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
         return []
 
     try:
-        # Get Supabase client
-        supabase = get_supabase_client()
+        # Query installed plugins from PostgreSQL using raw SQL
+        query = "SELECT * FROM installed_plugins WHERE user_id = %s AND status = 'active'"
+        results = execute_query(query, (user_id,), fetch="all")
 
-        # Query installed plugins from PostgreSQL
-        result = supabase.table("installed_plugins").select("*").eq("user_id", user_id).eq("status", "active").execute()
-
-        if not result.data:
+        if not results:
             logger.debug(f"ℹ️  No installed plugins found for user {user_id}")
             return []
 
         workspace_path = get_user_workspace_path(user_id)
         plugin_configs = []
 
-        for plugin in result.data:
+        for plugin in results:
             plugin_name = plugin.get("plugin_name")
             install_path = plugin.get("install_path")
 
@@ -1606,13 +1603,17 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
     try:
         logger.info(f"📦 Unzipping installed plugins for user: {user_id}")
 
-        # Get Supabase client
+        # Get Supabase client (for storage operations only)
         supabase = get_supabase_client()
 
-        # Get installed plugins from PostgreSQL
-        result = supabase.table("installed_plugins").select("*").eq("user_id", user_id).eq("status", "active").execute()
+        # Get installed plugins from PostgreSQL using raw SQL
+        installed_plugins = execute_query(
+            "SELECT * FROM installed_plugins WHERE user_id = %s AND status = 'active'",
+            (user_id,),
+            fetch="all"
+        )
 
-        if not result.data:
+        if not installed_plugins:
             logger.info(f"ℹ️  No installed plugins found for user: {user_id}")
             logger.info(f"   💡 To unzip plugins, you need to install them first via the frontend")
             logger.info(f"   💡 Go to Integrations → Marketplace → Expand plugin → Install")
@@ -1622,7 +1623,6 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
                 "message": "No plugins to unzip (install plugins first via frontend)"
             }
 
-        installed_plugins = result.data
         logger.info(f"📋 Found {len(installed_plugins)} installed plugins")
         for plugin in installed_plugins:
             logger.info(f"   - {plugin['plugin_name']} from {plugin['marketplace_name']}")
@@ -1642,20 +1642,28 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
 
         # Unzip plugins for each marketplace
         for marketplace_name, plugins in plugins_by_marketplace.items():
-            # Get marketplace metadata from PostgreSQL
+            # Get marketplace metadata from PostgreSQL using raw SQL
             logger.info(f"🔍 Looking for marketplace: {marketplace_name}")
-            marketplace_result = supabase.table("marketplaces").select("*").eq("user_id", user_id).eq("name", marketplace_name).single().execute()
+            marketplace_data = execute_query(
+                "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+                (user_id, marketplace_name),
+                fetch="one"
+            )
 
-            if not marketplace_result.data:
+            if not marketplace_data:
                 logger.warning(f"⚠️  Marketplace '{marketplace_name}' not found in database")
                 logger.info(f"   💡 Available marketplaces:")
-                all_marketplaces = supabase.table("marketplaces").select("name, zip_path").eq("user_id", user_id).execute()
-                for mp in (all_marketplaces.data or []):
+                all_marketplaces = execute_query(
+                    "SELECT name, zip_path FROM marketplaces WHERE user_id = %s",
+                    (user_id,),
+                    fetch="all"
+                )
+                for mp in (all_marketplaces or []):
                     logger.info(f"      - {mp.get('name')} (ZIP: {mp.get('zip_path')})")
                 continue
 
             # Get zip_path from database, or search in workspace
-            zip_path = marketplace_result.data.get("zip_path")
+            zip_path = marketplace_data.get("zip_path")
 
             if not zip_path:
                 logger.info(f"ℹ️  No ZIP path in database for marketplace: {marketplace_name}")
@@ -1771,16 +1779,17 @@ async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[s
     try:
         logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}, scope: {scope}")
 
-        # Get Supabase client
-        supabase = get_supabase_client()
-
-        # Fetch memory from PostgreSQL with scope filter
-        result = supabase.table("claude_memory").select("content").eq("user_id", user_id).eq("scope", scope).execute()
+        # Fetch memory from PostgreSQL using raw SQL
+        result = execute_query(
+            "SELECT content FROM claude_memory WHERE user_id = %s AND scope = %s",
+            (user_id, scope),
+            fetch="one"
+        )
 
         # Get content (empty string if no memory)
         content = ""
-        if result.data and len(result.data) > 0:
-            content = result.data[0].get("content", "")
+        if result:
+            content = result.get("content", "")
 
         # Determine target path based on scope
         if scope == "user":
@@ -2061,30 +2070,34 @@ async def handle_bucket_sync_on_connect(auth_token: str, websocket) -> bool:
 async def get_user_allowed_tools(user_id: str) -> List[str]:
     """
     Get list of allowed tools for user from PostgreSQL.
-    
+
     Args:
         user_id: User's UUID
-        
+
     Returns:
         List of tool names that are allowed to run without permission
     """
     if not user_id:
         return []
-        
+
     try:
-        supabase = get_supabase_client()
-        
-        # Query user_allowed_tools table
+        from database_util import execute_query
+
+        # Query user_allowed_tools table using raw SQL
         # Schema: id, user_id, tool_name, created_at
-        result = supabase.table("user_allowed_tools").select("tool_name").eq("user_id", user_id).execute()
-        
-        if not result.data:
+        result = execute_query(
+            "SELECT tool_name FROM user_allowed_tools WHERE user_id = %s",
+            (user_id,),
+            fetch="all"
+        )
+
+        if not result:
             return []
-            
-        allowed_tools = [item.get("tool_name") for item in result.data if item.get("tool_name")]
+
+        allowed_tools = [item.get("tool_name") for item in result if item.get("tool_name")]
         logger.info(f"✅ Loaded {len(allowed_tools)} allowed tools for user {user_id}")
         return allowed_tools
-        
+
     except Exception as e:
         logger.error(f"❌ Failed to load allowed tools for user {user_id}: {e}")
         return []
@@ -2093,37 +2106,35 @@ async def get_user_allowed_tools(user_id: str) -> List[str]:
 async def add_user_allowed_tool(user_id: str, tool_name: str) -> bool:
     """
     Add a tool to the user's allowed tools list in PostgreSQL.
-    
+
     Args:
         user_id: User's UUID
         tool_name: Name of the tool to allow
-        
+
     Returns:
         True if successful, False otherwise
     """
     if not user_id or not tool_name:
         return False
-        
+
     try:
-        supabase = get_supabase_client()
-        
-        # Check if already exists
-        existing = supabase.table("user_allowed_tools").select("id").eq("user_id", user_id).eq("tool_name", tool_name).execute()
-        
-        if existing.data:
-            logger.info(f"ℹ️ Tool {tool_name} already allowed for user {user_id}")
-            return True
-            
-        # Insert new record
-        data = {
-            "user_id": user_id,
-            "tool_name": tool_name
-        }
-        
-        supabase.table("user_allowed_tools").insert(data).execute()
+        from database_util import execute_query
+
+        # Use UPSERT pattern - INSERT with ON CONFLICT DO NOTHING
+        # This handles both new inserts and existing records in one query
+        execute_query(
+            """
+            INSERT INTO user_allowed_tools (user_id, tool_name)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id, tool_name) DO NOTHING
+            """,
+            (user_id, tool_name),
+            fetch="none"
+        )
+
         logger.info(f"✅ Added {tool_name} to allowed tools for user {user_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"❌ Failed to add allowed tool {tool_name} for user {user_id}: {e}")
         return False
@@ -2132,26 +2143,30 @@ async def add_user_allowed_tool(user_id: str, tool_name: str) -> bool:
 async def delete_user_allowed_tool(user_id: str, tool_name: str) -> bool:
     """
     Remove a tool from the user's allowed tools list in PostgreSQL.
-    
+
     Args:
         user_id: User's UUID
         tool_name: Name of the tool to remove
-        
+
     Returns:
         True if successful, False otherwise
     """
     if not user_id or not tool_name:
         return False
-        
+
     try:
-        supabase = get_supabase_client()
-        
-        # Delete record
-        supabase.table("user_allowed_tools").delete().eq("user_id", user_id).eq("tool_name", tool_name).execute()
-        
+        from database_util import execute_query
+
+        # Delete record using raw SQL
+        execute_query(
+            "DELETE FROM user_allowed_tools WHERE user_id = %s AND tool_name = %s",
+            (user_id, tool_name),
+            fetch="none"
+        )
+
         logger.info(f"✅ Removed {tool_name} from allowed tools for user {user_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"❌ Failed to remove allowed tool {tool_name} for user {user_id}: {e}")
         return False

@@ -25,17 +25,20 @@ func NewIntegrationService(pg *sql.DB) *IntegrationService {
 // ===========================
 
 // CreateIntegration creates a new integration
+// ReBAC: Requires OrganizationID for MANDATORY tenant isolation
 func (s *IntegrationService) CreateIntegration(req db.CreateIntegrationRequest, createdBy string) (db.Integration, error) {
 	integration := db.Integration{
-		ID:          uuid.New().String(),
-		Name:        req.Name,
-		Type:        req.Type,
-		Description: req.Description,
-		Config:      req.Config,
-		IsActive:    true,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		CreatedBy:   createdBy,
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		Type:           req.Type,
+		Description:    req.Description,
+		Config:         req.Config,
+		IsActive:       true,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		CreatedBy:      createdBy,
+		OrganizationID: req.OrganizationID, // ReBAC: MANDATORY tenant isolation
+		ProjectID:      req.ProjectID,      // ReBAC: OPTIONAL project scoping
 	}
 
 	// Set defaults
@@ -66,16 +69,17 @@ func (s *IntegrationService) CreateIntegration(req db.CreateIntegrationRequest, 
 	}
 	integration.WebhookURL = fmt.Sprintf("%s/webhook/%s/%s", baseURL, integration.Type, integration.ID)
 
-	// Insert integration with webhook_url
+	// Insert integration with webhook_url and ReBAC context
 	err = s.PG.QueryRow(`
 		INSERT INTO integrations (id, name, type, description, config, webhook_secret, webhook_url,
-		                         is_active, heartbeat_interval, created_at, updated_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                         is_active, heartbeat_interval, created_at, updated_at, created_by,
+		                         organization_id, project_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`, integration.ID, integration.Name, integration.Type, integration.Description,
 		configJSON, integration.WebhookSecret, integration.WebhookURL, integration.IsActive,
 		integration.HeartbeatInterval, integration.CreatedAt, integration.UpdatedAt,
-		integration.CreatedBy).Scan(&integration.ID)
+		integration.CreatedBy, integration.OrganizationID, integration.ProjectID).Scan(&integration.ID)
 
 	if err != nil {
 		return integration, fmt.Errorf("failed to create integration: %w", err)
@@ -201,6 +205,133 @@ func (s *IntegrationService) GetIntegrations(integType string, activeOnly bool) 
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan integration: %w", err)
+		}
+
+		// Handle nullable webhook_url
+		if webhookURL.Valid {
+			integration.WebhookURL = webhookURL.String
+		}
+
+		// Parse JSON config
+		if len(configJSON) > 0 {
+			if err := json.Unmarshal(configJSON, &integration.Config); err != nil {
+				integration.Config = make(map[string]interface{})
+			}
+		} else {
+			integration.Config = make(map[string]interface{})
+		}
+
+		// Handle nullable last heartbeat
+		if lastHeartbeat.Valid {
+			integration.LastHeartbeat = &lastHeartbeat.Time
+		}
+
+		integrations = append(integrations, integration)
+	}
+
+	return integrations, nil
+}
+
+// GetIntegrationsWithFilters retrieves integrations with ReBAC filtering
+// ReBAC: MANDATORY Tenant Isolation with organization context
+func (s *IntegrationService) GetIntegrationsWithFilters(filters map[string]interface{}) ([]db.Integration, error) {
+	// ReBAC: Get user context
+	currentUserID, hasCurrentUser := filters["current_user_id"].(string)
+	if !hasCurrentUser || currentUserID == "" {
+		return []db.Integration{}, nil
+	}
+
+	// ReBAC: Get organization context (MANDATORY for Tenant Isolation)
+	currentOrgID, hasOrgContext := filters["current_org_id"].(string)
+	if !hasOrgContext || currentOrgID == "" {
+		log.Printf("WARNING: GetIntegrationsWithFilters called without organization context - returning empty")
+		return []db.Integration{}, nil
+	}
+
+	// Base query with TENANT ISOLATION (MANDATORY)
+	query := `
+		SELECT i.id, i.name, i.type, i.description, i.config, i.webhook_url,
+		       COALESCE(i.webhook_secret, '') as webhook_secret,
+		       i.is_active, i.last_heartbeat, i.heartbeat_interval,
+		       i.created_at, i.updated_at, COALESCE(i.created_by, '') as created_by,
+		       COALESCE(i.organization_id::text, '') as organization_id,
+		       COALESCE(i.project_id::text, '') as project_id,
+		       get_integration_health_status(i.id) as health_status,
+		       COALESCE(si_count.services_count, 0) as services_count
+		FROM integrations i
+		LEFT JOIN (
+			SELECT integration_id, COUNT(*) as services_count
+			FROM service_integrations
+			WHERE is_active = true
+			GROUP BY integration_id
+		) si_count ON i.id = si_count.integration_id
+		WHERE i.organization_id = $1`
+
+	args := []interface{}{currentOrgID}
+	argIndex := 2
+
+	// PROJECT FILTER - Computed Scope (ReBAC)
+	if projectID, ok := filters["project_id"].(string); ok && projectID != "" {
+		// Specific project - strict filter
+		query += fmt.Sprintf(" AND i.project_id = $%d", argIndex)
+		args = append(args, projectID)
+		argIndex++
+	} else {
+		// No project_id → Computed Scope
+		// Return org-level integrations (project_id IS NULL) + integrations from accessible projects
+		query += fmt.Sprintf(`
+			AND (
+				i.project_id IS NULL
+				OR i.project_id IN (
+					SELECT m.resource_id FROM memberships m
+					WHERE m.user_id = $%d AND m.resource_type = 'project'
+				)
+			)
+		`, argIndex)
+		args = append(args, currentUserID)
+		argIndex++
+	}
+
+	// Resource-specific filters
+	if integType, ok := filters["type"].(string); ok && integType != "" {
+		query += fmt.Sprintf(" AND i.type = $%d", argIndex)
+		args = append(args, integType)
+		argIndex++
+	}
+
+	if activeOnly, ok := filters["active_only"].(bool); ok && activeOnly {
+		query += fmt.Sprintf(" AND i.is_active = $%d", argIndex)
+		args = append(args, true)
+		argIndex++
+	}
+
+	query += " ORDER BY i.created_at DESC"
+
+	rows, err := s.PG.Query(query, args...)
+	if err != nil {
+		log.Printf("failed to query integrations with filters: %v", err)
+		return nil, fmt.Errorf("failed to query integrations: %w", err)
+	}
+	defer rows.Close()
+
+	var integrations []db.Integration
+	for rows.Next() {
+		var integration db.Integration
+		var configJSON []byte
+		var lastHeartbeat sql.NullTime
+		var webhookURL sql.NullString
+
+		err := rows.Scan(
+			&integration.ID, &integration.Name, &integration.Type, &integration.Description,
+			&configJSON, &webhookURL, &integration.WebhookSecret,
+			&integration.IsActive, &lastHeartbeat, &integration.HeartbeatInterval,
+			&integration.CreatedAt, &integration.UpdatedAt, &integration.CreatedBy,
+			&integration.OrganizationID, &integration.ProjectID,
+			&integration.HealthStatus, &integration.ServicesCount,
+		)
+		if err != nil {
+			log.Printf("failed to scan integration: %v", err)
+			continue
 		}
 
 		// Handle nullable webhook_url

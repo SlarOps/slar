@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Select } from '../ui';
 
@@ -11,6 +12,7 @@ export default function IncidentFilters({
   onClearFilters
 }) {
   const { user, session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [services, setServices] = useState([]);
   const [groups, setGroups] = useState([]);
   const [users, setUsers] = useState([]);
@@ -20,19 +22,25 @@ export default function IncidentFilters({
   // Fetch filter options
   useEffect(() => {
     const fetchFilterOptions = async () => {
-      if (!session?.access_token) return;
-      
+      if (!session?.access_token || !currentOrg?.id) return;
+
       try {
         setLoading(true);
         apiClient.setToken(session.access_token);
-        
+
+        // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+        const rebacFilters = {
+          org_id: currentOrg.id,
+          ...(currentProject?.id && { project_id: currentProject.id })
+        };
+
         // Fetch services, groups, and users for filter dropdowns
         const [servicesData, groupsData, usersData] = await Promise.all([
-          apiClient.getServices().catch(err => {
+          apiClient.getServices(rebacFilters).catch(err => {
             console.warn('Failed to fetch services:', err);
             return [];
           }),
-          apiClient.getGroups().catch(err => {
+          apiClient.getGroups(rebacFilters).catch(err => {
             console.warn('Failed to fetch groups:', err);
             return [];
           }),
@@ -41,7 +49,7 @@ export default function IncidentFilters({
             return [];
           })
         ]);
-        
+
         // Ensure we always have arrays
         setServices(Array.isArray(servicesData) ? servicesData : []);
         setGroups(Array.isArray(groupsData) ? groupsData : []);
@@ -54,7 +62,7 @@ export default function IncidentFilters({
     };
 
     fetchFilterOptions();
-  }, [session]);
+  }, [session, currentOrg?.id, currentProject?.id]);
 
   const handleFilterChange = (key, value) => {
     onFiltersChange({

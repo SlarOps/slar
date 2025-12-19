@@ -39,8 +39,7 @@ bin/
 *.dylib
 
 # Go build outputs
-main
-server
-worker
-*.out
-*.testmain
+# server
+# worker
+# *.out
+# *.testmain

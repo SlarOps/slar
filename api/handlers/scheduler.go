@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/db"
 	"github.com/vanchonlee/slar/services"
 )
@@ -313,6 +314,16 @@ func (h *SchedulerHandler) CreateScheduler(c *gin.Context) {
 		return
 	}
 
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.OrganizationID = orgID
+		}
+	}
+
 	// Create scheduler
 	scheduler, err := h.SchedulerService.CreateScheduler(groupID, req, userID.(string))
 	if err != nil {
@@ -352,6 +363,16 @@ func (h *SchedulerHandler) CreateSchedulerWithShifts(c *gin.Context) {
 		return
 	}
 
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.Scheduler.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.Scheduler.OrganizationID = orgID
+		}
+	}
+
 	// Set default values for shifts
 	for i := range req.Shifts {
 		if req.Shifts[i].ShiftType == "" {
@@ -376,6 +397,7 @@ func (h *SchedulerHandler) CreateSchedulerWithShifts(c *gin.Context) {
 
 // GetGroupSchedulers gets all schedulers for a group
 // GET /groups/{id}/schedulers
+// ReBAC: Uses organization context for MANDATORY tenant isolation
 func (h *SchedulerHandler) GetGroupSchedulers(c *gin.Context) {
 	groupID := c.Param("id")
 	if groupID == "" {
@@ -383,7 +405,24 @@ func (h *SchedulerHandler) GetGroupSchedulers(c *gin.Context) {
 		return
 	}
 
-	schedulers, err := h.SchedulerService.GetSchedulersByGroup(groupID)
+	// =========================================================================
+	// ReBAC: Get security context from middleware
+	// =========================================================================
+	filters := authz.GetReBACFilters(c)
+
+	// SECURITY: org_id is MANDATORY for tenant isolation
+	if filters["current_org_id"] == nil || filters["current_org_id"].(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "organization_id is required",
+			"message": "Please provide org_id query param or X-Org-ID header for tenant isolation",
+		})
+		return
+	}
+
+	// Pass filters to service for ReBAC-aware query
+	filters["group_id"] = groupID
+
+	schedulers, err := h.SchedulerService.GetSchedulersByGroupWithFilters(filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get schedulers: " + err.Error()})
 		return
@@ -507,6 +546,16 @@ func (h *SchedulerHandler) CreateSchedulerWithShiftsOptimized(c *gin.Context) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
+	}
+
+	// Helper for ReBAC
+	filters := authz.GetReBACFilters(c)
+
+	// If OrganizationID is not provided in the request, try to get it from context
+	if req.Scheduler.OrganizationID == "" {
+		if orgID, ok := filters["current_org_id"].(string); ok && orgID != "" {
+			req.Scheduler.OrganizationID = orgID
+		}
 	}
 
 	// Validate request

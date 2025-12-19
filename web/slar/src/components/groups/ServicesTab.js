@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import ServiceModal from './ServiceModal';
 import ServiceDetailsModal from './ServiceDetailsModal';
@@ -10,6 +11,7 @@ import { ConfirmationModal, Toast, toast } from '../ui';
 
 export default function ServicesTab({ groupId, onServiceCreate, members = [] }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showServiceModal, setShowServiceModal] = useState(false);
@@ -17,7 +19,7 @@ export default function ServicesTab({ groupId, onServiceCreate, members = [] }) 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showCreateScheduleModal, setShowCreateScheduleModal] = useState(false);
   const [selectedService, setSelectedService] = useState(null);
-  
+
   // Confirmation modal state
   const [confirmationModal, setConfirmationModal] = useState({
     isOpen: false,
@@ -30,13 +32,14 @@ export default function ServicesTab({ groupId, onServiceCreate, members = [] }) 
 
   // Fetch services on component mount
   useEffect(() => {
-    if (groupId && session?.access_token) {
+    // ReBAC: MUST have session AND org_id for tenant isolation
+    if (groupId && session?.access_token && currentOrg?.id) {
       fetchServices();
     }
-  }, [groupId, session]);
+  }, [groupId, session, currentOrg?.id, currentProject?.id]);
 
   const fetchServices = async () => {
-    if (!session?.access_token || !groupId) {
+    if (!session?.access_token || !groupId || !currentOrg?.id) {
       setLoading(false);
       return;
     }
@@ -44,7 +47,12 @@ export default function ServicesTab({ groupId, onServiceCreate, members = [] }) 
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getGroupServices(groupId);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const response = await apiClient.getGroupServices(groupId, rebacFilters);
       setServices(response.services || []);
     } catch (error) {
       console.error('Failed to fetch services:', error);
@@ -118,11 +126,16 @@ export default function ServicesTab({ groupId, onServiceCreate, members = [] }) 
 
   const confirmDeleteService = async (serviceId) => {
     setConfirmationModal(prev => ({ ...prev, isLoading: true }));
-    
+
     try {
       apiClient.setToken(session.access_token);
-      await apiClient.deleteService(serviceId);
-      
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      await apiClient.deleteService(serviceId, rebacFilters);
+
       setServices(prev => prev.filter(s => s.id !== serviceId));
       setConfirmationModal({ isOpen: false, title: '', message: '', onConfirm: null, confirmText: 'Confirm', isLoading: false });
       toast.success('Service deleted successfully!');

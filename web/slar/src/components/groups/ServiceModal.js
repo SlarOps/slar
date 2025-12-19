@@ -2,21 +2,23 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Modal, ModalFooter, ModalButton, Input, Textarea, Checkbox, CheckboxGroup, toast } from '../ui';
 import EscalationPolicySelector from './EscalationPolicySelector';
 import IntegrationSelector from './IntegrationSelector';
 
-export default function ServiceModal({ 
-  isOpen, 
-  onClose, 
+export default function ServiceModal({
+  isOpen,
+  onClose,
   mode = 'create', // 'create' or 'edit'
   service = null, // Required for edit mode
-  groupId, 
+  groupId,
   onServiceCreated,
-  onServiceUpdated 
+  onServiceUpdated
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -78,7 +80,7 @@ export default function ServiceModal({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!session?.access_token) {
       toast.error('Authentication required');
       return;
@@ -94,21 +96,32 @@ export default function ServiceModal({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       let response;
       if (isEditMode) {
         // Update existing service
-        response = await apiClient.updateService(service.id, formData);
+        response = await apiClient.updateService(service.id, formData, rebacFilters);
         if (response.service) {
           onServiceUpdated && onServiceUpdated(response.service);
           toast.success('Service updated successfully!');
         }
       } else {
         // Create new service
-        response = await apiClient.createService(groupId, formData);
+        response = await apiClient.createService(groupId, formData, rebacFilters);
         if (response.service) {
           onServiceCreated && onServiceCreated(response.service);
           toast.success('Service created successfully!');
@@ -128,7 +141,7 @@ export default function ServiceModal({
           });
         }
       }
-      
+
       onClose();
     } catch (error) {
       console.error(`Failed to ${isEditMode ? 'update' : 'create'} service:`, error);
@@ -144,7 +157,7 @@ export default function ServiceModal({
       .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
       .trim('-');
-    
+
     if (name) {
       setFormData(prev => ({
         ...prev,
@@ -164,7 +177,7 @@ export default function ServiceModal({
           <ModalButton variant="secondary" onClick={onClose}>
             Cancel
           </ModalButton>
-          <ModalButton 
+          <ModalButton
             variant={submitButtonVariant}
             onClick={handleSubmit}
             loading={loading}
@@ -178,17 +191,6 @@ export default function ServiceModal({
     >
       <form onSubmit={handleSubmit}>
         <div className="space-y-4">
-          {/* Service Status - Only show in edit mode */}
-          {isEditMode && (
-            <Checkbox
-              label="Service is active"
-              description="Inactive services won't receive alerts"
-              checked={formData.is_active}
-              onChange={(e) => setFormData(prev => ({ ...prev, is_active: e.target.checked }))}
-              className="p-4 bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm rounded-lg"
-            />
-          )}
-
           {/* Service Name */}
           <Input
             label="Service Name"
@@ -208,25 +210,6 @@ export default function ServiceModal({
             rows={3}
           />
 
-          {/* Routing Key */}
-          <Input
-            label="Routing Key"
-            value={formData.routing_key}
-            onChange={(e) => setFormData(prev => ({ ...prev, routing_key: e.target.value }))}
-            placeholder="service-alerts"
-            helperText="Unique identifier for routing alerts to this service"
-            required
-            rightElement={!isEditMode && (
-              <button
-                type="button"
-                onClick={generateRoutingKey}
-                className="rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm py-2 px-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-              >
-                Generate
-              </button>
-            )}
-          />
-
           {/* Escalation Policy */}
           <div>
             <EscalationPolicySelector
@@ -243,43 +226,6 @@ export default function ServiceModal({
             onIntegrationsChange={setServiceIntegrations}
             disabled={loading}
           />
-
-          {/* Notification Settings */}
-          <CheckboxGroup label="Notification Settings">
-            <Checkbox
-              label="Email notifications"
-              checked={formData.notification_settings.email}
-              onChange={(e) => setFormData(prev => ({
-                ...prev,
-                notification_settings: {
-                  ...prev.notification_settings,
-                  email: e.target.checked
-                }
-              }))}
-            />
-            <Checkbox
-              label="Push notifications"
-              checked={formData.notification_settings.fcm}
-              onChange={(e) => setFormData(prev => ({
-                ...prev,
-                notification_settings: {
-                  ...prev.notification_settings,
-                  fcm: e.target.checked
-                }
-              }))}
-            />
-            <Checkbox
-              label="SMS notifications"
-              checked={formData.notification_settings.sms}
-              onChange={(e) => setFormData(prev => ({
-                ...prev,
-                notification_settings: {
-                  ...prev.notification_settings,
-                  sms: e.target.checked
-                }
-              }))}
-            />
-          </CheckboxGroup>
         </div>
       </form>
     </Modal>

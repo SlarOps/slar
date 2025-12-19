@@ -5,8 +5,8 @@ This is the AI Agent chat interface using **WebSocket** to connect to the Claude
 ## What Changed
 
 ### Network Layer
-- ✅ **Added**: WebSocket connection with Claude Agent API (`useClaudeWebSocket` hook)
-- ✅ **Features**: Heartbeat (ping/pong), tool approval system, session management, auto-reconnection
+- **Added**: WebSocket connection with Claude Agent API (`useClaudeWebSocket` hook)
+- **Features**: Heartbeat (ping/pong), tool approval system, session management, auto-reconnection
 
 ### Same UI Components
 All existing UI components remain unchanged:
@@ -89,17 +89,17 @@ Backend API at `api/ai/claude_agent_api.py` provides:
 
 ## Features (All Preserved)
 
-✅ Real-time WebSocket communication
-✅ Message streaming with markdown rendering
-✅ Code syntax highlighting
-✅ Tool approval system (interactive, rule-based, hybrid)
-✅ Heartbeat (ping/pong) for connection health
-✅ Auto-reconnection on disconnect
-✅ Incident cards display
-✅ Attached incident context
-✅ Session management (auto-save/resume)
-✅ Stop streaming button
-✅ New session button
+- Real-time WebSocket communication
+- Message streaming with markdown rendering
+- Code syntax highlighting
+- Tool approval system (interactive, rule-based, hybrid)
+- Heartbeat (ping/pong) for connection health
+- Auto-reconnection on disconnect
+- Incident cards display
+- Attached incident context
+- Session management (auto-save/resume)
+- Stop streaming button
+- New session button
 
 ## Environment Variables
 

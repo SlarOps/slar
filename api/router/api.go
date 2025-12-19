@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 
+	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/handlers"
+	"github.com/vanchonlee/slar/internal/config"
 	"github.com/vanchonlee/slar/internal/monitor"
 	"github.com/vanchonlee/slar/services"
 )
@@ -51,7 +53,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
 	serviceService := services.NewServiceService(pg)         // NEW: Service management
 	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
-	identityService, err := services.NewIdentityService("./data") // Initialize IdentityService
+	identityService, err := services.NewIdentityService(config.App.DataDir) // Initialize IdentityService
 	if err != nil {
 		log.Printf("Warning: Failed to initialize identity service: %v", err)
 	}
@@ -66,9 +68,16 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		}()
 	}
 
+	// Initialize authz components (Organizations, Projects, Memberships)
+	authzBackend, membershipMgr, orgRepo, projectRepo := authz.NewSimpleBackend(pg)
+	orgService := authz.NewOrgService(authzBackend, membershipMgr, orgRepo)
+	projectService := authz.NewProjectService(authzBackend, membershipMgr, projectRepo, orgRepo)
+	authzMiddleware := authz.NewAuthzMiddleware(authzBackend)
+	projectScopedMiddleware := authz.NewProjectScopedMiddleware(authzBackend, projectService) // ReBAC project scoping
+
 	// Initialize handlers
 	alertHandler := handlers.NewAlertHandler(alertService)
-	incidentHandler := handlers.NewIncidentHandler(incidentService) // NEW: Incident handler
+	incidentHandler := handlers.NewIncidentHandler(incidentService, serviceService, projectService, authzBackend) // NEW: Incident handler with ReBAC
 	userHandler := handlers.NewUserHandler(userService)
 	uptimeHandler := handlers.NewUptimeHandler(uptimeService)
 	alertManagerHandler := handlers.NewAlertManagerHandler(alertManagerService)
@@ -88,6 +97,8 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
 	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
 	agentHandler := handlers.NewAgentHandler(pg, identityService)   // Initialize AgentHandler for Zero-Trust
+	orgHandler := handlers.NewOrgHandler(orgService)                 // Organization management
+	projectHandler := handlers.NewProjectHandler(projectService)     // Project management
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -150,8 +161,93 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	protected.Use(supabaseAuthMiddleware.SupabaseAuthMiddleware())
 	// protected.Use()
 	{
+		// =====================================================================
+		// ORGANIZATION MANAGEMENT (Defense in Depth)
+		// =====================================================================
+		orgRoutes := protected.Group("/orgs")
+		{
+			// Routes WITHOUT resource ID - check in handler
+			orgRoutes.POST("", orgHandler.CreateOrg)   // Anyone authenticated can create
+			orgRoutes.GET("", orgHandler.ListOrgs)     // Returns only user's orgs
+
+			// Routes WITH resource ID - use middleware for coarse-grained check
+			orgDetailRoutes := orgRoutes.Group("/:id")
+			orgDetailRoutes.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceOrg))
+			{
+				orgDetailRoutes.GET("", orgHandler.GetOrg)
+				orgDetailRoutes.GET("/members", orgHandler.GetOrgMembers)
+
+				// Update requires ActionUpdate permission
+				orgDetailRoutes.PATCH("",
+					authzMiddleware.RequirePermission(authz.ActionUpdate, authz.ResourceOrg),
+					orgHandler.UpdateOrg)
+
+				// Delete requires ActionDelete (only owner)
+				orgDetailRoutes.DELETE("",
+					authzMiddleware.RequirePermission(authz.ActionDelete, authz.ResourceOrg),
+					orgHandler.DeleteOrg)
+
+				// Member management requires ActionManage
+				orgDetailRoutes.POST("/members",
+					authzMiddleware.RequirePermission(authz.ActionManage, authz.ResourceOrg),
+					orgHandler.AddOrgMember)
+				orgDetailRoutes.PATCH("/members/:user_id",
+					authzMiddleware.RequirePermission(authz.ActionManage, authz.ResourceOrg),
+					orgHandler.UpdateOrgMemberRole)
+				orgDetailRoutes.DELETE("/members/:user_id",
+					authzMiddleware.RequirePermission(authz.ActionManage, authz.ResourceOrg),
+					orgHandler.RemoveOrgMember)
+			}
+
+			// Projects under org - requires org access first
+			orgProjectRoutes := orgRoutes.Group("/:id/projects")
+			orgProjectRoutes.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceOrg))
+			{
+				orgProjectRoutes.GET("", projectHandler.ListOrgProjects)
+				orgProjectRoutes.POST("", projectHandler.CreateProject) // Check org membership in handler
+			}
+		}
+
+		// =====================================================================
+		// PROJECT MANAGEMENT (Defense in Depth)
+		// =====================================================================
+		projectRoutes := protected.Group("/projects")
+		{
+			// Routes WITHOUT resource ID
+			projectRoutes.GET("", projectHandler.ListUserProjects) // Returns only user's projects
+
+			// Routes WITH resource ID - use middleware
+			projectDetailRoutes := projectRoutes.Group("/:id")
+			projectDetailRoutes.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceProject))
+			{
+				projectDetailRoutes.GET("", projectHandler.GetProject)
+				projectDetailRoutes.GET("/members", projectHandler.GetProjectMembers)
+
+				// Update requires ActionUpdate
+				projectDetailRoutes.PATCH("",
+					authzMiddleware.RequirePermission(authz.ActionUpdate, authz.ResourceProject),
+					projectHandler.UpdateProject)
+
+				// Delete requires ActionDelete
+				projectDetailRoutes.DELETE("",
+					authzMiddleware.RequirePermission(authz.ActionDelete, authz.ResourceProject),
+					projectHandler.DeleteProject)
+
+				// Member management requires ActionManage
+				projectDetailRoutes.POST("/members",
+					authzMiddleware.RequirePermission(authz.ActionManage, authz.ResourceProject),
+					projectHandler.AddProjectMember)
+				projectDetailRoutes.DELETE("/members/:user_id",
+					authzMiddleware.RequirePermission(authz.ActionManage, authz.ResourceProject),
+					projectHandler.RemoveProjectMember)
+			}
+		}
+
 		// INCIDENTS MANAGEMENT (PagerDuty-style)
+		// Global incidents route - returns incidents from all user's accessible projects
+		// Uses ProjectScopedMiddleware to inject project context (ReBAC)
 		incidentRoutes := protected.Group("/incidents")
+		incidentRoutes.Use(projectScopedMiddleware.InjectProjectContext()) // ReBAC: inject project_id/org_id/accessible_project_ids
 		{
 			incidentRoutes.GET("", incidentHandler.ListIncidents)
 			incidentRoutes.POST("", incidentHandler.CreateIncident)
@@ -164,6 +260,22 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			incidentRoutes.POST("/:id/escalate", incidentHandler.EscalateIncident)
 			incidentRoutes.POST("/:id/notes", incidentHandler.AddIncidentNote)
 			incidentRoutes.GET("/:id/events", incidentHandler.GetIncidentEvents)
+		}
+
+		// =====================================================================
+		// PROJECT-SCOPED INCIDENTS (Defense in Depth)
+		// =====================================================================
+		// Incidents filtered by project - requires project VIEW access
+		projectIncidentRoutes := protected.Group("/projects/:id/incidents")
+		projectIncidentRoutes.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceProject))
+		{
+			projectIncidentRoutes.GET("", incidentHandler.ListIncidents)          // Filtered by project_id from URL
+			projectIncidentRoutes.GET("/stats", incidentHandler.GetIncidentStats) // Stats for this project
+
+			// Create incident requires project CREATE permission
+			projectIncidentRoutes.POST("",
+				authzMiddleware.RequirePermission(authz.ActionCreate, authz.ResourceProject),
+				incidentHandler.CreateIncident)
 		}
 
 		// ALERTS MANAGEMENT (Legacy - for backward compatibility)

@@ -286,7 +286,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       const isPending = pendingApprovals.some(a => a.request_id === message.request_id);
 
       return (
-        <div className="border border-gray-500/20 rounded-lg p-3 my-2">
+        <div className="rounded-lg my-2">
           <div className="">
             {/* Warning icon */}
             <div className="flex-shrink-0 mt-1">
@@ -295,9 +295,9 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
             <div className="flex-1">
               {/* Title */}
-              <h5 className="text-xs sm:text-sm font-semibold text-yellow-900 dark:text-yellow-100">
+              {/* <h5 className="text-xs sm:text-sm font-semibold text-yellow-900 dark:text-yellow-100 py-2">
                 Approval Required
-              </h5>
+              </h5> */}
 
               {/* Description */}
               {/* <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
@@ -305,7 +305,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
               </p> */}
 
               {/* Tool details */}
-              <div className="bg-white dark:bg-gray-900 rounded-md p-2 sm:p-3 space-y-2">
+              <div className="dark:bg-gray-900 rounded-md sm:p-3 space-y-2">
                 <div>
                   <div className="text-xs sm:text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 break-all">
                     {toolName}
@@ -326,7 +326,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
                 <div className="flex flex-row gap-2 mt-2">
                   <button
                     onClick={() => onDeny(message.request_id)}
-                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                     title="Deny"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -336,7 +336,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
                   </button>
                   <button
                     onClick={() => onApprove(message.request_id)}
-                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700 transition-colors shadow-sm"
+                    className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 border border-transparent hover:bg-blue-700 transition-colors shadow-sm"
                     title="Approve once"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -348,7 +348,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
                   {onApproveAlways && (
                     <button
                       onClick={() => onApproveAlways(message.request_id, toolName)}
-                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
                       title="Approve and don't ask again for this tool"
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -436,7 +436,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
   return (
     <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block max-w-full overflow-hidden"} rounded-3xl px-3 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block max-w-full overflow-hidden"} rounded-3xl px-2 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
           ? "bg-gray-100 text-gray-800"
           : "dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           }`}

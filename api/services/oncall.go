@@ -456,12 +456,13 @@ func (s *OnCallService) checkOverlappingSchedules(groupID string, startTime, end
 	return schedules, nil
 }
 
-// IsUserGroupLeader checks if a user is a leader in the group
+// IsUserGroupLeader checks if a user is a leader (admin) in the group
+// ReBAC: Uses memberships table with resource_type = 'group', role = 'admin'
 func (s *OnCallService) IsUserGroupLeader(groupID, userID string) (bool, error) {
 	var count int
 	err := s.PG.QueryRow(`
-		SELECT COUNT(*) FROM group_members 
-		WHERE group_id = $1 AND user_id = $2 AND role = 'leader' AND is_active = true
+		SELECT COUNT(*) FROM memberships
+		WHERE resource_type = 'group' AND resource_id = $1 AND user_id = $2 AND role = 'admin'
 	`, groupID, userID).Scan(&count)
 
 	return count > 0, err

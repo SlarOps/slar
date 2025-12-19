@@ -428,16 +428,16 @@ helm install slar ./slar -f backup/values.yaml
 
 ## Best Practices
 
-1. ✅ Use specific image tags in production
-2. ✅ Store secrets in Kubernetes Secrets
-3. ✅ Enable resource limits and requests
-4. ✅ Configure health checks
-5. ✅ Use multiple replicas for HA
-6. ✅ Implement monitoring and alerting
-7. ✅ Regular backups
-8. ✅ Test disaster recovery procedures
-9. ✅ Use namespaces for isolation
-10. ✅ Implement network policies
+1. Use specific image tags in production
+2. Store secrets in Kubernetes Secrets
+3. Enable resource limits and requests
+4. Configure health checks
+5. Use multiple replicas for HA
+6. Implement monitoring and alerting
+7. Regular backups
+8. Test disaster recovery procedures
+9. Use namespaces for isolation
+10. Implement network policies
 
 ## References
 

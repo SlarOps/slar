@@ -467,7 +467,9 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       const wsMessage = {
         prompt: message,
         session_id: sessionId || "",
-        auth_token: authTokenRef.current || ""
+        auth_token: authTokenRef.current || "",
+        org_id: options.orgId || "",
+        project_id: options.projectId || ""
       };
 
       console.log('Sending message:', { ...wsMessage, auth_token: authTokenRef.current ? '***' : '' });

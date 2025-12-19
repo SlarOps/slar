@@ -82,17 +82,6 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
             )}
           </div>
 
-          {/* Routing Information */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Routing Key</h4>
-            <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg">
-              <code className="text-sm text-gray-900 dark:text-gray-100 font-mono">{service.routing_key}</code>
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Use this routing key in your monitoring tools to send alerts to this service
-            </p>
-          </div>
-
           {/* Webhook URLs */}
           <div>
             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Webhook URLs</h4>
@@ -143,40 +132,6 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
               <div className="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
                 <div className="text-lg font-semibold text-gray-600 dark:text-gray-400">99.9%</div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">Uptime</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Notification Settings */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Notification Settings</h4>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Email notifications</span>
-                <span className={`text-sm font-medium ${service.notification_settings?.email !== false
-                  ? 'text-green-600'
-                  : 'text-gray-400'
-                  }`}>
-                  {service.notification_settings?.email !== false ? 'Enabled' : 'Disabled'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Push notifications</span>
-                <span className={`text-sm font-medium ${service.notification_settings?.fcm !== false
-                  ? 'text-green-600'
-                  : 'text-gray-400'
-                  }`}>
-                  {service.notification_settings?.fcm !== false ? 'Enabled' : 'Disabled'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-gray-400">SMS notifications</span>
-                <span className={`text-sm font-medium ${service.notification_settings?.sms === true
-                  ? 'text-green-600'
-                  : 'text-gray-400'
-                  }`}>
-                  {service.notification_settings?.sms === true ? 'Enabled' : 'Disabled'}
-                </span>
               </div>
             </div>
           </div>

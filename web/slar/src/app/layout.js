@@ -6,6 +6,7 @@ import MainContent from "../components/MainContent";
 import PWAInstallPrompt from "../components/PWAInstallPrompt";
 import { AuthProvider } from "../contexts/AuthContext";
 import { SidebarProvider } from "../contexts/SidebarContext";
+import { OrgProvider } from "../contexts/OrgContext";
 import AuthWrapper from "../components/auth/AuthWrapper";
 import { Toaster } from 'react-hot-toast';
 
@@ -46,9 +47,10 @@ export default function RootLayout({ children }) {
       <body className="font-sans antialiased bg-gray-50 dark:bg-gray-950" suppressHydrationWarning={true}>
         <AuthProvider>
           <SidebarProvider>
-            <AuthWrapper>
-              {/* Desktop Sidebar */}
-              <Sidebar />
+            <OrgProvider>
+              <AuthWrapper>
+                {/* Desktop Sidebar */}
+                <Sidebar />
               
               {/* Mobile Top Nav */}
               <MobileNav />
@@ -58,6 +60,7 @@ export default function RootLayout({ children }) {
                 {children}
               </MainContent>
             </AuthWrapper>
+            </OrgProvider>
             <PWAInstallPrompt />
             <Toaster
               position="top-right"

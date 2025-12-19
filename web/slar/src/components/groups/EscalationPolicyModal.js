@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Toast, toast } from '../ui';
 import { Dialog, DialogPanel, DialogTitle, Menu, MenuButton, MenuItems, MenuItem, Transition, TransitionChild, Switch, Field, Label, Input } from '@headlessui/react';
@@ -20,6 +21,7 @@ export default function EscalationPolicyModal({
   editPolicy = null  // If provided, modal is in edit mode
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [loading, setLoading] = useState(false);
   const [loadingPolicyDetail, setLoadingPolicyDetail] = useState(false);
 
@@ -48,13 +50,20 @@ export default function EscalationPolicyModal({
 
   // Fetch schedulers when modal opens
   const fetchSchedulers = async () => {
-    if (!session?.access_token || !groupId) {
+    if (!session?.access_token || !groupId || !currentOrg?.id) {
       return;
     }
 
     try {
       apiClient.setToken(session.access_token);
-      const schedulersData = await apiClient.getGroupSchedulers(groupId);
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const schedulersData = await apiClient.getGroupSchedulers(groupId, rebacFilters);
       setSchedulers(schedulersData.schedulers || []);
     } catch (error) {
       console.error('Failed to fetch schedulers:', error);
@@ -64,12 +73,13 @@ export default function EscalationPolicyModal({
 
   // Fetch detailed policy data when in edit mode
   const fetchPolicyDetail = async (policyId) => {
-    if (!session?.access_token || !groupId || !policyId || policyId.trim() === '') {
+    if (!session?.access_token || !groupId || !policyId || policyId.trim() === '' || !currentOrg?.id) {
       console.log('Skipping policy detail fetch - missing required parameters:', {
         hasToken: !!session?.access_token,
         groupId,
         policyId,
-        policyIdTrimmed: policyId?.trim()
+        policyIdTrimmed: policyId?.trim(),
+        hasOrg: !!currentOrg?.id
       });
       return null;
     }
@@ -77,7 +87,14 @@ export default function EscalationPolicyModal({
     setLoadingPolicyDetail(true);
     try {
       apiClient.setToken(session.access_token);
-      const policyDetail = await apiClient.getEscalationPolicyDetail(groupId, policyId);
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      const policyDetail = await apiClient.getEscalationPolicyDetail(groupId, policyId, rebacFilters);
       return policyDetail;
     } catch (error) {
       console.error('Failed to fetch policy detail:', error);
@@ -303,10 +320,21 @@ export default function EscalationPolicyModal({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       // Convert escalation steps to API format
       const levels = [];
       escalationSteps.forEach((step, stepIndex) => {
@@ -332,12 +360,12 @@ export default function EscalationPolicyModal({
       let response;
       if (isEditMode) {
         // Update existing policy
-        response = await apiClient.updateEscalationPolicy(groupId, editPolicy.id, requestData);
+        response = await apiClient.updateEscalationPolicy(groupId, editPolicy.id, requestData, rebacFilters);
         onPolicyUpdated && onPolicyUpdated(response.policy);
         toast.success('Escalation policy updated successfully!');
       } else {
         // Create new policy
-        response = await apiClient.createEscalationPolicy(groupId, requestData);
+        response = await apiClient.createEscalationPolicy(groupId, requestData, rebacFilters);
         onPolicyCreated && onPolicyCreated(response.policy);
         toast.success('Escalation policy created successfully!');
       }

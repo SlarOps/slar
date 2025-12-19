@@ -4,12 +4,12 @@ A reusable React component for rendering markdown content with consistent stylin
 
 ## Features
 
-- ✅ **GitHub Flavored Markdown (GFM)** support via `remark-gfm`
-- ✅ **Syntax highlighting** for code blocks via `rehype-highlight`
-- ✅ **Dark mode** support with Tailwind CSS
-- ✅ **Automatic cleanup** of `%%%` markers from Datadog alerts
-- ✅ **Responsive sizing** with three size variants (sm, base, lg)
-- ✅ **Consistent styling** across all markdown elements
+- **GitHub Flavored Markdown (GFM)** support via `remark-gfm`
+- **Syntax highlighting** for code blocks via `rehype-highlight`
+- **Dark mode** support with Tailwind CSS
+- **Automatic cleanup** of `%%%` markers from Datadog alerts
+- **Responsive sizing** with three size variants (sm, base, lg)
+- **Consistent styling** across all markdown elements
 
 ## Installation
 
@@ -161,8 +161,8 @@ function hello() {
 const tableContent = `
 | Service | Status | Uptime |
 |---------|--------|--------|
-| API     | ✅ Up  | 99.9%  |
-| DB      | ✅ Up  | 99.8%  |
+| API     | Up     | 99.9%  |
+| DB      | Up     | 99.8%  |
 `;
 
 <MarkdownRenderer content={tableContent} />

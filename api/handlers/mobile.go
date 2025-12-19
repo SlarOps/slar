@@ -177,13 +177,20 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		return
 	}
 
+	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
+	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
+	if supabaseURL == "" {
+		supabaseURL = os.Getenv("SUPABASE_URL")
+	}
+
 	// Build auth config (for mobile to authenticate with self-hosted API)
 	// These are public values (anon key is safe to share)
 	// NOTE: auth_config is NOT included in QR to keep QR size small
 	// Mobile app fetches auth_config separately after device registration
 	authConfig := AuthConfig{
-		SupabaseURL:     os.Getenv("SUPABASE_URL"),
+		SupabaseURL:     supabaseURL,
 		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
+		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
 	}
 
 	// Return QR content - frontend should encode the signed_token as QR
@@ -595,10 +602,16 @@ func (h *MobileHandler) GetAuthConfig(c *gin.Context) {
 	// (anon key is safe to share, it's in the frontend anyway)
 	instanceID := os.Getenv("SLAR_INSTANCE_ID")
 
+	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
+	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
+	if supabaseURL == "" {
+		supabaseURL = os.Getenv("SUPABASE_URL")
+	}
+
 	authConfig := AuthConfig{
-		SupabaseURL:     os.Getenv("SUPABASE_URL"),
+		SupabaseURL:     supabaseURL,
 		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
-		AgentURL:        os.Getenv("SLAR_AGENT_URL"), // AI Agent URL (separate domain)
+		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

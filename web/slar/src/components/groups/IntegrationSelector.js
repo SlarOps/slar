@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
 import { Menu, MenuButton, MenuItems, MenuItem } from '@headlessui/react';
 import { ChevronDownIcon, PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/20/solid';
@@ -15,13 +16,14 @@ import {
 } from '@heroicons/react/24/outline';
 import { toast } from '../ui';
 
-export default function IntegrationSelector({ 
-  serviceId, 
-  selectedIntegrations = [], 
+export default function IntegrationSelector({
+  serviceId,
+  selectedIntegrations = [],
   onIntegrationsChange,
-  disabled = false 
+  disabled = false
 }) {
   const { session } = useAuth();
+  const { currentOrg, currentProject } = useOrg();
   const [integrations, setIntegrations] = useState([]);
   const [serviceIntegrations, setServiceIntegrations] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,7 @@ export default function IntegrationSelector({
   // Load available integrations
   useEffect(() => {
     loadIntegrations();
-  }, []);
+  }, [currentOrg?.id, currentProject?.id]);
 
   // Load service integrations when serviceId changes
   useEffect(() => {
@@ -41,10 +43,17 @@ export default function IntegrationSelector({
 
   const loadIntegrations = async () => {
     try {
-      if (!session?.access_token) return;
-      
+      if (!session?.access_token || !currentOrg?.id) return;
+
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getIntegrations({ active_only: true });
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id }),
+        active_only: true
+      };
+      const response = await apiClient.getIntegrations(rebacFilters);
       setIntegrations(response.integrations || []);
     } catch (error) {
       console.error('Failed to load integrations:', error);
@@ -56,22 +65,25 @@ export default function IntegrationSelector({
 
   const loadServiceIntegrations = async () => {
     try {
-      if (!session?.access_token || !serviceId) return;
-      
+      // Skip loading for new services (not yet saved)
+      if (!session?.access_token || !serviceId || serviceId === 'new' || !currentOrg?.id) return;
+
       apiClient.setToken(session.access_token);
-      const response = await apiClient.getServiceIntegrations(serviceId);
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+      const response = await apiClient.getServiceIntegrations(serviceId, rebacFilters);
       setServiceIntegrations(response.service_integrations || []);
-      
+
       // Update parent component
       if (onIntegrationsChange) {
         onIntegrationsChange(response.service_integrations || []);
       }
     } catch (error) {
       console.error('Failed to load service integrations:', error);
-      // Don't show error for new services
-      if (serviceId !== 'new') {
-        toast.error('Failed to load service integrations');
-      }
+      toast.error('Failed to load service integrations');
     }
   };
 
@@ -81,10 +93,21 @@ export default function IntegrationSelector({
       return;
     }
 
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
       // Create service-integration mapping with default routing conditions
       const response = await apiClient.createServiceIntegration(serviceId, {
         integration_id: integrationId,
@@ -94,7 +117,7 @@ export default function IntegrationSelector({
           alertname: ['*'] // Match all alert names by default
         },
         priority: 100
-      });
+      }, rebacFilters);
 
       // Reload service integrations
       await loadServiceIntegrations();
@@ -108,11 +131,23 @@ export default function IntegrationSelector({
   };
 
   const removeIntegration = async (serviceIntegrationId) => {
+    if (!currentOrg?.id) {
+      toast.error('Organization context required');
+      return;
+    }
+
     setLoading(true);
     try {
       apiClient.setToken(session.access_token);
-      await apiClient.deleteServiceIntegration(serviceIntegrationId);
-      
+
+      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+      const rebacFilters = {
+        org_id: currentOrg.id,
+        ...(currentProject?.id && { project_id: currentProject.id })
+      };
+
+      await apiClient.deleteServiceIntegration(serviceIntegrationId, rebacFilters);
+
       // Reload service integrations
       await loadServiceIntegrations();
       toast.success('Integration removed successfully');

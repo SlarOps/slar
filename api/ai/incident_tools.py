@@ -19,6 +19,8 @@ from contextvars import ContextVar
 
 # Dynamic token storage (set per WebSocket session, async-safe)
 _auth_token_ctx: ContextVar[Optional[str]] = ContextVar("auth_token", default=None)
+_org_id_ctx: ContextVar[Optional[str]] = ContextVar("org_id", default=None)
+_project_id_ctx: ContextVar[Optional[str]] = ContextVar("project_id", default=None)
 
 
 def set_auth_token(token: str) -> None:
@@ -30,7 +32,7 @@ def set_auth_token(token: str) -> None:
         token: The JWT authentication token from the frontend
     """
     _auth_token_ctx.set(token)
-    # print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
+    print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
 
 
 def get_auth_token() -> str:
@@ -42,6 +44,50 @@ def get_auth_token() -> str:
         The authentication token to use for API requests
     """
     return _auth_token_ctx.get() or API_TOKEN
+
+
+def set_org_id(org_id: str) -> None:
+    """
+    Set the organization ID for tenant isolation.
+    This should be called at the start of each WebSocket session.
+
+    Args:
+        org_id: The organization ID from the frontend context
+    """
+    _org_id_ctx.set(org_id)
+    # print(f"🏢 Org ID set for incident_tools: {org_id}")
+
+
+def get_org_id() -> str:
+    """
+    Get the current organization ID.
+
+    Returns:
+        The organization ID for tenant isolation
+    """
+    return _org_id_ctx.get() or ""
+
+
+def set_project_id(project_id: str) -> None:
+    """
+    Set the project ID for optional filtering.
+    This should be called at the start of each WebSocket session.
+
+    Args:
+        project_id: The project ID from the frontend context
+    """
+    _project_id_ctx.set(project_id)
+    # print(f"📁 Project ID set for incident_tools: {project_id}")
+
+
+def get_project_id() -> str:
+    """
+    Get the current project ID.
+
+    Returns:
+        The project ID for optional filtering
+    """
+    return _project_id_ctx.get() or ""
 
 
 # Implementation functions (callable directly)
@@ -93,12 +139,26 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     if status != "all":
         params["status"] = status
 
+    # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
+    # Priority: 1. Argument 2. Context 3. Environment Variable
+    org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+    project_id = args.get("project_id") or get_project_id()
+    if org_id:
+        params["org_id"] = org_id
+    if project_id:
+        params["project_id"] = project_id
+
     # Make API request
     try:
         headers = {
             "Authorization": f"Bearer {get_auth_token()}",
             "Content-Type": "application/json",
         }
+        # Also add org_id/project_id as headers for redundancy
+        if org_id:
+            headers["X-Org-ID"] = org_id
+        if project_id:
+            headers["X-Project-ID"] = project_id
 
         async with aiohttp.ClientSession() as session:
             url = f"{API_BASE_URL}/incidents"
@@ -219,10 +279,22 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
         }
 
+        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
+        params = {}
+        if org_id:
+            params["org_id"] = org_id
+            headers["X-Org-ID"] = org_id
+        if project_id:
+            params["project_id"] = project_id
+            headers["X-Project-ID"] = project_id
+
         async with aiohttp.ClientSession() as session:
             url = f"{API_BASE_URL}/incidents/{incident_id}"
 
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
                     incident = await response.json()
 
@@ -344,9 +416,22 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
         }
 
+        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
+        if org_id:
+            headers["X-Org-ID"] = org_id
+        if project_id:
+            headers["X-Project-ID"] = project_id
+
         async with aiohttp.ClientSession() as session:
             url = f"{API_BASE_URL}/incidents/stats"
             params = {"time_range": time_range}
+            if org_id:
+                params["org_id"] = org_id
+            if project_id:
+                params["project_id"] = project_id
 
             async with session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -410,6 +495,7 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
     {
         "start_time": str,  # ISO 8601 format: 2024-01-01T00:00:00Z
         "end_time": str,  # ISO 8601 format: 2024-01-01T23:59:59Z
+        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
         "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
         "limit": int,  # Optional: Max number of incidents to return (default: 50)
     },
@@ -523,8 +609,23 @@ async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
         }
 
+        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
+        # Priority: 1. Argument 2. Context 3. Environment Variable
+        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+        project_id = args.get("project_id") or get_project_id()
+        if org_id:
+            headers["X-Org-ID"] = org_id
+        if project_id:
+            headers["X-Project-ID"] = project_id
+
         # Build query parameters
         params = {"search": query, "limit": limit, "sort": "relevance"}
+
+        # ReBAC: Add org_id and project_id to params
+        if org_id:
+            params["org_id"] = org_id
+        if project_id:
+            params["project_id"] = project_id
 
         if status != "all":
             params["status"] = status
@@ -680,6 +781,10 @@ __all__ = [
     "_search_incidents_impl",
     "set_auth_token",
     "get_auth_token",
+    "set_org_id",
+    "get_org_id",
+    "set_project_id",
+    "get_project_id",
     "get_current_time",
     "search_incidents",
 ]

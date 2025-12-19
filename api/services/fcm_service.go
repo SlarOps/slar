@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -127,7 +128,7 @@ func (s *FCMService) SendAlertNotification(alert *db.Alert) error {
 	message := &messaging.Message{
 		Token: fcmToken,
 		Notification: &messaging.Notification{
-			Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+			Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 			Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 		},
 		Data: dataMap,
@@ -146,7 +147,7 @@ func (s *FCMService) SendAlertNotification(alert *db.Alert) error {
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
 					Alert: &messaging.ApsAlert{
-						Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+						Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 						Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 					},
 					Badge: intPtr(1),
@@ -232,7 +233,7 @@ func (s *FCMService) SendNotificationToOnCallUsers(alert *db.Alert) error {
 	message := &messaging.MulticastMessage{
 		Tokens: tokens,
 		Notification: &messaging.Notification{
-			Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+			Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 			Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 		},
 		Data: dataMap,
@@ -299,8 +300,12 @@ type CloudRelayNotifPayload struct {
 	Title    string            `json:"title"`
 	Body     string            `json:"body"`
 	Priority string            `json:"priority"`
+	Sound    string            `json:"sound,omitempty"`
 	Data     map[string]string `json:"data,omitempty"`
 }
+
+// Default notification sound (used when user hasn't configured custom sound)
+const DefaultNotificationSound = "alert.caf"
 
 // CloudRelayResponse represents the response from cloud relay
 type CloudRelayResponse struct {
@@ -314,13 +319,18 @@ type CloudRelayResponse struct {
 func (s *FCMService) sendAlertViaCloudRelay(alert *db.Alert) error {
 	log.Printf("Sending alert notification via cloud relay for user %s", alert.AssignedTo)
 
+	// TODO: In the future, fetch user's sound preference from database
+	// For now, use default alert sound
+	sound := DefaultNotificationSound
+
 	payload := CloudRelayNotification{
 		InstanceID: s.instanceID,
 		UserID:     alert.AssignedTo,
 		Notification: CloudRelayNotifPayload{
-			Title:    fmt.Sprintf("🚨 %s Alert", alert.Severity),
+			Title:    fmt.Sprintf("[%s] Alert", strings.ToUpper(alert.Severity)),
 			Body:     fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 			Priority: getPriorityBySeverity(alert.Severity),
+			Sound:    sound,
 			Data: map[string]string{
 				"alert_id":    alert.ID,
 				"alert_title": alert.Title,
@@ -387,6 +397,7 @@ func (s *FCMService) SendNotificationToUserViaRelay(userID, title, body string, 
 			Title:    title,
 			Body:     body,
 			Priority: "high",
+			Sound:    DefaultNotificationSound,
 			Data:     data,
 		},
 	}

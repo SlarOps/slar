@@ -3,16 +3,35 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 
 export default function DeleteDeploymentModal({ deployment, onClose, onSuccess }) {
+    const { session } = useAuth();
+    const { currentOrg, currentProject } = useOrg();
     const [keepDatabase, setKeepDatabase] = useState(true);
     const [deleting, setDeleting] = useState(false);
 
     const handleDelete = async () => {
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         try {
             setDeleting(true);
-            await apiClient.deleteMonitorDeployment(deployment.id, keepDatabase);
+            if (session?.access_token) {
+                apiClient.setToken(session.access_token);
+            }
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            await apiClient.deleteMonitorDeployment(deployment.id, keepDatabase, rebacFilters);
             toast.success(`Deployment deleted${keepDatabase ? ' (database kept)' : ''}`);
             onSuccess();
             onClose();

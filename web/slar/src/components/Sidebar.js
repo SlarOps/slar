@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { useSidebar } from '../contexts/SidebarContext';
+import OrgSwitcher from './OrgSwitcher';
+import ProjectSwitcher from './ProjectSwitcher';
 
 const NAV_ITEMS = [
   {
@@ -51,6 +53,24 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    href: '/organizations',
+    label: 'Organizations',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+      </svg>
+    ),
+  },
+  {
+    href: '/projects',
+    label: 'Projects',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+      </svg>
+    ),
+  },
 ];
 
 const BOTTOM_NAV_ITEMS = [
@@ -75,8 +95,8 @@ export default function Sidebar() {
     setCollapsed(!collapsed);
   };
 
-  // Don't show on auth pages
-  if (pathname === '/login' || pathname === '/signup') {
+  // Don't show on auth pages or onboarding
+  if (pathname === '/login' || pathname === '/signup' || pathname === '/onboarding') {
     return null;
   }
 
@@ -122,6 +142,12 @@ export default function Sidebar() {
           </button>
         )}
       </div>
+
+      {/* Organization Switcher */}
+      <OrgSwitcher collapsed={collapsed} />
+
+      {/* Project Switcher */}
+      <ProjectSwitcher collapsed={collapsed} />
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-4 px-2">

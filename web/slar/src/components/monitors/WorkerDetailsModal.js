@@ -2,8 +2,12 @@ import { useState, useEffect } from 'react';
 import Modal, { ModalFooter, ModalButton } from '../ui/Modal';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 
 export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDeleteClick }) {
+    const { session } = useAuth();
+    const { currentOrg, currentProject } = useOrg();
     const [redeploying, setRedeploying] = useState(false);
     const [workerUrl, setWorkerUrl] = useState(deployment.worker_url || '');
     const [savingUrl, setSavingUrl] = useState(false);
@@ -17,9 +21,24 @@ export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDe
     const handleRedeploy = async () => {
         if (!confirm('Redeploy this worker with latest code?')) return;
 
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         try {
             setRedeploying(true);
-            await apiClient.redeployMonitorWorker(deployment.id);
+            if (session?.access_token) {
+                apiClient.setToken(session.access_token);
+            }
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            await apiClient.redeployMonitorWorker(deployment.id, rebacFilters);
             toast.success('Worker redeployed successfully');
             onUpdate();
         } catch (error) {
@@ -36,9 +55,24 @@ export default function WorkerDetailsModal({ deployment, onClose, onUpdate, onDe
             return;
         }
 
+        if (!currentOrg?.id) {
+            toast.error('Organization context required');
+            return;
+        }
+
         try {
             setSavingUrl(true);
-            await apiClient.updateDeploymentWorkerUrl(deployment.id, workerUrl);
+            if (session?.access_token) {
+                apiClient.setToken(session.access_token);
+            }
+
+            // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
+            const rebacFilters = {
+                org_id: currentOrg.id,
+                ...(currentProject?.id && { project_id: currentProject.id })
+            };
+
+            await apiClient.updateDeploymentWorkerUrl(deployment.id, workerUrl, rebacFilters);
             toast.success('Worker URL saved! Metrics will now load faster via CDN.');
             setUrlChanged(false);
             onUpdate();
