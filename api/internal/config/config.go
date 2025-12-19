@@ -24,6 +24,7 @@ type Config struct {
 	
 	// Supabase
 	SupabaseURL             string `mapstructure:"supabase_url"`
+	MobileSupabaseURL		string `mapstructure:"mobile_supabase_url"`
 	SupabaseAnonKey         string `mapstructure:"supabase_anon_key"`
 	SupabaseServiceRoleKey  string `mapstructure:"supabase_service_role_key"`
 	SupabaseJWTSecret       string `mapstructure:"supabase_jwt_secret"`
@@ -85,6 +86,7 @@ func LoadConfig(path string) error {
 	
 	// Bind Supabase Env Vars
 	v.BindEnv("supabase_url", "SUPABASE_URL")
+	v.BindEnv("mobile_supabase_url", "MOBILE_SUPABASE_URL")
 	v.BindEnv("supabase_anon_key", "SUPABASE_ANON_KEY")
 	v.BindEnv("supabase_service_role_key", "SUPABASE_SERVICE_ROLE_KEY")
 	v.BindEnv("supabase_jwt_secret", "SUPABASE_JWT_SECRET")
@@ -125,6 +127,8 @@ func LoadConfig(path string) error {
 	setEnvIfEmpty("PORT", App.Port)
 	
 	setEnvIfEmpty("SUPABASE_URL", App.SupabaseURL)
+	setEnvIfEmpty("MOBILE_SUPABASE_URL", App.MobileSupabaseURL)
+	setEnvIfEmpty("AGENT_URL", App.AgentURL)
 	setEnvIfEmpty("SUPABASE_ANON_KEY", App.SupabaseAnonKey)
 	setEnvIfEmpty("SUPABASE_SERVICE_ROLE_KEY", App.SupabaseServiceRoleKey)
 	setEnvIfEmpty("SUPABASE_JWT_SECRET", App.SupabaseJWTSecret)

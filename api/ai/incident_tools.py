@@ -32,7 +32,7 @@ def set_auth_token(token: str) -> None:
         token: The JWT authentication token from the frontend
     """
     _auth_token_ctx.set(token)
-    # print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
+    print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
 
 
 def get_auth_token() -> str:

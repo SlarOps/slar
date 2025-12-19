@@ -2,7 +2,7 @@
 
 import { useAuth } from '../../contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { apiClient } from '../../lib/api';
 
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback', '/', '/onboarding'];
@@ -14,21 +14,40 @@ export default function AuthWrapper({ children }) {
   const [checkingOnboarding, setCheckingOnboarding] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
 
+  // Refs to prevent redundant checks
+  const lastCheckedUserIdRef = useRef(null);
+  const isCheckingRef = useRef(false);
+
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
   const isOnboardingPage = pathname === '/onboarding';
 
   useEffect(() => {
     const checkOnboardingStatus = async () => {
-      // Skip if already checked, on onboarding page, or no session
-      if (onboardingChecked || isOnboardingPage || !session?.access_token) {
+      // Skip if already checked for this user, on onboarding page, or no session
+      if (isOnboardingPage || !session?.access_token || !user?.id) {
+        return;
+      }
+
+      // Skip if already checked for this user (prevents re-check on session refresh)
+      if (lastCheckedUserIdRef.current === user.id) {
+        return;
+      }
+
+      // Prevent concurrent checks
+      if (isCheckingRef.current) {
         return;
       }
 
       try {
+        isCheckingRef.current = true;
         setCheckingOnboarding(true);
         apiClient.setToken(session.access_token);
         const data = await apiClient.getOrganizations();
         const orgs = Array.isArray(data) ? data : (data?.organizations || []);
+
+        // Mark as checked for this user
+        lastCheckedUserIdRef.current = user.id;
+        setOnboardingChecked(true);
 
         if (orgs.length === 0) {
           // No organizations - redirect to onboarding
@@ -39,8 +58,8 @@ export default function AuthWrapper({ children }) {
         console.log('Onboarding check failed, redirecting to onboarding:', err.message);
         router.push('/onboarding');
       } finally {
+        isCheckingRef.current = false;
         setCheckingOnboarding(false);
-        setOnboardingChecked(true);
       }
     };
 
@@ -51,12 +70,13 @@ export default function AuthWrapper({ children }) {
       } else if (user && (pathname === '/login' || pathname === '/signup')) {
         // Redirect to dashboard if authenticated and on auth pages
         router.push('/dashboard');
-      } else if (user && !isOnboardingPage && !onboardingChecked) {
+      } else if (user && !isOnboardingPage && lastCheckedUserIdRef.current !== user.id) {
         // Check if user needs onboarding (no organizations)
+        // Only check if we haven't checked for this specific user yet
         checkOnboardingStatus();
       }
     }
-  }, [user, session, loading, pathname, router, isPublicRoute, isOnboardingPage, onboardingChecked]);
+  }, [user?.id, loading, pathname, router, isPublicRoute, isOnboardingPage]); // Removed session from deps
 
   // Show loading spinner while checking authentication or onboarding status
   if (loading || checkingOnboarding) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { apiClient } from '../lib/api';
 
@@ -23,7 +23,8 @@ interface OrgContextValue {
   // Organizations
   organizations: Organization[];
   currentOrg: Organization | null;
-  loading: boolean;
+  loading: boolean;           // Initial loading only
+  isRefreshing: boolean;      // Background refresh (doesn't unmount children)
   error: string | null;
   switchOrg: (org: Organization) => Promise<void>;
   refreshOrganizations: () => Promise<void>;
@@ -43,6 +44,7 @@ const defaultContextValue: OrgContextValue = {
   organizations: [],
   currentOrg: null,
   loading: true,
+  isRefreshing: false,
   error: null,
   switchOrg: async () => {},
   refreshOrganizations: async () => {},
@@ -80,9 +82,14 @@ export const OrgProvider = ({ children }: OrgProviderProps) => {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);        // Initial load only
+  const [isRefreshing, setIsRefreshing] = useState(false);  // Background refresh
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Refs to prevent redundant fetches
+  const hasInitializedRef = useRef(false);
+  const lastSessionTokenRef = useRef<string | null>(null);
 
   // Load projects for current organization
   const loadProjects = useCallback(async (orgId: string) => {
@@ -123,23 +130,43 @@ export const OrgProvider = ({ children }: OrgProviderProps) => {
   }, [session?.access_token]);
 
   // Load organizations when authenticated
-  const loadOrganizations = useCallback(async () => {
+  const loadOrganizations = useCallback(async (isRefresh = false) => {
     if (!session?.access_token) {
       setOrganizations([]);
       setCurrentOrg(null);
       setProjects([]);
       setCurrentProject(null);
       setLoading(false);
+      hasInitializedRef.current = false;
+      lastSessionTokenRef.current = null;
+      return;
+    }
+
+    // Skip if already initialized with same session (avoid redundant fetches)
+    if (hasInitializedRef.current &&
+        lastSessionTokenRef.current === session.access_token &&
+        !isRefresh) {
+      console.log('OrgContext: Skipping redundant load (same session)');
+      setLoading(false);
       return;
     }
 
     try {
-      setLoading(true);
+      // Use isRefreshing for subsequent loads, loading only for initial
+      if (hasInitializedRef.current) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       apiClient.setToken(session.access_token);
       const data = await apiClient.getOrganizations() as any;
       const orgs: Organization[] = Array.isArray(data) ? data : (data?.organizations || []);
       setOrganizations(orgs);
+
+      // Mark as initialized
+      hasInitializedRef.current = true;
+      lastSessionTokenRef.current = session.access_token;
 
       // Try to restore previously selected org from localStorage
       const savedOrgId = localStorage.getItem(ORG_STORAGE_KEY);
@@ -165,12 +192,16 @@ export const OrgProvider = ({ children }: OrgProviderProps) => {
     } catch (err: any) {
       console.error('Failed to load organizations:', err);
       setError(err.message);
-      setOrganizations([]);
-      setCurrentOrg(null);
-      setProjects([]);
-      setCurrentProject(null);
+      // Only clear data on initial load failure
+      if (!hasInitializedRef.current) {
+        setOrganizations([]);
+        setCurrentOrg(null);
+        setProjects([]);
+        setCurrentProject(null);
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, [session?.access_token, loadProjects]);
 
@@ -211,9 +242,9 @@ export const OrgProvider = ({ children }: OrgProviderProps) => {
     }
   }, []);
 
-  // Refresh organizations list
+  // Refresh organizations list (explicit refresh, won't trigger loading spinner)
   const refreshOrganizations = useCallback(async () => {
-    await loadOrganizations();
+    await loadOrganizations(true);  // isRefresh = true
   }, [loadOrganizations]);
 
   // Refresh projects list
@@ -246,6 +277,7 @@ export const OrgProvider = ({ children }: OrgProviderProps) => {
     organizations,
     currentOrg,
     loading,
+    isRefreshing,
     error,
     switchOrg,
     refreshOrganizations,

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { auth, initSupabase } from '../lib/supabase';
 import apiClient from '../lib/api';
 
@@ -66,6 +66,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Track current session to avoid redundant updates
+  const currentSessionRef = useRef<string | null>(null);
+  const isInitializedRef = useRef(false);
+
   useEffect(() => {
     let subscription: { unsubscribe: () => void } | null = null;
 
@@ -98,10 +102,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             // Session is invalid, clear it
             console.log('Clearing invalid session');
             localStorage.removeItem('slar-auth-token');
+            currentSessionRef.current = null;
             setSession(null);
             setUser(null);
           } else {
-            // Session is valid
+            // Session is valid - track it
+            currentSessionRef.current = session.access_token;
+            isInitializedRef.current = true;
             setSession(session);
             setUser(validUser);
             if (session.access_token) {
@@ -116,26 +123,54 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         // Listen for auth changes (use async version)
         const { data } = await auth.onAuthStateChangeAsync(
-          async (event: string, session: Session | null) => {
-            console.log('Auth state changed:', event, session);
+          async (event: string, newSession: Session | null) => {
+            // Skip if session hasn't actually changed (prevents unnecessary re-renders)
+            const newToken = newSession?.access_token || null;
+            const isSameSession = newToken === currentSessionRef.current;
 
             if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
               // Clear storage on sign out
+              console.log('Auth state changed:', event);
               localStorage.removeItem('slar-auth-token');
+              currentSessionRef.current = null;
               setSession(null);
               setUser(null);
               apiClient.setToken(null);
-            } else if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-              setSession(session);
-              setUser(session?.user || null);
-              if (session?.access_token) {
-                apiClient.setToken(session.access_token);
+            } else if (event === 'SIGNED_IN') {
+              // Skip SIGNED_IN if we already have this session (avoid re-mount)
+              if (isSameSession && isInitializedRef.current) {
+                console.log('Auth state changed: SIGNED_IN (skipped - same session)');
+                return;
+              }
+              console.log('Auth state changed:', event, newSession);
+              currentSessionRef.current = newToken;
+              isInitializedRef.current = true;
+              setSession(newSession);
+              setUser(newSession?.user || null);
+              if (newSession?.access_token) {
+                apiClient.setToken(newSession.access_token);
+              }
+            } else if (event === 'TOKEN_REFRESHED') {
+              // Token refresh - update silently without triggering cascading re-renders
+              console.log('Auth state changed: TOKEN_REFRESHED');
+              currentSessionRef.current = newToken;
+              // Only update if token actually changed
+              if (!isSameSession) {
+                setSession(newSession);
+                setUser(newSession?.user || null);
+              }
+              if (newSession?.access_token) {
+                apiClient.setToken(newSession.access_token);
               }
             } else {
-              setSession(session);
-              setUser(session?.user || null);
-              if (session?.access_token) {
-                apiClient.setToken(session.access_token);
+              console.log('Auth state changed:', event);
+              if (!isSameSession) {
+                currentSessionRef.current = newToken;
+                setSession(newSession);
+                setUser(newSession?.user || null);
+              }
+              if (newSession?.access_token) {
+                apiClient.setToken(newSession.access_token);
               }
             }
           }

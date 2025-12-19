@@ -456,13 +456,18 @@ async def agent_task(
                 current_conversation_id = conversation_id
                 logger.info(f"💬 Conversation ID received: {conversation_id}")
 
+            # Update auth token (needed by incident_tools to call Go backend API)
+            # This is separate from user_id - both secure and unsecure flows need this
+            if auth_token:
+                current_auth_token = auth_token
+                logger.info(f"🔑 Auth token received (length: {len(auth_token)})")
+
             # Update current user ID
             # Priority: direct user_id from Zero-Trust > extract from JWT token
             if direct_user_id:
                 current_user_id = direct_user_id
                 logger.info(f"👤 User ID from Zero-Trust session: {current_user_id}")
             elif auth_token:
-                current_auth_token = auth_token
                 extracted_user_id = extract_user_id_from_token(auth_token)
                 if extracted_user_id:
                     current_user_id = extracted_user_id
