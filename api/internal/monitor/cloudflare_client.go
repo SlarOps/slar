@@ -61,6 +61,8 @@ func (c *CloudflareClient) doRequest(method, url string, body interface{}, conte
 	}
 
 	if resp.StatusCode >= 400 {
+		// Log detailed error for debugging
+		fmt.Printf("[Cloudflare API Error] URL: %s, Status: %s, Response: %s\n", url, resp.Status, string(respBytes))
 		return nil, fmt.Errorf("cloudflare api error: %s %s", resp.Status, string(respBytes))
 	}
 
