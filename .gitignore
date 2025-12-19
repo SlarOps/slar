@@ -137,5 +137,5 @@ Icon
 ._*
 .Spotlight-V100
 .Trashes
-.config.*
-config.*
+.config.*.yaml
+config.*.yaml
