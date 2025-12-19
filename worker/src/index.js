@@ -62,7 +62,7 @@ export default {
         // Note: /monitors/report endpoint is deprecated but still available for backward compatibility
     },
 
-    // ✅ HTTP API for metrics with Cloudflare CDN Cache
+    // HTTP API for metrics with Cloudflare CDN Cache
     async fetch(request, env, ctx) {
         const url = new URL(request.url)
         
@@ -99,17 +99,17 @@ export default {
             })
         }
 
-        // ✅ Check CDN Cache first (only for GET requests)
+        // Check CDN Cache first (only for GET requests)
         const cache = caches.default
         const cacheKey = new Request(url.toString(), { method: 'GET' })
         
         let response = await cache.match(cacheKey)
         if (response) {
-            // ✅ CACHE HIT
+            // CACHE HIT
             return addCorsHeaders(response, 'HIT')
         }
 
-        // ❌ CACHE MISS - Query D1 and cache response
+        // CACHE MISS - Query D1 and cache response
         try {
             if (url.pathname === '/api/metrics') {
                 response = await handleGetMetrics(env, request, corsHeaders)
@@ -122,7 +122,7 @@ export default {
                 return new Response('Not Found', { status: 404, headers: corsHeaders })
             }
 
-            // ✅ Store in CDN Cache (only successful responses)
+            // Store in CDN Cache (only successful responses)
             if (response.ok) {
                 const cacheResponse = response.clone()
                 ctx.waitUntil(cache.put(cacheKey, cacheResponse))
@@ -614,8 +614,8 @@ async function getWorkerLocation() {
 
 async function sendFallbackAlert(webhookUrl, location, downMonitors) {
     const message = {
-        text: `🚨 *Slar API Unreachable - Fallback Alert* 🚨\n\nLocation: ${location}\n\n` +
-            downMonitors.map(m => `❌ *${m.monitor_id}* is DOWN (${m.error})`).join('\n')
+        text: `[ALERT] *Slar API Unreachable - Fallback Alert*\n\nLocation: ${location}\n\n` +
+            downMonitors.map(m => `[DOWN] *${m.monitor_id}* is DOWN (${m.error})`).join('\n')
     }
 
     try {
@@ -639,7 +639,7 @@ async function sendFallbackAlert(webhookUrl, location, downMonitors) {
  * 
  * Flow:
  * 1. Browser → CDN Edge (check cache)
- * 2. If HIT: Return cached response (~5ms) ⚡
+ * 2. If HIT: Return cached response (~5ms)
  * 3. If MISS: Worker → D1 → Response → Cache → Browser
  */
 async function handleGetMetrics(env, request, corsHeaders) {
@@ -647,7 +647,7 @@ async function handleGetMetrics(env, request, corsHeaders) {
         const timestamp = Math.floor(Date.now() / 1000)
         const location = (await getWorkerLocation()) || 'UNKNOWN'
 
-        // ⚡ OPTIMIZED: Single query with JOIN instead of N correlated subqueries
+        // OPTIMIZED: Single query with JOIN instead of N correlated subqueries
         // Uses index: idx_monitor_logs_monitor_created (monitor_id, created_at DESC)
         const { results: monitors } = await env.SLAR_DB.prepare(`
             SELECT 
@@ -713,7 +713,7 @@ async function handleGetMetrics(env, request, corsHeaders) {
  */
 async function handleGetMonitors(env, request, corsHeaders) {
     try {
-        // ⚡ OPTIMIZED: Single JOIN instead of correlated subqueries
+        // OPTIMIZED: Single JOIN instead of correlated subqueries
         const { results: monitors } = await env.SLAR_DB.prepare(`
             SELECT 
                 m.id, m.url, m.target, m.method,
@@ -746,7 +746,7 @@ async function handleGetMonitors(env, request, corsHeaders) {
         }), {
             headers: { 
                 'Content-Type': 'application/json',
-                // ✅ CDN Cache for 60 seconds
+                // CDN Cache for 60 seconds
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
                 ...corsHeaders
             }
@@ -762,11 +762,11 @@ async function handleGetMonitors(env, request, corsHeaders) {
 /**
  * GET /api/monitors/:id - Detailed stats for specific monitor
  * Cached at CDN edge for 60 seconds
- * ⚡ OPTIMIZED: Batch queries + SQL aggregation + reduced data fetch
+ * OPTIMIZED: Batch queries + SQL aggregation + reduced data fetch
  */
 async function handleGetMonitorStats(env, monitorId, corsHeaders) {
     try {
-        // ⚡ OPTIMIZED: Batch all queries together for single round trip
+        // OPTIMIZED: Batch all queries together for single round trip
         const [monitorResult, statsResult, logsResult] = await env.SLAR_DB.batch([
             // Query 1: Monitor info
             env.SLAR_DB.prepare(`SELECT id, url, target, method FROM monitors WHERE id = ?`).bind(monitorId),
@@ -835,7 +835,7 @@ async function handleGetMonitorStats(env, monitorId, corsHeaders) {
         }), {
             headers: { 
                 'Content-Type': 'application/json',
-                // ✅ CDN Cache for 60 seconds
+                // CDN Cache for 60 seconds
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
                 ...corsHeaders
             }

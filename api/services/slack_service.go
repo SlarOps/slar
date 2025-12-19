@@ -63,7 +63,7 @@ type IncidentNotification struct {
 func NewSlackService(pg *sql.DB) (*SlackService, error) {
 	botToken := os.Getenv("SLACK_BOT_TOKEN")
 	if botToken == "" {
-		log.Println("⚠️  SLACK_BOT_TOKEN not set, Slack notifications will be disabled")
+		log.Println("Warning: SLACK_BOT_TOKEN not set, Slack notifications will be disabled")
 		return &SlackService{PG: pg}, nil
 	}
 
@@ -128,7 +128,7 @@ func (s *SlackService) SendIncidentNotification(userID, incidentID, notification
 	s.logNotification(userID, incidentID, "slack", config.SlackUserID,
 		message.Text, "sent", "", &sentAt)
 
-	log.Printf("✅ Sent Slack notification to %s for incident %s (type: %s)",
+	log.Printf("Sent Slack notification to %s for incident %s (type: %s)",
 		user.Name, incident.ID, notificationType)
 
 	return nil
@@ -142,35 +142,35 @@ func (s *SlackService) createIncidentSlackMessage(incident *db.Incident, user *d
 
 	switch notificationType {
 	case "assigned":
-		messageText = "🚨 Incident assigned to you"
+		messageText = "[ALERT] Incident assigned to you"
 		title = fmt.Sprintf("Incident Assigned: %s", incident.Title)
 		color = "warning"
 	case "escalated":
-		messageText = "⚡ Incident escalated to you"
+		messageText = "[ESCALATED] Incident escalated to you"
 		title = fmt.Sprintf("Incident Escalated: %s", incident.Title)
 		color = "danger"
 	case "resolved":
-		messageText = "✅ Incident resolved"
+		messageText = "[RESOLVED] Incident resolved"
 		title = fmt.Sprintf("Incident Resolved: %s", incident.Title)
 		color = "good"
 	default:
-		messageText = "📢 Incident notification"
+		messageText = "[NOTIFICATION] Incident notification"
 		title = fmt.Sprintf("Incident: %s", incident.Title)
 		color = "warning"
 	}
 
-	// Create severity emoji
-	severityEmoji := "🟡"
+	// Create severity indicator
+	severityIndicator := "[MEDIUM]"
 	switch incident.Severity {
 	case "critical":
-		severityEmoji = "🔴"
+		severityIndicator = "[CRITICAL]"
 		color = "danger"
 	case "high":
-		severityEmoji = "🟠"
+		severityIndicator = "[HIGH]"
 	case "medium":
-		severityEmoji = "🟡"
+		severityIndicator = "[MEDIUM]"
 	case "low":
-		severityEmoji = "🟢"
+		severityIndicator = "[LOW]"
 	}
 
 	// Build rich attachment
@@ -180,7 +180,7 @@ func (s *SlackService) createIncidentSlackMessage(incident *db.Incident, user *d
 		Fields: []SlackField{
 			{
 				Title: "Severity",
-				Value: fmt.Sprintf("%s %s", severityEmoji, incident.Severity),
+				Value: fmt.Sprintf("%s %s", severityIndicator, incident.Severity),
 				Short: true,
 			},
 			{

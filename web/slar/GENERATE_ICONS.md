@@ -52,8 +52,8 @@ sizes.forEach(size => {
   sharp(inputFile)
     .resize(size, size)
     .toFile(`public/icon-${size}x${size}.png`)
-    .then(() => console.log(`✓ Generated icon-${size}x${size}.png`))
-    .catch(err => console.error(`✗ Error generating ${size}x${size}:`, err));
+    .then(() => console.log(`Generated icon-${size}x${size}.png`))
+    .catch(err => console.error(`Error generating ${size}x${size}:`, err));
 });
 ```
 

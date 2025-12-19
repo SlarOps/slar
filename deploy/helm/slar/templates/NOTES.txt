@@ -18,10 +18,10 @@ Deployed in namespace: {{ .Release.Namespace }}
 
 ═══════════════════════════════════════════════════════════════════════
 
-📦 DEPLOYED COMPONENTS:
+DEPLOYED COMPONENTS:
 
 {{- range $name, $comp := .Values.components }}
-  ✓ {{ $name | upper }}
+  [OK] {{ $name | upper }}
     {{- if and $comp.service $comp.service.enabled }}
     Service: {{ include "slar.componentFullname" (dict "root" $ "name" $name) }}
     {{- if $comp.service.port }}
@@ -32,7 +32,7 @@ Deployed in namespace: {{ .Release.Namespace }}
 
 ═══════════════════════════════════════════════════════════════════════
 
-🚀 ACCESSING YOUR APPLICATION:
+ACCESSING YOUR APPLICATION:
 
 {{- if .Values.components.kong }}
 {{- $kongService := .Values.components.kong.service }}
@@ -90,7 +90,7 @@ Deployed in namespace: {{ .Release.Namespace }}
 
 ═══════════════════════════════════════════════════════════════════════
 
-📊 MONITORING YOUR DEPLOYMENT:
+MONITORING YOUR DEPLOYMENT:
 
 1. Check pod status:
    kubectl get pods --namespace {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "slar.name" . }}
@@ -113,7 +113,7 @@ Deployed in namespace: {{ .Release.Namespace }}
 
 ═══════════════════════════════════════════════════════════════════════
 
-🔧 CONFIGURATION:
+CONFIGURATION:
 
 To customize your deployment, create a custom values file and upgrade:
 
@@ -129,7 +129,7 @@ For production deployments, use:
 
 ═══════════════════════════════════════════════════════════════════════
 
-📚 DOCUMENTATION:
+DOCUMENTATION:
 
 For more information, see:
   - Chart README: https://github.com/slarops/slar/tree/main/deploy/helm/slar
@@ -137,4 +137,4 @@ For more information, see:
 
 ═══════════════════════════════════════════════════════════════════════
 
-Happy monitoring! 🎉
+Happy monitoring!

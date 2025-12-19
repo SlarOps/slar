@@ -15,7 +15,7 @@
 
 ---
 
-## 🚀 Deployment Guide
+## Deployment Guide
 
 This guide focuses on deploying SLAR in your environment. For development instructions, please refer to [CLAUDE.md](CLAUDE.md).
 

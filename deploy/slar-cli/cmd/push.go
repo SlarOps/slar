@@ -46,7 +46,7 @@ func init() {
 }
 
 func runPush() {
-	log("🚀 Starting push process...")
+	log("Starting push process...")
 	checkEnv()
 	fixLineEndings()
 	buildNextJS()
@@ -56,7 +56,7 @@ func runPush() {
 }
 
 func runBuildOnly() {
-	log("🚀 Starting build process...")
+	log("Starting build process...")
 	checkEnv()
 	fixLineEndings()
 	buildNextJS()
@@ -71,7 +71,7 @@ func log(msg string) {
 }
 
 func logError(msg string) {
-	fmt.Fprintf(os.Stderr, "❌ %s\n", msg)
+	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
 	os.Exit(1)
 }
 
@@ -96,12 +96,12 @@ func getProjectRoot() string {
 func checkEnv() {
 	root := "../../" 
 	if _, err := os.Stat(filepath.Join(root, ".env")); os.IsNotExist(err) {
-		fmt.Println("⚠️  Warning: .env file not found at repository root (checked ../../.env)")
+		fmt.Println("Warning: .env file not found at repository root (checked ../../.env)")
 	}
 }
 
 func fixLineEndings() {
-	log("🔧 Fixing line endings...")
+	log("Fixing line endings...")
 	scriptPath := "../../api/ai/docker-entrypoint.sh"
 	content, err := ioutil.ReadFile(scriptPath)
 	if err == nil {
@@ -111,7 +111,7 @@ func fixLineEndings() {
 }
 
 func buildNextJS() {
-	log("📦 Building Next.js...")
+	log("Building Next.js...")
 	webDir := "../../web/slar"
 
 	if _, err := os.Stat(filepath.Join(webDir, "node_modules")); os.IsNotExist(err) {
@@ -124,11 +124,11 @@ func buildNextJS() {
 	if _, err := os.Stat(filepath.Join(webDir, ".next/standalone")); os.IsNotExist(err) {
 		logError("Next.js build failed: .next/standalone not found")
 	}
-	log("✅ Next.js build completed")
+	log("Next.js build completed")
 }
 
 func buildImages(reg, t string) {
-	log("🐳 Building Docker images...")
+	log("Building Docker images...")
 	
 	deployDir := "../docker" 
 	composeFile := filepath.Join(deployDir, "docker-compose.yaml")
@@ -147,11 +147,11 @@ func buildImages(reg, t string) {
 
 	// Use -p slar to ensure deterministic image names (slar-api, slar-web etc)
 	runCommand("docker", []string{"compose", "-p", "slar", "-f", "docker-compose.tmp.yaml", "build"}, deployDir)
-	log("✅ Images built")
+	log("Images built")
 }
 
 func tagImages(reg, t string) {
-	log("🏷️ Tagging images...")
+	log("Tagging images...")
 	
 	// Map service name (as defined in docker-compose) to target image name suffix
 	// With -p slar, the source images will be named "slar-<service>"
@@ -169,11 +169,11 @@ func tagImages(reg, t string) {
 		log(fmt.Sprintf("  %s -> %s", sourceImage, targetImage))
 		runCommand("docker", []string{"tag", sourceImage, targetImage}, "")
 	}
-	log("✅ Images tagged")
+	log("Images tagged")
 }
 
 func pushImages(reg, t string) {
-	log(fmt.Sprintf("📤 Pushing images to %s...", reg))
+	log(fmt.Sprintf("Pushing images to %s...", reg))
 	
 	images := []string{
 		fmt.Sprintf("%s/slar-web:%s", reg, t),
@@ -186,5 +186,5 @@ func pushImages(reg, t string) {
 		log(fmt.Sprintf("Pushing %s...", img))
 		runCommand("docker", []string{"push", img}, "")
 	}
-	log("✅ Images pushed")
+	log("Images pushed")
 }

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -127,7 +128,7 @@ func (s *FCMService) SendAlertNotification(alert *db.Alert) error {
 	message := &messaging.Message{
 		Token: fcmToken,
 		Notification: &messaging.Notification{
-			Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+			Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 			Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 		},
 		Data: dataMap,
@@ -146,7 +147,7 @@ func (s *FCMService) SendAlertNotification(alert *db.Alert) error {
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
 					Alert: &messaging.ApsAlert{
-						Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+						Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 						Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 					},
 					Badge: intPtr(1),
@@ -232,7 +233,7 @@ func (s *FCMService) SendNotificationToOnCallUsers(alert *db.Alert) error {
 	message := &messaging.MulticastMessage{
 		Tokens: tokens,
 		Notification: &messaging.Notification{
-			Title: fmt.Sprintf("🚨 New Alert: %s", alert.Severity),
+			Title: fmt.Sprintf("[ALERT] %s", alert.Severity),
 			Body:  fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 		},
 		Data: dataMap,
@@ -326,7 +327,7 @@ func (s *FCMService) sendAlertViaCloudRelay(alert *db.Alert) error {
 		InstanceID: s.instanceID,
 		UserID:     alert.AssignedTo,
 		Notification: CloudRelayNotifPayload{
-			Title:    fmt.Sprintf("🚨 %s Alert", alert.Severity),
+			Title:    fmt.Sprintf("[%s] Alert", strings.ToUpper(alert.Severity)),
 			Body:     fmt.Sprintf("%s\nSource: %s", alert.Title, alert.Source),
 			Priority: getPriorityBySeverity(alert.Severity),
 			Sound:    sound,

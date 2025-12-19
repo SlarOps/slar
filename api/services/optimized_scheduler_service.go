@@ -83,7 +83,7 @@ func (s *OptimizedSchedulerService) CreateSchedulerWithShiftsOptimized(groupID s
 		return scheduler, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("✅ Successfully created scheduler '%s' with %d shifts", scheduler.DisplayName, len(createdShifts))
+	log.Printf("Successfully created scheduler '%s' with %d shifts", scheduler.DisplayName, len(createdShifts))
 	return scheduler, createdShifts, nil
 }
 
@@ -214,7 +214,7 @@ func (s *OptimizedSchedulerService) batchInsertShifts(tx *sql.Tx, schedulerID, g
 	}
 
 	if len(createdShifts) != len(shifts) {
-		log.Printf("⚠️  Warning: Expected %d shifts, got %d", len(shifts), len(createdShifts))
+		log.Printf("Warning: Expected %d shifts, got %d", len(shifts), len(createdShifts))
 	}
 
 	return createdShifts, nil
@@ -384,10 +384,10 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 			}
 		}
 	} else {
-		log.Printf("⚠️ Failed to fetch overrides for preservation: %v", err)
+		log.Printf("Warning: Failed to fetch overrides for preservation: %v", err)
 		// Don't fail the whole update, but log the error
 	}
-	log.Printf("ℹ️ Found %d active overrides to preserve", len(preservedOverrides))
+	log.Printf("Found %d active overrides to preserve", len(preservedOverrides))
 
 	// OPTIMIZATION: Soft delete all existing shifts in single query
 	_, err = tx.Exec(`
@@ -445,7 +445,7 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 					true, time.Now(), time.Now(), po.CreatedBy)
 
 				if err != nil {
-					log.Printf("⚠️ Failed to restore override %s: %v", po.ID, err)
+					log.Printf("Warning: Failed to restore override %s: %v", po.ID, err)
 				} else {
 					restoredCount++
 				}
@@ -453,11 +453,11 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 				// Deactivate the old override to avoid confusion (though it points to an inactive shift anyway)
 				tx.Exec(`UPDATE schedule_overrides SET is_active = false WHERE id = $1`, po.ID)
 			} else {
-				log.Printf("⚠️ Could not find matching shift for override %s (Time: %s - %s)",
+				log.Printf("Warning: Could not find matching shift for override %s (Time: %s - %s)",
 					po.ID, po.OverrideStartTime.Format(time.RFC3339), po.OverrideEndTime.Format(time.RFC3339))
 			}
 		}
-		log.Printf("✅ Restored %d/%d overrides", restoredCount, len(preservedOverrides))
+		log.Printf("Restored %d/%d overrides", restoredCount, len(preservedOverrides))
 	}
 
 	// Commit transaction
@@ -465,7 +465,7 @@ func (s *OptimizedSchedulerService) UpdateSchedulerWithShiftsOptimized(scheduler
 		return scheduler, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("✅ Updated scheduler '%s' (%s) with %d new shifts", scheduler.DisplayName, schedulerID, len(createdShifts))
+	log.Printf("Updated scheduler '%s' (%s) with %d new shifts", scheduler.DisplayName, schedulerID, len(createdShifts))
 	scheduler.Shifts = createdShifts
 	return scheduler, createdShifts, nil
 }

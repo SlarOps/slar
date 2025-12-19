@@ -1,8 +1,8 @@
-# 📅 Yearly Rotation Generation - Usage Guide
+# Yearly Rotation Generation - Usage Guide
 
 The `transformScheduleDataWithRotation` function has been enhanced to generate shifts for an entire year (or any specified period) instead of just creating a single shift per member.
 
-## 🚀 Key Features
+## Key Features
 
 - **Yearly Generation**: Automatically generates 52 weeks (1 year) of shifts by default
 - **Flexible Period**: Configure any number of weeks ahead (e.g., 12 weeks for quarterly)
@@ -10,7 +10,7 @@ The `transformScheduleDataWithRotation` function has been enhanced to generate s
 - **Backward Compatible**: Legacy single-shift behavior still available via options
 - **Convenience Functions**: Helper functions for common use cases
 
-## 📖 Usage Examples
+## Usage Examples
 
 ### 1. Generate Yearly Shifts (Default Behavior)
 
@@ -121,7 +121,7 @@ console.log(`Generated ${biweeklyShifts.length} bi-weekly shifts for 6 months`);
 // Output: Generated 13 bi-weekly shifts for 6 months (26 weeks ÷ 2)
 ```
 
-## 🔧 Integration with Existing Code
+## Integration with Existing Code
 
 ### Schedule Service Integration
 
@@ -179,7 +179,7 @@ const handleCreateSchedule = async () => {
 };
 ```
 
-## 📊 Output Format
+## Output Format
 
 Each generated shift has the following structure:
 
@@ -194,7 +194,7 @@ Each generated shift has the following structure:
 }
 ```
 
-## 🎯 Benefits
+## Benefits
 
 1. **Complete Coverage**: Generates shifts for entire year automatically
 2. **Proper Rotation**: Ensures fair rotation among team members
@@ -203,7 +203,7 @@ Each generated shift has the following structure:
 5. **Consistency**: Eliminates manual scheduling errors
 6. **Future-Proof**: Automatically handles holidays and edge cases
 
-## 🔄 Migration from Legacy
+## Migration from Legacy
 
 If you're currently using the old single-shift behavior:
 

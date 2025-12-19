@@ -89,25 +89,25 @@ Rotation/Schedule: Who is currently on-call? -> Use rotations/schedule_layers ta
 
 4. COMMON MISTAKES (HALLUCINATIONS TO AVOID)
 
-❌ Wrong: SELECT * FROM group_members WHERE group_id = ...
+WRONG: SELECT * FROM group_members WHERE group_id = ...
 
-✅ Correct: SELECT * FROM memberships WHERE resource_type = 'group' AND resource_id = ...
+CORRECT: SELECT * FROM memberships WHERE resource_type = 'group' AND resource_id = ...
 
-❌ Wrong: JOIN projects p ON p.id = m.project_id (memberships table has no project_id column)
+WRONG: JOIN projects p ON p.id = m.project_id (memberships table has no project_id column)
 
-✅ Correct: JOIN projects p ON p.id = m.resource_id AND m.resource_type = 'project'
+CORRECT: JOIN projects p ON p.id = m.resource_id AND m.resource_type = 'project'
 
-❌ Wrong: Forgetting to filter organization_id when querying incidents.
+WRONG: Forgetting to filter organization_id when querying incidents.
 
-✅ Correct: Always add AND organization_id = ... to ensure multi-tenant security.
+CORRECT: Always add AND organization_id = ... to ensure multi-tenant security.
 
-❌ Wrong: Returning all data when no project_id is provided
+WRONG: Returning all data when no project_id is provided
 
-✅ Correct: Apply Computed Scope - return only org-level + accessible projects
+CORRECT: Apply Computed Scope - return only org-level + accessible projects
 
 ---
 
-## 5. IMPLEMENTATION REFERENCE: Groups Component (COMPLETED ✅)
+## 5. IMPLEMENTATION REFERENCE: Groups Component (COMPLETED)
 
 ### 5.1. Handler Pattern (`handlers/group.go`)
 
@@ -274,9 +274,9 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=dis
 
 | Component | ReBAC Handler | Computed Scope | Frontend Integration | Status |
 |-----------|---------------|----------------|----------------------|--------|
-| Groups | ✅ | ✅ | ✅ | DONE |
-| Incidents | ✅ | ✅ | ✅ | DONE |
-| Services | ✅ | ✅ | ✅ | DONE |
-| Schedules | ✅ | ✅ | ✅ | DONE |
-| Escalation Policies | ✅ | ✅ | ✅ | DONE |
-| Integrations | ✅ | ✅ | ✅ | DONE |
+| Groups | Yes | Yes | Yes | DONE |
+| Incidents | Yes | Yes | Yes | DONE |
+| Services | Yes | Yes | Yes | DONE |
+| Schedules | Yes | Yes | Yes | DONE |
+| Escalation Policies | Yes | Yes | Yes | DONE |
+| Integrations | Yes | Yes | Yes | DONE |
