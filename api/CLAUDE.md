@@ -1,20 +1,10 @@
-## Always use ReBAC don't try implement your own
-## Don't try implement your thinking, always use ReBAC for all of component design
-## Don't use RBAC or any other authorization system
-## If don't know what to do, always use ReBAC or ask me
+1. THE MINDSET (CORE PRINCIPLES)
 
+Single Source of Truth: There is only ONE table for storing membership relationships: `memberships`.
 
-SYSTEM INSTRUCTION: ReBAC Architecture & Mindset (Option A)
+No Ghost Tables: There are absolutely NO separate tables like `project_members`, `group_members`, `team_members`. If you intend to JOIN these tables -> STOP IMMEDIATELY.
 
-Bạn là một chuyên gia Software Architect nắm rõ hệ thống phân quyền ReBAC (Relationship-Based Access Control) theo kiến trúc "Option A". Dưới đây là quy tắc cốt lõi (Ground Truth) mà bạn phải tuân thủ tuyệt đối khi viết code hoặc giải thích hệ thống.
-
-1. TƯ DUY CỐT LÕI (THE MINDSET)
-
-Single Source of Truth: Chỉ có MỘT bảng duy nhất để lưu trữ quan hệ thành viên là memberships.
-
-No Ghost Tables: Tuyệt đối KHÔNG tồn tại các bảng riêng lẻ như project_members, group_members, team_members. Nếu bạn định viết JOIN vào các bảng này -> DỪNG LẠI NGAY.
-
-Zanzibar-lite Model: Hệ thống dựa trên bộ ba:
+Zanzibar-lite Model: The system is based on the triplet:
 
 Subject: user_id
 
@@ -22,57 +12,57 @@ Relation: role (owner, admin, member...)
 
 Object: resource_type + resource_id
 
-Context-Aware: Mọi truy vấn dữ liệu đều phải nằm trong ngữ cảnh của Organization (Tenant Isolation) và Project (nếu có).
+Context-Aware: All data queries must be within the context of Organization (Tenant Isolation) and Project (if applicable).
 
-2. SCHEMA CHUẨN (SOURCE OF TRUTH)
+2. STANDARD SCHEMA (SOURCE OF TRUTH)
 
-Khi viết SQL Query, chỉ sử dụng cấu trúc này cho phân quyền:
+When writing SQL queries, use only this structure for authorization:
 
 ```sql
 CREATE TABLE memberships (
     user_id       UUID NOT NULL,
-    resource_type TEXT NOT NULL, -- Giá trị: 'org', 'project', 'group'
+    resource_type TEXT NOT NULL, -- Values: 'org', 'project', 'group'
     resource_id   UUID NOT NULL,
     role          TEXT NOT NULL,
-    -- Composite Key đảm bảo tính duy nhất
+    -- Composite Key ensures uniqueness
     PRIMARY KEY (user_id, resource_type, resource_id)
 );
 ```
 
-Bản đồ Resource Type:
+Resource Type Map:
 
-org: Thành viên cấp tổ chức.
+org: Organization-level membership.
 
-project: Thành viên cấp dự án.
+project: Project-level membership.
 
-group: Thành viên đội trực (On-Call Team).
+group: On-Call Team membership.
 
-3. LOGIC TRUY VẤN & CODE (IMPLEMENTATION RULES)
+3. QUERY LOGIC & CODE (IMPLEMENTATION RULES)
 
-3.1. Kiểm tra quyền (Authorization Check)
+3.1. Authorization Check
 
-Khi kiểm tra quyền truy cập một tài nguyên, áp dụng logic "Explicit OR Inherited":
+When checking access to a resource, apply "Explicit OR Inherited" logic:
 
-Trực tiếp: User có dòng record trong memberships với resource_id đó không?
+Direct: Does the user have a record in memberships with that resource_id?
 
-Kế thừa (Chỉ cho Project): User có phải là member của Org cha VÀ Project đó đang "Open" (không có member riêng) không?
+Inherited (Only for Project): Is the user a member of the parent Org AND is that Project "Open" (has no dedicated members)?
 
-3.2. Lọc dữ liệu (Data Filtering) - COMPUTED SCOPE
+3.2. Data Filtering - COMPUTED SCOPE
 
-Khi viết hàm List (ví dụ ListIncidents, ListGroups), phải áp dụng Hybrid Filter:
+When writing List functions (e.g., ListIncidents, ListGroups), apply Hybrid Filter:
 
-**Bước 1 (MANDATORY):** Validate org_id - return 400 nếu thiếu
-**Bước 2 (Computed Scope):** Nếu KHÔNG có project_id filter:
-- Trả về tài nguyên org-level (project_id IS NULL)
-- PLUS tài nguyên từ projects user có quyền truy cập
+**Step 1 (MANDATORY):** Validate org_id - return 400 if missing
+**Step 2 (Computed Scope):** If NO project_id filter:
+- Return org-level resources (project_id IS NULL)
+- PLUS resources from projects the user has access to
 
-**Bước 3 (Query):**
+**Step 3 (Query):**
 ```sql
 WHERE
     -- TENANT ISOLATION (MANDATORY)
     r.organization_id = $current_org_id
     AND (
-        -- Computed Scope khi không có project_id filter
+        -- Computed Scope when no project_id filter
         r.project_id IS NULL
         OR r.project_id IN (
             SELECT resource_id FROM memberships
@@ -82,38 +72,38 @@ WHERE
     )
 ```
 
-**Bước 4 (Specific Project):** Nếu CÓ project_id filter → strict filtering:
+**Step 4 (Specific Project):** If project_id filter EXISTS -> strict filtering:
 ```sql
 WHERE r.organization_id = $current_org_id AND r.project_id = $project_id
 ```
 
-3.3. Xử lý Group & On-Call
+3.3. Group & On-Call Handling
 
-Khi cần lấy danh sách thành viên của một Group: Query bảng memberships với resource_type = 'group'.
+When retrieving group members: Query the memberships table with resource_type = 'group'.
 
-Phân biệt rõ:
+Clear distinction:
 
-Membership: Ai thuộc nhóm? -> Dùng bảng memberships.
+Membership: Who belongs to the group? -> Use memberships table.
 
-Rotation/Schedule: Ai đang trực? -> Dùng bảng rotations/schedule_layers (tham chiếu user_id trực tiếp).
+Rotation/Schedule: Who is currently on-call? -> Use rotations/schedule_layers tables (referencing user_id directly).
 
-4. CÁC LỖI THƯỜNG GẶP (HALLUCINATIONS TO AVOID)
+4. COMMON MISTAKES (HALLUCINATIONS TO AVOID)
 
-❌ Sai: SELECT * FROM group_members WHERE group_id = ...
+❌ Wrong: SELECT * FROM group_members WHERE group_id = ...
 
-✅ Đúng: SELECT * FROM memberships WHERE resource_type = 'group' AND resource_id = ...
+✅ Correct: SELECT * FROM memberships WHERE resource_type = 'group' AND resource_id = ...
 
-❌ Sai: JOIN projects p ON p.id = m.project_id (Bảng memberships không có cột project_id)
+❌ Wrong: JOIN projects p ON p.id = m.project_id (memberships table has no project_id column)
 
-✅ Đúng: JOIN projects p ON p.id = m.resource_id AND m.resource_type = 'project'
+✅ Correct: JOIN projects p ON p.id = m.resource_id AND m.resource_type = 'project'
 
-❌ Sai: Quên filter organization_id khi query incidents.
+❌ Wrong: Forgetting to filter organization_id when querying incidents.
 
-✅ Đúng: Luôn thêm AND organization_id = ... để đảm bảo bảo mật đa người dùng (Multi-tenancy).
+✅ Correct: Always add AND organization_id = ... to ensure multi-tenant security.
 
-❌ Sai: Trả về tất cả data khi không có project_id
+❌ Wrong: Returning all data when no project_id is provided
 
-✅ Đúng: Áp dụng Computed Scope - chỉ trả về org-level + accessible projects
+✅ Correct: Apply Computed Scope - return only org-level + accessible projects
 
 ---
 
@@ -242,13 +232,13 @@ export default function GroupsList({ filters, ... }) {
 
 ---
 
-## 6. CHECKLIST CHO COMPONENT MỚI
+## 6. CHECKLIST FOR NEW COMPONENTS
 
-Khi implement ReBAC cho component mới (Services, Incidents, Schedules, etc.), follow checklist:
+When implementing ReBAC for new components (Services, Incidents, Schedules, etc.), follow this checklist:
 
 ### Backend Handler:
 - [ ] Import `authz` package
-- [ ] Call `authz.GetReBACFilters(c)` đầu handler
+- [ ] Call `authz.GetReBACFilters(c)` at the beginning of handler
 - [ ] Validate `current_org_id` - return 400 if missing
 - [ ] Extract `project_id` from query/header (optional)
 - [ ] Pass filters to service layer
