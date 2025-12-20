@@ -1536,6 +1536,68 @@ class APIClient {
     return response.json();
   }
 
+  // ===========================
+  // CLAUDE CONVERSATIONS APIs
+  // ===========================
+
+  /**
+   * Get user's conversation history for resume functionality
+   * @param {object} options - { limit: 20, offset: 0, archived: false }
+   * @returns {Promise<object>} { success, conversations: [...], total }
+   */
+  async getConversations(options = {}) {
+    const params = new URLSearchParams();
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.offset) params.append('offset', options.offset.toString());
+    if (options.archived) params.append('archived', 'true');
+
+    const queryString = params.toString();
+    return this.request(`/api/conversations${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get a specific conversation by ID
+   * @param {string} conversationId - Claude conversation ID
+   * @returns {Promise<object>} { success, conversation }
+   */
+  async getConversation(conversationId) {
+    return this.request(`/api/conversations/${conversationId}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get messages for a conversation (for resume/history display)
+   * @param {string} conversationId - Claude conversation ID
+   * @param {number} limit - Max messages to return (default: 100)
+   * @returns {Promise<object>} { success, messages }
+   */
+  async getConversationMessages(conversationId, limit = 100) {
+    return this.request(`/api/conversations/${conversationId}/messages?limit=${limit}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Update conversation metadata (title, archive status)
+   * @param {string} conversationId - Claude conversation ID
+   * @param {object} data - { title?: string, is_archived?: boolean }
+   * @returns {Promise<object>} { success, message }
+   */
+  async updateConversation(conversationId, data) {
+    return this.request(`/api/conversations/${conversationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete a conversation
+   * @param {string} conversationId - Claude conversation ID
+   * @returns {Promise<object>} { success, message }
+   */
+  async deleteConversation(conversationId) {
+    return this.request(`/api/conversations/${conversationId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
   // AI Agent endpoints
   async addAllowedTool(toolName) {
     return this.request('/api/allowed-tools', {

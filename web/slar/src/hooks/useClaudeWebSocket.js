@@ -33,6 +33,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isSending, setIsSending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [conversationId, setConversationId] = useState(null); // Claude conversation ID for resume
   const [pendingApprovals, setPendingApprovals] = useState([]); // Changed to array for multiple approvals
   const [todos, setTodos] = useState([]);
 
@@ -51,12 +52,17 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     authTokenRef.current = authToken;
   }, [authToken]);
 
-  // Load session ID from localStorage on mount
+  // Load session ID and conversation ID from localStorage on mount
   useEffect(() => {
     const savedSessionId = localStorage.getItem('claude_session_id');
+    const savedConversationId = localStorage.getItem('claude_conversation_id');
     if (savedSessionId) {
       setSessionId(savedSessionId);
       console.log('Restored session ID:', savedSessionId);
+    }
+    if (savedConversationId) {
+      setConversationId(savedConversationId);
+      console.log('Restored conversation ID:', savedConversationId);
     }
   }, []);
 
@@ -67,6 +73,14 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       console.log('Saved session ID:', sessionId);
     }
   }, [sessionId]);
+
+  // Save conversation ID to localStorage
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem('claude_conversation_id', conversationId);
+      console.log('Saved conversation ID:', conversationId);
+    }
+  }, [conversationId]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -84,11 +98,17 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
 
     try {
-      console.log('Connecting to WebSocket:', DEFAULT_WS_URL);
+      // Build WebSocket URL with token for authentication
+      const token = authTokenRef.current;
+      const wsUrl = token
+        ? `${DEFAULT_WS_URL}?token=${encodeURIComponent(token)}`
+        : DEFAULT_WS_URL;
+
+      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, token ? '(with token)' : '(no token)');
       setConnectionStatus('connecting');
       isIntentionalDisconnect.current = false;
 
-      const ws = new WebSocket(DEFAULT_WS_URL);
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -182,9 +202,14 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'session_init':
-              // Session initialized
+              // Session initialized - extract both session_id and conversation_id
               setSessionId(data.session_id);
-              console.log('Session initialized:', data.session_id);
+              if (data.conversation_id) {
+                setConversationId(data.conversation_id);
+                console.log('Session initialized:', data.session_id, 'Conversation ID:', data.conversation_id);
+              } else {
+                console.log('Session initialized:', data.session_id);
+              }
               break;
 
             case 'processing':
@@ -464,9 +489,11 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       });
 
       // Prepare WebSocket message (Claude Agent API v1 format)
+      // conversation_id is used for Claude SDK resume functionality
       const wsMessage = {
         prompt: message,
         session_id: sessionId || "",
+        conversation_id: options.conversationId || conversationId || "",
         auth_token: authTokenRef.current || "",
         org_id: options.orgId || "",
         project_id: options.projectId || ""
@@ -486,7 +513,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         timestamp: new Date().toISOString()
       }]);
     }
-  }, [sessionId, isSending, connect]);
+  }, [sessionId, conversationId, isSending, connect]);
 
   // Approve tool
   const approveTool = useCallback((requestId, reason = 'Approved by user') => {
@@ -519,24 +546,24 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, []);
 
-  // Approve tool always
-  const approveToolAlways = useCallback(async (requestId, toolName) => {
+  // Approve tool always - saves permission pattern like "Bash(kubectl get:*)"
+  const approveToolAlways = useCallback(async (requestId, permissionPattern) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
       return;
     }
 
     try {
-      // 1. Save preference to backend
-      if (authTokenRef.current && toolName) {
+      // 1. Save permission pattern to backend (e.g., "Bash(kubectl get:*)")
+      if (authTokenRef.current && permissionPattern) {
         try {
           // Set token for API client if not already set
           if (!apiClient.token) {
             apiClient.setToken(authTokenRef.current);
           }
 
-          await apiClient.addAllowedTool(toolName);
-          console.log('Tool added to allowed list:', toolName);
+          await apiClient.addAllowedTool(permissionPattern);
+          console.log('Permission pattern added to allowed list:', permissionPattern);
         } catch (err) {
           console.error('Failed to save allowed tool preference:', err);
           // Continue to approve anyway
@@ -582,12 +609,60 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, []);
 
-  // Reset session
+  // Reset session and conversation completely
   const resetSession = useCallback(() => {
     setMessages([]);
     setSessionId(null);
+    setConversationId(null);
     localStorage.removeItem('claude_session_id');
-    console.log('Session reset');
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Session and conversation reset');
+  }, []);
+
+  // Start a new conversation (keeps WebSocket session, clears conversation)
+  const newConversation = useCallback(() => {
+    setMessages([]);
+    setConversationId(null);
+    setTodos([]);
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Started new conversation');
+  }, []);
+
+  // Resume an existing conversation by ID and load previous messages
+  const resumeConversation = useCallback(async (convId) => {
+    setMessages([]);
+    setConversationId(convId);
+    setTodos([]);
+    localStorage.setItem('claude_conversation_id', convId);
+    console.log('Resuming conversation:', convId);
+
+    // Load previous messages from API
+    try {
+      if (authTokenRef.current) {
+        // Set token for API client if not already set
+        if (!apiClient.token) {
+          apiClient.setToken(authTokenRef.current);
+        }
+
+        const response = await apiClient.getConversationMessages(convId);
+        if (response.success && response.messages) {
+          // Convert DB messages to UI format
+          const loadedMessages = response.messages.map(msg => ({
+            role: msg.role,
+            content: msg.content || '',
+            type: msg.message_type || 'text',
+            timestamp: msg.created_at,
+            isStreaming: false,
+            isHistory: true  // Mark as history so UI can style differently if needed
+          }));
+          setMessages(loadedMessages);
+          console.log('Loaded', loadedMessages.length, 'messages from history');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load conversation messages:', err);
+      // Continue anyway - user can still send new messages
+    }
   }, []);
 
   // Send interrupt request
@@ -671,7 +746,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     stopStreaming,
     sendInterrupt,
     sessionId,
+    conversationId,
     resetSession,
+    newConversation,
+    resumeConversation,
     pendingApprovals, // Changed from pendingApproval to array
     approveTool,
     approveToolAlways,

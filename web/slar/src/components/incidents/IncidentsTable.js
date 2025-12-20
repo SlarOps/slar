@@ -25,13 +25,13 @@ export default function IncidentsTable({
 
   const getStatusBadge = (status) => {
     const statusStyles = {
-      triggered: 'text-red-800 dark:bg-red-900/20 dark:text-red-300',
-      acknowledged: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300',
-      resolved: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300'
+      triggered: 'text-red-800 dark:text-red-300',
+      acknowledged: 'text-yellow-800 dark:text-yellow-300',
+      resolved: 'text-green-800 dark:text-green-300'
     };
 
     return (
-      <span className={`inline-flex items-center py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'bg-gray-100 text-gray-800'}`}>
+      <span className={`inline-flex font-weight-medium items-center py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || 'text-gray-800'}`}>
         {status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown'}
       </span>
     );

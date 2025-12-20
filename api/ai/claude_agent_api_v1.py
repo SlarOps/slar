@@ -5,18 +5,10 @@ import os
 import time
 import uuid
 from pathlib import Path
-from dotenv import load_dotenv
-
-# Load environment variables from ../.env
-env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(dotenv_path=env_path)
 
 # Load config from YAML (unifies config with Go API)
-try:
-    import config_loader
-    config_loader.load_config()
-except ImportError:
-    pass # config_loader might not exist in all environments yet, or during refactor
+import config_loader
+config_loader.load_config()
 
 from asyncio import Lock
 from collections import defaultdict
@@ -62,6 +54,15 @@ from supabase_storage import (
 
 # Import database routes (split for better organization)
 from routes_db import router as db_router
+from database_util import execute_query
+
+# Import conversation routes and helper functions
+from routes_conversations import (
+    router as conversations_router,
+    save_conversation,
+    save_message,
+    update_conversation_activity,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -219,16 +220,20 @@ app = FastAPI(
 # CORS middleware - Configure allowed origins from environment
 # For development: use specific localhost domains
 # For production: MUST use specific domains only (never use "*")
-# ALLOWED_ORIGINS = os.getenv(
-#     "AI_ALLOWED_ORIGINS",
-#     "http://localhost:3000,http://localhost:8000"
-# ).split(",")
+# SECURITY: Using "*" with allow_credentials=True is a security vulnerability
+ALLOWED_ORIGINS = os.getenv(
+    "AI_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:8000"
+).split(",")
 
-# logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
+# Strip whitespace from origins
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
+
+logger.info(f"✅ CORS configured with allowed origins: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins="*",
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -241,6 +246,10 @@ logger.info(f"✅ Rate limiting enabled: {RATE_LIMIT_REQUESTS} requests per {RAT
 # Include database routes (installed_plugins, marketplaces)
 app.include_router(db_router)
 logger.info("✅ Database routes loaded from routes_db.py")
+
+# Include conversation history routes
+app.include_router(conversations_router)
+logger.info("✅ Conversation routes loaded from routes_conversations.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -347,7 +356,7 @@ async def websocket_sender(websocket: WebSocket, output_queue: asyncio.Queue):
             # Try to send, but don't crash if WebSocket closed
             try:
                 await websocket.send_json(message)
-                logger.debug(f"📤 Sent message: {message.get('type')}")
+                logger.info(f"📤 Sent to WebSocket: type={message.get('type')}")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to send message (WebSocket closed?): {e}")
                 # Don't crash - message lost but agent continues
@@ -418,6 +427,11 @@ async def agent_task(
     current_session_id = None
     current_conversation_id = None  # Claude conversation ID (separate from session_id)
     current_user_id = None  # User ID (from Zero-Trust session OR JWT token)
+    current_first_prompt = None  # First prompt for conversation save
+    current_workspace = None  # User workspace path
+    current_org_id = None  # Organization ID for metadata
+    current_project_id = None  # Project ID for metadata
+    is_resuming = False  # Flag to track if we're resuming an existing conversation
 
     try:
         while True:
@@ -454,7 +468,26 @@ async def agent_task(
             # - conversation_id: Claude conversation (for AI context resume)
             if conversation_id:
                 current_conversation_id = conversation_id
-                logger.info(f"💬 Conversation ID received: {conversation_id}")
+                is_resuming = True  # Mark that we're resuming an existing conversation
+                logger.info(f"💬 Conversation ID received (resuming): {conversation_id}")
+            else:
+                is_resuming = False  # New conversation
+
+            # Store first prompt for conversation save (only if new conversation)
+            prompt = data.get("prompt", "")
+            logger.info(f"📨 Received: prompt={prompt[:30] if prompt else 'NONE'}..., conversation_id={conversation_id}, is_resuming={is_resuming}")
+            if prompt and not current_first_prompt and not is_resuming:
+                current_first_prompt = prompt
+                logger.info(f"📝 First prompt stored: {current_first_prompt[:30]}...")
+
+            # Store org_id and project_id for metadata
+            org_id = data.get("org_id", "")
+            if org_id:
+                current_org_id = org_id
+
+            project_id = data.get("project_id", "")
+            if project_id:
+                current_project_id = project_id
 
             # Update auth token (needed by incident_tools to call Go backend API)
             # This is separate from user_id - both secure and unsecure flows need this
@@ -497,6 +530,7 @@ async def agent_task(
             # Get user workspace directory (isolated per user)
             if user_id:
                 user_workspace = str(get_user_workspace_path(user_id))
+                current_workspace = user_workspace  # Store for conversation metadata
             else:
                 user_workspace = "."
 
@@ -571,6 +605,10 @@ async def agent_task(
                 await client.query(data["prompt"])
 
                 logger.info("\n📨 Receiving response...")
+
+                # Accumulate assistant text for saving to DB
+                assistant_text_buffer = []
+                user_message_saved = False  # Track if we've saved the user message
                 async for message in client.receive_response():
                     # Check for interrupt (stop event)
 
@@ -609,6 +647,8 @@ async def agent_task(
                                 await output_queue.put(
                                     {"type": "text", "content": block.text}
                                 )
+                                # Accumulate text for saving to DB
+                                assistant_text_buffer.append(block.text)
                             elif isinstance(block, ToolResultBlock):
                                 await output_queue.put(
                                     {
@@ -619,25 +659,36 @@ async def agent_task(
                                     }
                                 )
                             elif isinstance(block, ToolUseBlock):
-                                # Detect TodoWrite tool usage for task tracking
+                                # Don't send tool_use to frontend - permission_request already shows tool info
+                                # This avoids duplicate display of the same tool call
+                                logger.info(f"🔧 Tool use: {block.name}({block.id})")
+
+                                # Special handling for TodoWrite - send todo_update event
                                 if block.name == "TodoWrite":
                                     try:
                                         todos = block.input.get("todos", [])
                                         logger.info(f"📝 Todo update detected: {len(todos)} tasks")
-                                        await output_queue.put(
-                                            {
-                                                "type": "todo_update",
-                                                "todos": todos
-                                            }
-                                        )
+                                        await output_queue.put({
+                                            "type": "todo_update",
+                                            "todos": todos
+                                        })
                                     except Exception as e:
                                         logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
 
                     # Handle UserMessage (tool results from SDK)
+                    # Send to frontend so users can see what agent is executing
                     if isinstance(message, UserMessage):
-                        logger.debug(f"UserMessage received with {len(message.content)} blocks")
-                        # UserMessage typically contains tool results, we can log but don't need to send to frontend
-                        # The SDK will process these internally and generate AssistantMessage responses
+                        logger.info(f"UserMessage received with {len(message.content)} blocks")
+                        for block in message.content:
+                            if isinstance(block, ToolResultBlock):
+                                # Send tool execution result to frontend
+                                await output_queue.put({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.tool_use_id,
+                                    "content": block.content if isinstance(block.content, str) else str(block.content),
+                                    "is_error": block.is_error,
+                                })
+                                logger.debug(f"Sent tool result to frontend: {block.tool_use_id}")
 
                     if isinstance(message, SystemMessage):
                         if isinstance(message.data, dict):
@@ -647,12 +698,44 @@ async def agent_task(
                                 # - session_id: Zero-Trust WebSocket session (for security)
                                 # - claude_session_id: Claude conversation (for AI context)
                                 claude_session_id = message.data.get("session_id")
-                                
+
                                 # Update current_conversation_id for resume
                                 if claude_session_id:
                                     current_conversation_id = claude_session_id
                                     logger.info(f"💬 Claude conversation started: {claude_session_id}")
-                                
+
+                                    # Save conversation to database for history/resume
+                                    # Only save if it's a new conversation (not resuming)
+                                    logger.info(f"📝 Save conversation check: user_id={current_user_id}, first_prompt={current_first_prompt[:30] if current_first_prompt else None}..., is_resuming={is_resuming}")
+                                    if current_user_id and current_first_prompt and not is_resuming:
+                                        await save_conversation(
+                                            user_id=current_user_id,
+                                            conversation_id=claude_session_id,
+                                            first_message=current_first_prompt,
+                                            model="sonnet",
+                                            workspace_path=current_workspace,
+                                            metadata={
+                                                "org_id": current_org_id,
+                                                "project_id": current_project_id
+                                            }
+                                        )
+                                    elif is_resuming:
+                                        # Update activity for resumed conversation
+                                        await update_conversation_activity(claude_session_id)
+
+                                    # Save user message to DB (only once per query)
+                                    # Use data["prompt"] to save current message, not just first
+                                    user_prompt = data.get("prompt", "")
+                                    if not user_message_saved and user_prompt:
+                                        await save_message(
+                                            conversation_id=claude_session_id,
+                                            role="user",
+                                            content=user_prompt,
+                                            message_type="text"
+                                        )
+                                        user_message_saved = True
+                                        logger.info(f"💾 Saved user message for conversation {claude_session_id}")
+
                                 # Send to client so they can save for resume
                                 # Client should save conversation_id and send it back in next messages
                                 await output_queue.put({
@@ -665,6 +748,17 @@ async def agent_task(
                         await output_queue.put(
                             {"type": message.subtype, "result": message.result}
                         )
+
+                        # Save assistant message to DB when response is complete
+                        if current_conversation_id and assistant_text_buffer:
+                            assistant_content = "".join(assistant_text_buffer)
+                            await save_message(
+                                conversation_id=current_conversation_id,
+                                role="assistant",
+                                content=assistant_content,
+                                message_type="text"
+                            )
+                            logger.info(f"💾 Saved assistant message ({len(assistant_content)} chars) for conversation {current_conversation_id}")
 
 
     except asyncio.CancelledError:
@@ -2548,13 +2642,18 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     # Authenticate BEFORE accepting connection (prevents DoS)
+    is_valid, result = await verify_websocket_auth(websocket)
+    if not is_valid:
+        logger.warning(f"🚫 WebSocket auth failed: {result}")
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
 
-    # Now safe to accept
+    # Now safe to accept - user is authenticated
     await websocket.accept()
 
     # Store user_id for session
-    # authenticated_user_id = result
-    # logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
+    authenticated_user_id = result
+    logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
 
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)

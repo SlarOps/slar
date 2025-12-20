@@ -20,7 +20,7 @@ def load_config():
         # Check default locations
         default_paths = [
             "/app/config/config.yaml",  # Production (Docker)
-            os.path.join(os.path.dirname(__file__), ".config.dev.yaml"),  # Local dev
+            os.path.join(os.path.dirname(__file__), "..", "config.dev.yaml"),  # Local dev (api/config.dev.yaml)
         ]
         for path in default_paths:
             if os.path.exists(path):
@@ -45,22 +45,25 @@ def load_config():
         # This allows existing code using os.getenv to work without changes
         env_mapping = {
             "database_url": "DATABASE_URL",
-            
+
             # API Connections
             "slar_api_url": "SLAR_API_URL",
             "backend_url": "SLAR_BACKEND_URL",
-            
+
             # Supabase
             "supabase_url": "SUPABASE_URL",
             "supabase_service_role_key": "SUPABASE_SERVICE_ROLE_KEY",
             "supabase_jwt_secret": "SUPABASE_JWT_SECRET",
+
+            # AI Agent Security
+            "ai_allowed_origins": "AI_ALLOWED_ORIGINS",
+            "ai_rate_limit": "AI_RATE_LIMIT",
         }
         
         for config_key, env_key in env_mapping.items():
             if config_key in config and config[config_key]:
-                if env_key not in os.environ:
-                    os.environ[env_key] = str(config[config_key])
-                    print(f"[config_loader] Set {env_key}={config[config_key][:30]}...")
+                os.environ[env_key] = str(config[config_key])
+                logger.info(f"[config_loader] Set {env_key}={str(config[config_key])[:30]}...")
 
     except Exception as e:
         logger.error(f"❌ Failed to load config file: {e}")

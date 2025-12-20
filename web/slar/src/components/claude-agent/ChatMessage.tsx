@@ -47,7 +47,7 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
       <div className="w-full py-6 px-4">
         <div className="max-w-3xl mx-auto flex justify-end">
           <div className="bg-gray-100 dark:bg-gray-700 rounded-3xl px-5 py-3 max-w-[80%]">
-            <p className="text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+            <p className="text-[17px] text-gray-900 dark:text-gray-100 whitespace-pre-wrap leading-[1.75]">
               {message.content}
             </p>
           </div>
@@ -62,11 +62,11 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
         {/* Message Content */}
         <div className="mb-3">
           {isError ? (
-            <div className="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+            <div className="text-[17px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 leading-[1.75]">
               {message.content}
             </div>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none">
+            <div className="prose prose-lg dark:prose-invert max-w-none">
               <ReactMarkdown
                 components={{
                   code({ node, inline, className, children, ...props }: any) {
@@ -79,7 +79,7 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
                         customStyle={{
                           borderRadius: '0.5rem',
                           padding: '1rem',
-                          fontSize: '0.875rem',
+                          fontSize: '0.95rem',
                         }}
                         {...props}
                       >
@@ -87,7 +87,7 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
                       </SyntaxHighlighter>
                     ) : (
                       <code
-                        className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-sm font-mono"
+                        className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[0.9em] font-mono"
                         {...props}
                       >
                         {children}
@@ -95,16 +95,28 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
                     );
                   },
                   p({ children }) {
-                    return <p className="mb-4 last:mb-0 leading-7">{children}</p>;
+                    return <p className="mb-5 last:mb-0 text-[17px] leading-[1.75]">{children}</p>;
                   },
                   ul({ children }) {
-                    return <ul className="mb-4 ml-6 list-disc">{children}</ul>;
+                    return <ul className="mb-5 ml-6 list-disc space-y-2">{children}</ul>;
                   },
                   ol({ children }) {
-                    return <ol className="mb-4 ml-6 list-decimal">{children}</ol>;
+                    return <ol className="mb-5 ml-6 list-decimal space-y-2">{children}</ol>;
                   },
                   li({ children }) {
-                    return <li className="mb-1">{children}</li>;
+                    return <li className="text-[17px] leading-[1.75]">{children}</li>;
+                  },
+                  h1({ children }) {
+                    return <h1 className="text-[26px] font-semibold mb-4 mt-8">{children}</h1>;
+                  },
+                  h2({ children }) {
+                    return <h2 className="text-[22px] font-semibold mb-3 mt-6">{children}</h2>;
+                  },
+                  h3({ children }) {
+                    return <h3 className="text-[19px] font-semibold mb-2 mt-5">{children}</h3>;
+                  },
+                  strong({ children }) {
+                    return <strong className="font-semibold">{children}</strong>;
                   },
                 }}
               >
