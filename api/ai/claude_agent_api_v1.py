@@ -36,6 +36,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id
 from zero_trust_verifier import get_verifier, init_verifier
+from audit_service import (
+    get_audit_service,
+    init_audit_service,
+    shutdown_audit_service,
+    EventType,
+    EventStatus,
+)
+from audit_hooks import build_hooks_config
 from supabase_storage import (
     extract_user_id_from_token,
     get_user_mcp_servers,
@@ -63,6 +71,9 @@ from routes_conversations import (
     save_message,
     update_conversation_activity,
 )
+
+# Import audit routes
+from routes_audit import router as audit_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -170,6 +181,17 @@ async def rate_limit_middleware(request: Request, call_next):
         if user_id:
             # Check rate limit
             if not await check_rate_limit(user_id):
+                # Log rate limit event
+                audit = get_audit_service()
+                await audit.log_security_event(
+                    event_type=EventType.AUTH_RATE_LIMITED,
+                    user_id=user_id,
+                    action="rate_limit_check",
+                    error_code="RATE_LIMIT_EXCEEDED",
+                    error_message=f"Exceeded {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW}s",
+                    source_ip=request.client.host if request.client else None,
+                    metadata={"path": str(request.url.path)}
+                )
                 return JSONResponse(
                     status_code=429,
                     content={
@@ -197,6 +219,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting application...")
 
+    # Initialize audit service
+    await init_audit_service()
+    logger.info("📝 Audit service initialized")
+
     # No background workers needed anymore:
     # - heartbeat_task is per-connection (called in websocket endpoint)
     # - marketplace cleanup is now synchronous (no worker needed)
@@ -207,6 +233,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("🛑 Stopping application...")
+
+    # Shutdown audit service (flush remaining events)
+    await shutdown_audit_service()
+    logger.info("📝 Audit service stopped")
+
     logger.info("✅ Application stopped")
 
 
@@ -250,6 +281,10 @@ logger.info("✅ Database routes loaded from routes_db.py")
 # Include conversation history routes
 app.include_router(conversations_router)
 logger.info("✅ Conversation routes loaded from routes_conversations.py")
+
+# Include audit routes
+app.include_router(audit_router)
+logger.info("✅ Audit routes loaded from routes_audit.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -421,6 +456,7 @@ async def agent_task(
     output_queue: asyncio.Queue,
     permission_callback,
     websocket: WebSocket = None,  # Optional, only for sync
+    hooks_config: Dict[str, Any] = None,  # Audit hooks configuration
 ):
     """Process agent messages and handle responses."""
     current_auth_token = None
@@ -506,6 +542,18 @@ async def agent_task(
                     current_user_id = extracted_user_id
                     logger.info(f"👤 User ID extracted from JWT: {current_user_id}")
 
+            # Audit log: chat message sent
+            if prompt and current_user_id:
+                audit = get_audit_service()
+                await audit.log_chat_message(
+                    user_id=current_user_id,
+                    session_id=session_id or current_session_id or "",
+                    conversation_id=conversation_id or current_conversation_id,
+                    message_preview=prompt,
+                    org_id=org_id or current_org_id,
+                    project_id=project_id or current_project_id
+                )
+
             # Note: Bucket sync is now handled by frontend via /api/sync-bucket
             # before WebSocket connection to ensure skills are ready
 
@@ -582,12 +630,21 @@ async def agent_task(
             # If conversation_id is provided, Claude will resume that conversation.
             # If not provided (empty/None), Claude starts a new conversation.
             resume_id = current_conversation_id if current_conversation_id else None
-            
+
             if resume_id:
                 logger.info(f"💬 Resuming Claude conversation: {resume_id}")
             else:
                 logger.info(f"💬 Starting new Claude conversation")
-            
+
+            # Build audit hooks with actual user context from message data
+            # (org_id/project_id come from message, not available at connection time)
+            actual_hooks_config = build_hooks_config(
+                user_id=current_user_id or "",
+                session_id=current_session_id or "",
+                org_id=current_org_id,
+                project_id=current_project_id,
+            ) if current_user_id else hooks_config
+
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
@@ -598,6 +655,7 @@ async def agent_task(
                 plugins=user_plugins,
                 setting_sources=["project","user"],
                 allowed_tools=allowed_tools,
+                hooks=actual_hooks_config,  # Audit hooks with org_id/project_id
             )
             async with ClaudeSDKClient(options) as client:
                 logger.info("\n📝 Sending query to Claude...")
@@ -2641,10 +2699,27 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
+    audit = get_audit_service()
+    client_ip = websocket.client.host if websocket.client else None
+
+    # Extract org_id and project_id from query params for audit logging
+    # These are passed from frontend when connecting WebSocket
+    ws_org_id = websocket.query_params.get("org_id") or None
+    ws_project_id = websocket.query_params.get("project_id") or None
+    logger.info(f"📋 WebSocket query params - org_id: {ws_org_id}, project_id: {ws_project_id}")
+
     # Authenticate BEFORE accepting connection (prevents DoS)
     is_valid, result = await verify_websocket_auth(websocket)
     if not is_valid:
         logger.warning(f"🚫 WebSocket auth failed: {result}")
+        # Log auth failure
+        await audit.log_auth_failed(
+            user_id=None,
+            error_code="INVALID_TOKEN",
+            error_message=result,
+            source_ip=client_ip,
+            org_id=ws_org_id
+        )
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
@@ -2653,7 +2728,26 @@ async def websocket_chat(websocket: WebSocket):
 
     # Store user_id for session
     authenticated_user_id = result
+    ws_session_id = str(uuid.uuid4())  # Generate unique session ID for this WebSocket
     logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
+
+    # Log session created with org_id and project_id from URL
+    await audit.log_session_created(
+        user_id=authenticated_user_id,
+        session_id=ws_session_id,
+        source_ip=client_ip,
+        user_agent=websocket.headers.get("user-agent"),
+        org_id=ws_org_id,
+        project_id=ws_project_id
+    )
+
+    # Build audit hooks config for tool execution logging (with org_id/project_id)
+    hooks_config = build_hooks_config(
+        user_id=authenticated_user_id,
+        session_id=ws_session_id,
+        org_id=ws_org_id,
+        project_id=ws_project_id
+    )
 
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)
@@ -2693,6 +2787,15 @@ async def websocket_chat(websocket: WebSocket):
             # Generate unique request ID
             request_id = str(uuid.uuid4())
 
+            # Audit log: tool requested
+            await audit.log_tool_requested(
+                user_id=authenticated_user_id,
+                session_id=ws_session_id,
+                tool_name=tool_name,
+                tool_input=input_data,
+                request_id=request_id
+            )
+
             # Send permission request with unique ID via output queue
             await output_queue.put(
                 {
@@ -2730,9 +2833,23 @@ async def websocket_chat(websocket: WebSocket):
                 # Process response
                 if response.get("allow") in ("y", "yes"):
                     logger.info("✅ Tool approved by user")
+                    # Audit log: tool approved
+                    await audit.log_tool_approved(
+                        user_id=authenticated_user_id,
+                        session_id=ws_session_id,
+                        tool_name=tool_name,
+                        request_id=request_id
+                    )
                     return PermissionResultAllow()
                 else:
                     logger.info("❌ Tool denied by user")
+                    # Audit log: tool denied
+                    await audit.log_tool_denied(
+                        user_id=authenticated_user_id,
+                        session_id=ws_session_id,
+                        tool_name=tool_name,
+                        request_id=request_id
+                    )
                     return PermissionResultDeny(message="User denied permission")
 
         # Start all tasks
@@ -2764,6 +2881,7 @@ async def websocket_chat(websocket: WebSocket):
                 output_queue,
                 _my_permission_callback,
                 websocket,
+                hooks_config,  # Audit hooks for tool execution logging
             ),
             name="agent",
         )
@@ -2856,7 +2974,14 @@ async def websocket_secure_chat(websocket: WebSocket):
     """
     await websocket.accept()
 
+    audit = get_audit_service()
+    client_ip = websocket.client.host if websocket.client else None
     verifier = get_verifier()
+
+    # Extract org_id and project_id from query params for audit logging
+    ws_org_id = websocket.query_params.get("org_id") or None
+    ws_project_id = websocket.query_params.get("project_id") or None
+    logger.info(f"📋 Secure WebSocket query params - org_id: {ws_org_id}, project_id: {ws_project_id}")
     session = None
     session_id = None
 
@@ -2883,6 +3008,12 @@ async def websocket_secure_chat(websocket: WebSocket):
         )
 
         if auth_data.get("type") != "authenticate":
+            await audit.log_auth_failed(
+                user_id=None,
+                error_code="INVALID_AUTH_TYPE",
+                error_message="Expected authentication message",
+                source_ip=client_ip
+            )
             await websocket.send_json({
                 "type": "auth_error",
                 "error": "Expected authentication message"
@@ -2895,6 +3026,12 @@ async def websocket_secure_chat(websocket: WebSocket):
         existing_session_id = auth_data.get("session_id")
 
         if not cert_dict:
+            await audit.log_auth_failed(
+                user_id=None,
+                error_code="MISSING_CERTIFICATE",
+                error_message="Missing device certificate",
+                source_ip=client_ip
+            )
             await websocket.send_json({
                 "type": "auth_error",
                 "error": "Missing device certificate"
@@ -2907,6 +3044,19 @@ async def websocket_secure_chat(websocket: WebSocket):
 
         if not session:
             logger.warning(f"🚫 Zero-Trust authentication failed: {error}")
+            # Determine error type for audit
+            error_code = "AUTH_FAILED"
+            if "expired" in error.lower():
+                error_code = "CERTIFICATE_EXPIRED"
+            elif "invalid" in error.lower():
+                error_code = "INVALID_CERTIFICATE"
+            await audit.log_auth_failed(
+                user_id=cert_dict.get("user_id"),
+                error_code=error_code,
+                error_message=error,
+                source_ip=client_ip,
+                metadata={"instance_id": cert_dict.get("instance_id")}
+            )
             await websocket.send_json({
                 "type": "auth_error",
                 "error": error
@@ -2916,6 +3066,26 @@ async def websocket_secure_chat(websocket: WebSocket):
 
         session_id = session.session_id
         logger.info(f"✅ Zero-Trust authenticated: user={session.user_id}, session={session_id}")
+
+        # Log successful authentication with org_id/project_id from URL
+        await audit.log_session_authenticated(
+            user_id=session.user_id,
+            session_id=session_id,
+            device_cert_id=cert_dict.get("id", ""),
+            instance_id=cert_dict.get("instance_id", ""),
+            source_ip=client_ip,
+            org_id=ws_org_id,
+            project_id=ws_project_id,
+            metadata={"permissions": session.permissions}
+        )
+
+        # Build audit hooks config for tool execution logging (with org_id/project_id)
+        hooks_config = build_hooks_config(
+            user_id=session.user_id,
+            session_id=session_id,
+            org_id=ws_org_id,
+            project_id=ws_project_id
+        )
 
         # Send auth success
         await websocket.send_json({
@@ -2943,6 +3113,19 @@ async def websocket_secure_chat(websocket: WebSocket):
 
                     if not is_valid:
                         logger.warning(f"🚫 Message verification failed: {error_msg}")
+                        # Audit log: signature invalid
+                        error_type = EventType.SIGNATURE_INVALID
+                        if "nonce" in error_msg.lower() or "replay" in error_msg.lower():
+                            error_type = EventType.NONCE_REPLAY
+                        await audit.log_security_event(
+                            event_type=error_type,
+                            user_id=session.user_id,
+                            action="verify_message",
+                            error_code="VERIFICATION_FAILED",
+                            error_message=error_msg,
+                            source_ip=client_ip,
+                            session_id=session_id
+                        )
                         await output_queue.put({
                             "type": "error",
                             "error": f"Message verification failed: {error_msg}"
@@ -2985,6 +3168,15 @@ async def websocket_secure_chat(websocket: WebSocket):
             """Permission callback that uses queues for secure communication."""
             request_id = str(uuid.uuid4())
 
+            # Audit log: tool requested
+            await audit.log_tool_requested(
+                user_id=session.user_id,
+                session_id=session_id,
+                tool_name=tool_name,
+                tool_input=input_data,
+                request_id=request_id
+            )
+
             await output_queue.put({
                 "type": "permission_request",
                 "request_id": request_id,
@@ -3004,8 +3196,22 @@ async def websocket_secure_chat(websocket: WebSocket):
                     continue
 
                 if response.get("allow") in ("y", "yes", True):
+                    # Audit log: tool approved
+                    await audit.log_tool_approved(
+                        user_id=session.user_id,
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        request_id=request_id
+                    )
                     return PermissionResultAllow()
                 else:
+                    # Audit log: tool denied
+                    await audit.log_tool_denied(
+                        user_id=session.user_id,
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        request_id=request_id
+                    )
                     return PermissionResultDeny(message="User denied permission")
 
         # Start tasks
@@ -3032,6 +3238,7 @@ async def websocket_secure_chat(websocket: WebSocket):
                 output_queue,
                 secure_permission_callback,
                 websocket,
+                hooks_config,  # Audit hooks for tool execution logging
             ),
             name="secure_agent",
         )

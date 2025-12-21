@@ -181,6 +181,12 @@ class ZeroTrustVerifier:
                 INSERT INTO agent_sessions (session_id, cert_id, user_id, instance_id, permissions, device_public_key, created_at, expires_at, is_active)
                 VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, TRUE)
                 ON CONFLICT (session_id) DO UPDATE SET
+                    cert_id = EXCLUDED.cert_id,
+                    user_id = EXCLUDED.user_id,
+                    instance_id = EXCLUDED.instance_id,
+                    permissions = EXCLUDED.permissions,
+                    device_public_key = EXCLUDED.device_public_key,
+                    expires_at = EXCLUDED.expires_at,
                     last_activity_at = NOW(),
                     is_active = TRUE
                 """,
@@ -634,8 +640,13 @@ class ZeroTrustVerifier:
         """
         Convert dict to canonical JSON (sorted keys, no spaces).
         Must match the encoding used by mobile client.
+
+        IMPORTANT: ensure_ascii=False keeps Unicode characters as-is,
+        matching Dart's jsonEncode() behavior. Without this, Vietnamese
+        and other non-ASCII text would be escaped (e.g., "có" → "c\\u00f3")
+        causing signature verification to fail.
         """
-        return json.dumps(data, sort_keys=True, separators=(',', ':'))
+        return json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 
 
 # Singleton instance

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { TodoList } from '../ai-agent/TodoList';
+import { ShareModal } from './ShareModal';
 
 const ChatInput = ({
   value,
@@ -17,8 +18,12 @@ const ChatInput = ({
   onSessionReset = null,
   isSending = false,
   syncStatus = 'idle',
-  todos = []
+  todos = [],
+  conversationId = null,
+  hasMessages = false
 }) => {
+  const [showShareModal, setShowShareModal] = useState(false);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!value.trim()) return;
@@ -59,6 +64,22 @@ const ChatInput = ({
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              {/* Share Button */}
+              {conversationId && hasMessages && (
+                <div className="flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowShareModal(true)}
+                    className="p-2 text-blue-600 dark:text-blue-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                    title="Share conversation"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                     </svg>
                   </button>
                 </div>
@@ -180,6 +201,14 @@ const ChatInput = ({
           </form>
         </div>
       </div>
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        conversationId={conversationId}
+        expiresIn={168}
+      />
     </div>
   );
 };

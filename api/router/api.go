@@ -97,8 +97,9 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
 	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
 	agentHandler := handlers.NewAgentHandler(pg, identityService)   // Initialize AgentHandler for Zero-Trust
-	orgHandler := handlers.NewOrgHandler(orgService)                 // Organization management
-	projectHandler := handlers.NewProjectHandler(projectService)     // Project management
+	orgHandler := handlers.NewOrgHandler(orgService)                       // Organization management
+	projectHandler := handlers.NewProjectHandler(projectService)         // Project management
+	conversationShareHandler := handlers.NewConversationShareHandler(pg) // Conversation sharing
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -576,6 +577,16 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			agentRoutes.GET("/device-certs", agentHandler.ListDeviceCertificates)
 			agentRoutes.GET("/config", agentHandler.GetAgentConfig)
 		}
+
+		// CONVERSATION SHARING
+		conversationRoutes := protected.Group("/conversations")
+		{
+			log.Println("Registering conversation share routes...")
+			conversationRoutes.POST("/:id/share", conversationShareHandler.CreateShare)
+			conversationRoutes.GET("/:id/shares", conversationShareHandler.ListShares)
+			conversationRoutes.DELETE("/:id/shares/:shareId", conversationShareHandler.RevokeShare)
+			log.Println("Conversation share routes registered: POST /:id/share, GET /:id/shares, DELETE /:id/shares/:shareId")
+		}
 	}
 
 	// PUBLIC MOBILE ENDPOINTS (no Supabase auth - token verified internally)
@@ -585,6 +596,9 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
 		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get Supabase config after QR scan
 	}
+
+	// PUBLIC SHARED CONVERSATION VIEW (no auth - anyone with link can view)
+	r.GET("/shared/:token", conversationShareHandler.GetSharedConversation)
 
 	return r
 }

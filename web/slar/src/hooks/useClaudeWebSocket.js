@@ -20,6 +20,8 @@ const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOS
  * Claude WebSocket Hook Options
  * @typedef {Object} WebSocketOptions
  * @property {boolean} autoConnect - Whether to connect automatically on mount (default: false)
+ * @property {string} orgId - Organization ID for audit logging
+ * @property {string} projectId - Project ID for audit logging
  */
 
 /**
@@ -27,7 +29,7 @@ const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOS
  * @param {WebSocketOptions} options - Configuration options
  */
 export function useClaudeWebSocket(authToken = null, options = {}) {
-  const { autoConnect = false } = options;
+  const { autoConnect = false, orgId = null, projectId = null } = options;
 
   const [messages, setMessages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
@@ -45,12 +47,22 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const streamingTimeoutRef = useRef(null);
   const streamingInactivityTimeout = 2000; // 2 seconds of inactivity marks message as complete
   const authTokenRef = useRef(authToken); // Store token in ref for WebSocket access
+  const orgIdRef = useRef(orgId); // Store org_id in ref for WebSocket access
+  const projectIdRef = useRef(projectId); // Store project_id in ref for WebSocket access
   const isIntentionalDisconnect = useRef(false); // Track intentional disconnects
 
-  // Update auth token ref when it changes
+  // Update refs when values change
   useEffect(() => {
     authTokenRef.current = authToken;
   }, [authToken]);
+
+  useEffect(() => {
+    orgIdRef.current = orgId;
+  }, [orgId]);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
 
   // Load session ID and conversation ID from localStorage on mount
   useEffect(() => {
@@ -98,13 +110,25 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
 
     try {
-      // Build WebSocket URL with token for authentication
+      // Build WebSocket URL with token, org_id, and project_id for authentication and audit
       const token = authTokenRef.current;
-      const wsUrl = token
-        ? `${DEFAULT_WS_URL}?token=${encodeURIComponent(token)}`
-        : DEFAULT_WS_URL;
+      const currentOrgId = orgIdRef.current;
+      const currentProjectId = projectIdRef.current;
 
-      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, token ? '(with token)' : '(no token)');
+      // Build query params
+      const params = new URLSearchParams();
+      if (token) params.append('token', token);
+      if (currentOrgId) params.append('org_id', currentOrgId);
+      if (currentProjectId) params.append('project_id', currentProjectId);
+
+      const queryString = params.toString();
+      const wsUrl = queryString ? `${DEFAULT_WS_URL}?${queryString}` : DEFAULT_WS_URL;
+
+      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, {
+        hasToken: !!token,
+        orgId: currentOrgId || 'none',
+        projectId: currentProjectId || 'none'
+      });
       setConnectionStatus('connecting');
       isIntentionalDisconnect.current = false;
 

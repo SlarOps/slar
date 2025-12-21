@@ -65,7 +65,11 @@ function AIAgentContent() {
     denyTool,
     todos,
     connect: connectWebSocket,
-  } = useClaudeWebSocket(authToken, { autoConnect: false });
+  } = useClaudeWebSocket(authToken, {
+    autoConnect: false,
+    orgId: currentOrg?.id,
+    projectId: currentProject?.id
+  });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
@@ -259,6 +263,8 @@ function AIAgentContent() {
             onSessionReset={handleSessionReset}
             syncStatus={syncStatus}
             todos={todos}
+            conversationId={conversationId}
+            hasMessages={messages.length > 0}
           />
         </>
       )}

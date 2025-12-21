@@ -15,6 +15,7 @@ import { apiClient } from '../../lib/api';
 const INITIAL_FILTERS = {
   search: '',
   severity: '',
+  priority: '',
   status: '',
   urgency: '',
   assignedTo: '',
