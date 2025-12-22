@@ -75,6 +75,13 @@ from routes_conversations import (
 # Import audit routes
 from routes_audit import router as audit_router
 
+# Import modular routes (split for better maintainability)
+from routes_sync import router as sync_router, set_mcp_cache
+from routes_mcp import router as mcp_router
+from routes_tools import router as tools_router
+from routes_memory import router as memory_router
+from routes_marketplace import router as marketplace_router
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -286,9 +293,28 @@ logger.info("✅ Conversation routes loaded from routes_conversations.py")
 app.include_router(audit_router)
 logger.info("✅ Audit routes loaded from routes_audit.py")
 
+# Include modular routes
+app.include_router(sync_router)
+logger.info("✅ Sync routes loaded from routes_sync.py")
+
+app.include_router(mcp_router)
+logger.info("✅ MCP routes loaded from routes_mcp.py")
+
+app.include_router(tools_router)
+logger.info("✅ Tools routes loaded from routes_tools.py")
+
+app.include_router(memory_router)
+logger.info("✅ Memory routes loaded from routes_memory.py")
+
+app.include_router(marketplace_router)
+logger.info("✅ Marketplace routes loaded from routes_marketplace.py")
+
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
 user_mcp_cache: Dict[str, Dict[str, Any]] = {}
+
+# Share cache with sync routes
+set_mcp_cache(user_mcp_cache)
 
 # Per-user locks for plugin installation (prevents race conditions)
 # Key: user_id, Value: asyncio.Lock
@@ -297,27 +323,34 @@ user_plugin_locks: Dict[str, Lock] = {}
 
 from starlette.websockets import WebSocketState
 
-async def heartbeat_task(websocket: WebSocket, interval: int = 10):
-    """Send periodic ping messages to keep the connection alive."""
+async def heartbeat_task(websocket: WebSocket, output_queue: asyncio.Queue = None, interval: int = 10):
+    """Send periodic ping messages to keep the connection alive.
+
+    If output_queue is provided, sends through queue to avoid concurrent WebSocket writes.
+    """
     try:
         while True:
             await asyncio.sleep(interval)
-            
+
             # Check if connection is still open before sending
             if websocket.client_state != WebSocketState.CONNECTED:
                 print("🛑 Heartbeat task stopping: WebSocket not connected")
                 break
-                
+
             try:
-                await websocket.send_json({"type": "ping", "timestamp": time.time()})
-                # print("📡 Sent heartbeat ping") # Reduce log noise
+                ping_msg = {"type": "ping", "timestamp": time.time()}
+                if output_queue:
+                    # Send through queue to avoid concurrent WebSocket writes
+                    await output_queue.put(ping_msg)
+                else:
+                    # Fallback to direct send (legacy)
+                    await websocket.send_json(ping_msg)
             except Exception as e:
                 # Only log if it's not a normal disconnect
                 if "disconnect" not in str(e).lower() and "closed" not in str(e).lower():
                     print(f"❌ Heartbeat failed: {e}")
                 break
     except asyncio.CancelledError:
-        # print("🛑 Heartbeat task cancelled")
         raise
 
 
@@ -409,9 +442,12 @@ async def websocket_sender(websocket: WebSocket, output_queue: asyncio.Queue):
 async def interrupt_task(
     interrupt_queue: asyncio.Queue,
     stop_events: Dict[str, asyncio.Event],
-    websocket: WebSocket,
+    output_queue: asyncio.Queue,
 ):
-    """Handle interrupt requests from the interrupt queue."""
+    """Handle interrupt requests from the interrupt queue.
+
+    Sends acknowledgment through output_queue to avoid concurrent WebSocket writes.
+    """
     try:
         while True:
             data = await interrupt_queue.get()
@@ -436,7 +472,8 @@ async def interrupt_task(
                     # Set the event
                     stop_events[session_id].set()
 
-                    await websocket.send_json(
+                    # Send through queue to avoid concurrent WebSocket writes
+                    await output_queue.put(
                         {"type": "interrupt_acknowledged", "session_id": session_id}
                     )
 
@@ -448,6 +485,581 @@ async def interrupt_task(
         raise  # Propagate error
     finally:
         logger.info("🧹 Interrupt task finished")
+
+
+async def agent_task_streaming(
+    agent_queue: asyncio.Queue,
+    stop_events: Dict[str, asyncio.Event],
+    output_queue: asyncio.Queue,
+    permission_callback,
+    websocket: WebSocket = None,
+    hooks_config: Dict[str, Any] = None,
+    initial_user_id: str = None,  # User ID from WebSocket auth (for early init)
+    initial_auth_token: str = None,  # Auth token from WebSocket
+):
+    """
+    TRUE Streaming Mode - Uses AsyncGenerator with ONE long-lived ClaudeSDKClient.
+
+    Per Claude Agent SDK docs (streaming-vs-single-mode):
+    - ONE client.query(generator) call
+    - Generator yields messages as they come from queue
+    - receive_response() runs concurrently to process responses
+
+    Benefits:
+    - Lower latency (no client recreation)
+    - Natural multi-turn conversations
+    - Image uploads support
+    - Real-time interruption
+    """
+    # Context variables (updated per message)
+    context = {
+        "auth_token": initial_auth_token or "",
+        "session_id": "",
+        "conversation_id": "",
+        "user_id": initial_user_id or "",
+        "org_id": "",
+        "project_id": "",
+        "first_prompt": "",
+        "workspace": "",
+        "is_resuming": False,
+    }
+
+    # Shared state
+    client_ref = {"client": None}
+    interrupted = False
+    session_initialized = False
+
+    # Synchronization for post-interrupt message processing
+    new_message_ready = asyncio.Event()
+
+    # Response processing state
+    assistant_text_buffer = []
+    user_message_saved = False
+    current_prompt = ""
+
+    async def message_generator():
+        """
+        AsyncGenerator that yields messages from agent_queue.
+        This is the TRUE streaming mode - generator keeps yielding until queue returns None.
+        """
+        nonlocal interrupted, session_initialized, assistant_text_buffer, user_message_saved, current_prompt
+
+        while True:
+            try:
+                # Wait for message from queue (with timeout to check interrupts)
+                try:
+                    data = await asyncio.wait_for(agent_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    # Don't exit on interrupt - just skip and wait for next message
+                    # This allows new messages to be processed after an interrupt
+                    continue
+
+                # End of messages (WebSocket closed)
+                if data is None:
+                    logger.info("📭 Message generator: end of messages")
+                    return
+
+                # Reset interrupted flag when new message arrives
+                # This allows processing to resume after an interrupt
+                if interrupted:
+                    logger.info("🔄 New message after interrupt, resetting interrupted flag")
+                    interrupted = False
+                    # Signal that new message is ready for processing
+                    new_message_ready.set()
+
+                # Update context from message data
+                if data.get("session_id"):
+                    context["session_id"] = data["session_id"]
+                    if context["session_id"] not in stop_events:
+                        stop_events[context["session_id"]] = asyncio.Event()
+                    stop_events[context["session_id"]].clear()
+
+                if data.get("conversation_id"):
+                    context["conversation_id"] = data["conversation_id"]
+                    context["is_resuming"] = True
+                else:
+                    context["is_resuming"] = False
+
+                if data.get("auth_token"):
+                    context["auth_token"] = data["auth_token"]
+                    set_auth_token(context["auth_token"])
+
+                if data.get("org_id"):
+                    context["org_id"] = data["org_id"]
+                    set_org_id(context["org_id"])
+
+                if data.get("project_id"):
+                    context["project_id"] = data["project_id"]
+                    set_project_id(context["project_id"])
+
+                if data.get("user_id"):
+                    context["user_id"] = data["user_id"]
+
+                if not context["user_id"] and context["auth_token"]:
+                    context["user_id"] = extract_user_id_from_token(context["auth_token"]) or ""
+
+                prompt = data.get("prompt", "")
+                if not prompt:
+                    logger.warning("⚠️ Empty prompt received, skipping")
+                    continue
+
+                # Store first prompt (for new conversation)
+                if not context["first_prompt"] and not context["is_resuming"]:
+                    context["first_prompt"] = prompt
+
+                # Reset per-message state
+                assistant_text_buffer = []
+                user_message_saved = False
+                current_prompt = prompt
+
+                logger.info(f"📤 Yielding message to SDK: {prompt[:50]}...")
+
+                # Audit log
+                if context["user_id"]:
+                    audit = get_audit_service()
+                    await audit.log_chat_message(
+                        user_id=context["user_id"],
+                        session_id=context["session_id"],
+                        conversation_id=context["conversation_id"],
+                        message_preview=prompt,
+                        org_id=context["org_id"],
+                        project_id=context["project_id"]
+                    )
+
+                # Yield message in SDK streaming input format
+                if isinstance(prompt, dict) and "content" in prompt:
+                    yield {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": prompt["content"]
+                        }
+                    }
+                else:
+                    yield {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    }
+
+            except asyncio.CancelledError:
+                logger.info("🛑 Message generator: cancelled")
+                return
+            except Exception as e:
+                logger.error(f"❌ Message generator error: {e}", exc_info=True)
+                continue
+
+    async def process_responses():
+        """
+        Process responses from SDK - runs concurrently with message_generator.
+
+        IMPORTANT: receive_response() generator may exhaust after each turn (ResultMessage).
+        We need to keep looping to handle subsequent turns in the streaming session.
+        """
+        nonlocal interrupted, session_initialized, assistant_text_buffer, user_message_saved
+
+        was_interrupted = False  # Track if we broke due to interrupt
+
+        while True:  # Keep running even after interrupts
+            try:
+                # If still interrupted (didn't see ResultMessage in drain loop), mark for wait
+                if interrupted and not was_interrupted:
+                    logger.info("⏸️ Still interrupted, marking for wait")
+                    was_interrupted = True
+
+                # If we need to wait for new message after interrupt
+                if was_interrupted:
+                    logger.info("⏸️ Response loop: checking for new message after interrupt...")
+
+                    # Wait for signal if not already set, OR if interrupted flag still True
+                    wait_needed = not new_message_ready.is_set() or interrupted
+                    if wait_needed:
+                        logger.info("⏳ Waiting for new_message_ready signal...")
+                        try:
+                            await asyncio.wait_for(new_message_ready.wait(), timeout=60.0)
+                        except asyncio.TimeoutError:
+                            logger.warning("⚠️ Response loop: timeout waiting for new message")
+                            continue
+
+                    logger.info("✅ Response loop: new message ready, resuming")
+                    # Clear the event for next interrupt cycle
+                    new_message_ready.clear()
+                    # Give SDK time to process the new message
+                    await asyncio.sleep(0.2)
+                    was_interrupted = False
+
+                # receive_response() yields messages for current turn
+                # After ResultMessage, it may exhaust - we loop to catch next turn
+                async for message in client_ref["client"].receive_response():
+                    # If interrupted, drain remaining messages but don't process them
+                    # This prevents stale ResultMessage from sending "complete" to frontend
+                    if interrupted:
+                        logger.info(f"🛑 Skipping message during interrupt: {type(message).__name__}")
+                        # If we see ResultMessage during interrupt, the interrupted turn is done
+                        if isinstance(message, ResultMessage):
+                            logger.info("📭 Interrupted turn ResultMessage received, marking for wait")
+                            was_interrupted = True
+                        continue  # Skip processing, keep draining
+
+                    logger.info(f"📨 Received: {type(message).__name__}")
+
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, ThinkingBlock):
+                                await output_queue.put({
+                                    "type": "thinking",
+                                    "content": block.thinking
+                                })
+                            elif isinstance(block, TextBlock):
+                                await output_queue.put({
+                                    "type": "text",
+                                    "content": block.text
+                                })
+                                assistant_text_buffer.append(block.text)
+                            elif isinstance(block, ToolResultBlock):
+                                await output_queue.put({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.tool_use_id,
+                                    "content": block.content,
+                                    "is_error": block.is_error,
+                                })
+                            elif isinstance(block, ToolUseBlock):
+                                logger.info(f"🔧 Tool: {block.name}({block.id})")
+                                if block.name == "TodoWrite":
+                                    try:
+                                        todos = block.input.get("todos", [])
+                                        await output_queue.put({
+                                            "type": "todo_update",
+                                            "todos": todos
+                                        })
+                                    except Exception as e:
+                                        logger.error(f"❌ TodoWrite error: {e}")
+
+                    elif isinstance(message, UserMessage):
+                        for block in message.content:
+                            if isinstance(block, ToolResultBlock):
+                                await output_queue.put({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.tool_use_id,
+                                    "content": block.content if isinstance(block.content, str) else str(block.content),
+                                    "is_error": block.is_error,
+                                })
+
+                    elif isinstance(message, SystemMessage):
+                        if isinstance(message.data, dict):
+                            if message.data.get("subtype") == "init":
+                                claude_session_id = message.data.get("session_id")
+                                if claude_session_id:
+                                    context["conversation_id"] = claude_session_id
+                                    logger.info(f"💬 Conversation ID: {claude_session_id}")
+
+                                    # Save conversation to DB (new conversation only)
+                                    if context["user_id"] and context["first_prompt"] and not context["is_resuming"] and not session_initialized:
+                                        await save_conversation(
+                                            user_id=context["user_id"],
+                                            conversation_id=claude_session_id,
+                                            first_message=context["first_prompt"],
+                                            model="sonnet",
+                                            workspace_path=context["workspace"],
+                                            metadata={
+                                                "org_id": context["org_id"],
+                                                "project_id": context["project_id"]
+                                            }
+                                        )
+                                        session_initialized = True
+                                    elif context["is_resuming"]:
+                                        await update_conversation_activity(claude_session_id)
+
+                                    # Save user message
+                                    if not user_message_saved and current_prompt:
+                                        await save_message(
+                                            conversation_id=claude_session_id,
+                                            role="user",
+                                            content=current_prompt,
+                                            message_type="text"
+                                        )
+                                        user_message_saved = True
+
+                                    # Send conversation_id to frontend
+                                    # NOTE: Use different type than "session_created" to avoid
+                                    # overwriting session_id on frontend (needed for interrupts)
+                                    await output_queue.put({
+                                        "type": "conversation_started",
+                                        "conversation_id": claude_session_id
+                                    })
+
+                    elif isinstance(message, ResultMessage):
+                        await output_queue.put({
+                            "type": message.subtype,
+                            "result": message.result
+                        })
+
+                        # Save assistant message when result received
+                        if context["conversation_id"] and assistant_text_buffer:
+                            await save_message(
+                                conversation_id=context["conversation_id"],
+                                role="assistant",
+                                content="".join(assistant_text_buffer),
+                                message_type="text"
+                            )
+
+                        # Send complete signal to frontend (one turn done)
+                        await output_queue.put({"type": "complete"})
+                        logger.info("✅ Turn complete, waiting for next message...")
+
+                        # Reset buffers for next turn
+                        assistant_text_buffer = []
+                        user_message_saved = False
+
+                # receive_response() exhausted for this turn, wait briefly then check for more
+                logger.debug("📭 receive_response() exhausted, waiting for next turn...")
+                await asyncio.sleep(0.1)
+
+            except asyncio.CancelledError:
+                logger.info("🛑 Response processor cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Response processor error: {e}", exc_info=True)
+                # Don't break on error, try to continue
+                await asyncio.sleep(0.5)
+
+    async def interrupt_monitor():
+        """Monitor for interrupt signals and call client.interrupt()."""
+        nonlocal interrupted
+
+        while True:  # Keep monitoring even after interrupts
+            try:
+                await asyncio.sleep(0.1)
+
+                session_id = context["session_id"]
+                if not session_id or session_id not in stop_events:
+                    continue
+
+                if stop_events[session_id].is_set():
+                    logger.info(f"🛑 Interrupt monitor: stop event for {session_id}")
+                    interrupted = True
+                    stop_events[session_id].clear()
+
+                    if client_ref["client"]:
+                        try:
+                            await client_ref["client"].interrupt()
+                            logger.info("✅ SDK interrupt called")
+                        except Exception as e:
+                            logger.error(f"❌ SDK interrupt error: {e}")
+
+                    await output_queue.put({
+                        "type": "interrupted",
+                        "session_id": session_id
+                    })
+                    # Don't return - keep monitoring for future interrupts
+                    # The interrupted flag will be reset when new message arrives
+
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"❌ Interrupt monitor error: {e}")
+
+    try:
+        # Wait for first message to initialize context
+        logger.info("⏳ Streaming agent: Waiting for first message...")
+        first_data = await agent_queue.get()
+
+        if first_data is None:
+            logger.info("📭 No messages, ending session")
+            return
+
+        # Initialize context from first message
+        context["session_id"] = first_data.get("session_id", "")
+        context["auth_token"] = first_data.get("auth_token", "") or context["auth_token"]
+        context["conversation_id"] = first_data.get("conversation_id", "")
+        context["user_id"] = first_data.get("user_id", "") or context["user_id"]
+        context["org_id"] = first_data.get("org_id", "")
+        context["project_id"] = first_data.get("project_id", "")
+        context["first_prompt"] = first_data.get("prompt", "")
+        context["is_resuming"] = bool(context["conversation_id"])
+        current_prompt = context["first_prompt"]
+
+        if not context["user_id"] and context["auth_token"]:
+            context["user_id"] = extract_user_id_from_token(context["auth_token"]) or ""
+
+        logger.info(f"👤 Session: user={context['user_id']}, session={context['session_id']}")
+
+        # Initialize stop event
+        if context["session_id"]:
+            stop_events[context["session_id"]] = asyncio.Event()
+
+        # Set auth tokens
+        set_auth_token(context["auth_token"])
+        if context["org_id"]:
+            set_org_id(context["org_id"])
+        if context["project_id"]:
+            set_project_id(context["project_id"])
+
+        # Get user workspace
+        if context["user_id"]:
+            context["workspace"] = str(get_user_workspace_path(context["user_id"]))
+        else:
+            context["workspace"] = "."
+
+        # Load MCP servers
+        incident_tools_server = create_incident_tools_server()
+        mcp_servers = {"incident_tools": incident_tools_server}
+
+        user_mcp_servers = await get_user_mcp_servers(
+            auth_token=context["auth_token"],
+            user_id=context["user_id"]
+        )
+        if user_mcp_servers:
+            mcp_servers.update(user_mcp_servers)
+
+        # Load plugins
+        user_plugins = []
+        if context["user_id"]:
+            user_plugins = load_user_plugins(context["user_id"])
+            if user_plugins:
+                logger.info(f"📦 Loaded {len(user_plugins)} plugins")
+
+        # Load allowed tools
+        allowed_tools = [
+            "mcp__incident_tools__get_incidents_by_time",
+            "mcp__incident_tools__get_incidents_by_id",
+            "mcp__incident_tools__get_current_time",
+            "mcp__incident_tools__get_incident_stats"
+        ]
+        if context["user_id"]:
+            user_allowed = await get_user_allowed_tools(context["user_id"])
+            if user_allowed:
+                allowed_tools.extend(user_allowed)
+
+        # Build hooks config
+        actual_hooks_config = build_hooks_config(
+            user_id=context["user_id"],
+            session_id=context["session_id"],
+            org_id=context["org_id"],
+            project_id=context["project_id"],
+        ) if context["user_id"] else hooks_config
+
+        # Audit log first message
+        if context["user_id"] and context["first_prompt"]:
+            audit = get_audit_service()
+            await audit.log_chat_message(
+                user_id=context["user_id"],
+                session_id=context["session_id"],
+                conversation_id=context["conversation_id"],
+                message_preview=context["first_prompt"],
+                org_id=context["org_id"],
+                project_id=context["project_id"]
+            )
+
+        # Create SDK options - use resume if continuing conversation
+        resume_id = context["conversation_id"] if context["conversation_id"] else None
+
+        options = ClaudeAgentOptions(
+            can_use_tool=permission_callback,
+            permission_mode="default",
+            cwd=context["workspace"],
+            model="sonnet",
+            resume=resume_id,
+            mcp_servers=mcp_servers,
+            plugins=user_plugins,
+            setting_sources=["project", "user"],
+            allowed_tools=allowed_tools,
+            hooks=actual_hooks_config,
+        )
+
+        # Create message generator that includes first message
+        async def full_message_generator():
+            # Yield first message
+            logger.info(f"📤 Yielding first message: {context['first_prompt'][:50]}...")
+            yield {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": context["first_prompt"]
+                }
+            }
+
+            # Then yield subsequent messages from queue
+            async for msg in message_generator():
+                yield msg
+
+        # TRUE STREAMING MODE: ONE client, ONE query() call with generator
+        logger.info("🚀 Starting TRUE streaming mode...")
+        async with ClaudeSDKClient(options) as client:
+            client_ref["client"] = client
+
+            # Start interrupt monitor
+            monitor_task = asyncio.create_task(interrupt_monitor(), name="interrupt_monitor")
+
+            try:
+                # Run query and response processing concurrently
+                # query() feeds messages from generator to SDK
+                # process_responses() handles SDK responses
+                query_task = asyncio.create_task(
+                    client.query(full_message_generator()),
+                    name="query"
+                )
+                response_task = asyncio.create_task(
+                    process_responses(),
+                    name="responses"
+                )
+
+                # Wait for query_task to complete (generator exhausts when WebSocket closes)
+                # response_task may complete multiple times per turn, but query controls session lifetime
+                #
+                # TRUE STREAMING: Keep session alive until generator exhausts (WebSocket disconnects)
+                # DO NOT cancel query_task when response_task completes - that's just one turn ending!
+                try:
+                    await query_task
+                    logger.info("📭 Message generator exhausted (WebSocket closed)")
+                except asyncio.CancelledError:
+                    logger.info("🛑 Query task cancelled")
+                except Exception as e:
+                    logger.error(f"❌ Query task error: {e}", exc_info=True)
+
+                # Now wait for any remaining responses
+                if not response_task.done():
+                    logger.info("⏳ Waiting for remaining responses...")
+                    try:
+                        await asyncio.wait_for(response_task, timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.info("⏰ Response task timeout, cancelling")
+                        response_task.cancel()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.error(f"❌ Response task error: {e}")
+
+            finally:
+                # Cleanup
+                if not monitor_task.done():
+                    monitor_task.cancel()
+                    try:
+                        await monitor_task
+                    except asyncio.CancelledError:
+                        pass
+
+        logger.info("✅ Streaming session ended")
+
+    except asyncio.CancelledError:
+        logger.info("🤖 Streaming agent: cancelled")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Streaming agent error: {e}", exc_info=True)
+        try:
+            await output_queue.put({
+                "type": "error",
+                "error": sanitize_error_message(e, "in streaming agent")
+            })
+        except Exception:
+            pass
+        raise
+    finally:
+        if context["session_id"] and context["session_id"] in stop_events:
+            del stop_events[context["session_id"]]
+        logger.info("🧹 Streaming agent finished")
 
 
 async def agent_task(
@@ -472,7 +1084,9 @@ async def agent_task(
     try:
         while True:
             # Get message from agent queue
+            logger.info("⏳ Agent task: Waiting for next message from queue...")
             data = await agent_queue.get()
+            logger.info(f"📨 Agent task: Got message from queue: {data.get('prompt', '')[:30] if data else 'None'}...")
 
             # Check for end of messages
             if data is None:
@@ -667,157 +1281,198 @@ async def agent_task(
                 # Accumulate assistant text for saving to DB
                 assistant_text_buffer = []
                 user_message_saved = False  # Track if we've saved the user message
-                async for message in client.receive_response():
-                    # Check for interrupt (stop event)
+                interrupted = False  # Flag to track if interrupted
 
-                    logger.info(f"Message: {message}")
+                # Concurrent interrupt monitor - runs alongside receive_response
+                # This allows interrupts to work even when blocked waiting for API/tool responses
+                async def interrupt_monitor():
+                    nonlocal interrupted
+                    if not session_id or session_id not in stop_events:
+                        return
 
-                    if (
-                        session_id
-                        and stop_events.get(session_id)
-                        and stop_events[session_id].is_set()
-                    ):
-                        logger.info(
-                            f"🛑 Agent task: Stop event detected for session: {session_id}"
-                        )
+                    stop_event = stop_events[session_id]
+                    while not interrupted:
+                        # Wait for stop event with short polling interval
                         try:
-                            await client.interrupt()
-                            stop_events[session_id].clear()
-                            await output_queue.put(
-                                {"type": "interrupted", "session_id": session_id}
+                            # Check every 100ms for responsiveness
+                            await asyncio.wait_for(
+                                asyncio.shield(stop_event.wait()),
+                                timeout=0.1
                             )
-                            logger.info("✅ Agent interrupted successfully")
-                            break
-                        except Exception as e:
-                            logger.error(f"❌ Error interrupting: {e}", exc_info=True)
+                            # Stop event was set
+                            if stop_event.is_set():
+                                logger.info(f"🛑 Interrupt monitor: Stop event detected for session: {session_id}")
+                                try:
+                                    await client.interrupt()
+                                    interrupted = True
+                                    stop_event.clear()
+                                    await output_queue.put(
+                                        {"type": "interrupted", "session_id": session_id}
+                                    )
+                                    logger.info("✅ Agent interrupted by monitor")
+                                except Exception as e:
+                                    logger.error(f"❌ Error in interrupt monitor: {e}", exc_info=True)
+                                return
+                        except asyncio.TimeoutError:
+                            # Timeout is expected - continue polling
+                            continue
+                        except asyncio.CancelledError:
+                            return
 
+                # Start interrupt monitor as concurrent task
+                monitor_task = asyncio.create_task(interrupt_monitor(), name="interrupt_monitor")
 
+                try:
+                    async for message in client.receive_response():
+                        # Check if we were interrupted - SDK will stop generating after interrupt()
+                        # Don't use break as it can cause asyncio cleanup issues
+                        if interrupted:
+                            logger.info("🛑 Receive loop - interrupted, waiting for SDK to finish")
+                            continue  # Let SDK complete naturally after interrupt
 
-                    # Process message normally
-                    logger.debug(f"Received message: {message}")
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, ThinkingBlock):
-                                await output_queue.put(
-                                    {"type": "thinking", "content": block.thinking}
-                                )
-                            elif isinstance(block, TextBlock):
-                                await output_queue.put(
-                                    {"type": "text", "content": block.text}
-                                )
-                                # Accumulate text for saving to DB
-                                assistant_text_buffer.append(block.text)
-                            elif isinstance(block, ToolResultBlock):
-                                await output_queue.put(
-                                    {
+                        logger.info(f"Message: {message}")
+
+                        # Process message normally
+                        logger.debug(f"Received message: {message}")
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, ThinkingBlock):
+                                    await output_queue.put(
+                                        {"type": "thinking", "content": block.thinking}
+                                    )
+                                elif isinstance(block, TextBlock):
+                                    await output_queue.put(
+                                        {"type": "text", "content": block.text}
+                                    )
+                                    # Accumulate text for saving to DB
+                                    assistant_text_buffer.append(block.text)
+                                elif isinstance(block, ToolResultBlock):
+                                    await output_queue.put(
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": block.tool_use_id,
+                                            "content": block.content,
+                                            "is_error": block.is_error,
+                                        }
+                                    )
+                                elif isinstance(block, ToolUseBlock):
+                                    # Don't send tool_use to frontend - permission_request already shows tool info
+                                    # This avoids duplicate display of the same tool call
+                                    logger.info(f"🔧 Tool use: {block.name}({block.id})")
+
+                                    # Special handling for TodoWrite - send todo_update event
+                                    if block.name == "TodoWrite":
+                                        try:
+                                            todos = block.input.get("todos", [])
+                                            logger.info(f"📝 Todo update detected: {len(todos)} tasks")
+                                            await output_queue.put({
+                                                "type": "todo_update",
+                                                "todos": todos
+                                            })
+                                        except Exception as e:
+                                            logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
+
+                        # Handle UserMessage (tool results from SDK)
+                        # Send to frontend so users can see what agent is executing
+                        if isinstance(message, UserMessage):
+                            logger.info(f"UserMessage received with {len(message.content)} blocks")
+                            for block in message.content:
+                                if isinstance(block, ToolResultBlock):
+                                    # Send tool execution result to frontend
+                                    await output_queue.put({
                                         "type": "tool_result",
                                         "tool_use_id": block.tool_use_id,
-                                        "content": block.content,
+                                        "content": block.content if isinstance(block.content, str) else str(block.content),
                                         "is_error": block.is_error,
-                                    }
-                                )
-                            elif isinstance(block, ToolUseBlock):
-                                # Don't send tool_use to frontend - permission_request already shows tool info
-                                # This avoids duplicate display of the same tool call
-                                logger.info(f"🔧 Tool use: {block.name}({block.id})")
+                                    })
+                                    logger.debug(f"Sent tool result to frontend: {block.tool_use_id}")
 
-                                # Special handling for TodoWrite - send todo_update event
-                                if block.name == "TodoWrite":
-                                    try:
-                                        todos = block.input.get("todos", [])
-                                        logger.info(f"📝 Todo update detected: {len(todos)} tasks")
-                                        await output_queue.put({
-                                            "type": "todo_update",
-                                            "todos": todos
-                                        })
-                                    except Exception as e:
-                                        logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
+                        if isinstance(message, SystemMessage):
+                            if isinstance(message.data, dict):
+                                if message.data.get("subtype") == "init":
+                                    # Claude SDK returns its conversation session_id
+                                    # This is DIFFERENT from Zero-Trust session_id!
+                                    # - session_id: Zero-Trust WebSocket session (for security)
+                                    # - claude_session_id: Claude conversation (for AI context)
+                                    claude_session_id = message.data.get("session_id")
 
-                    # Handle UserMessage (tool results from SDK)
-                    # Send to frontend so users can see what agent is executing
-                    if isinstance(message, UserMessage):
-                        logger.info(f"UserMessage received with {len(message.content)} blocks")
-                        for block in message.content:
-                            if isinstance(block, ToolResultBlock):
-                                # Send tool execution result to frontend
-                                await output_queue.put({
-                                    "type": "tool_result",
-                                    "tool_use_id": block.tool_use_id,
-                                    "content": block.content if isinstance(block.content, str) else str(block.content),
-                                    "is_error": block.is_error,
-                                })
-                                logger.debug(f"Sent tool result to frontend: {block.tool_use_id}")
+                                    # Update current_conversation_id for resume
+                                    if claude_session_id:
+                                        current_conversation_id = claude_session_id
+                                        logger.info(f"💬 Claude conversation started: {claude_session_id}")
 
-                    if isinstance(message, SystemMessage):
-                        if isinstance(message.data, dict):
-                            if message.data.get("subtype") == "init":
-                                # Claude SDK returns its conversation session_id
-                                # This is DIFFERENT from Zero-Trust session_id!
-                                # - session_id: Zero-Trust WebSocket session (for security)
-                                # - claude_session_id: Claude conversation (for AI context)
-                                claude_session_id = message.data.get("session_id")
+                                        # Save conversation to database for history/resume
+                                        # Only save if it's a new conversation (not resuming)
+                                        logger.info(f"📝 Save conversation check: user_id={current_user_id}, first_prompt={current_first_prompt[:30] if current_first_prompt else None}..., is_resuming={is_resuming}")
+                                        if current_user_id and current_first_prompt and not is_resuming:
+                                            await save_conversation(
+                                                user_id=current_user_id,
+                                                conversation_id=claude_session_id,
+                                                first_message=current_first_prompt,
+                                                model="sonnet",
+                                                workspace_path=current_workspace,
+                                                metadata={
+                                                    "org_id": current_org_id,
+                                                    "project_id": current_project_id
+                                                }
+                                            )
+                                        elif is_resuming:
+                                            # Update activity for resumed conversation
+                                            await update_conversation_activity(claude_session_id)
 
-                                # Update current_conversation_id for resume
-                                if claude_session_id:
-                                    current_conversation_id = claude_session_id
-                                    logger.info(f"💬 Claude conversation started: {claude_session_id}")
+                                        # Save user message to DB (only once per query)
+                                        # Use data["prompt"] to save current message, not just first
+                                        user_prompt = data.get("prompt", "")
+                                        if not user_message_saved and user_prompt:
+                                            await save_message(
+                                                conversation_id=claude_session_id,
+                                                role="user",
+                                                content=user_prompt,
+                                                message_type="text"
+                                            )
+                                            user_message_saved = True
+                                            logger.info(f"💾 Saved user message for conversation {claude_session_id}")
 
-                                    # Save conversation to database for history/resume
-                                    # Only save if it's a new conversation (not resuming)
-                                    logger.info(f"📝 Save conversation check: user_id={current_user_id}, first_prompt={current_first_prompt[:30] if current_first_prompt else None}..., is_resuming={is_resuming}")
-                                    if current_user_id and current_first_prompt and not is_resuming:
-                                        await save_conversation(
-                                            user_id=current_user_id,
-                                            conversation_id=claude_session_id,
-                                            first_message=current_first_prompt,
-                                            model="sonnet",
-                                            workspace_path=current_workspace,
-                                            metadata={
-                                                "org_id": current_org_id,
-                                                "project_id": current_project_id
-                                            }
-                                        )
-                                    elif is_resuming:
-                                        # Update activity for resumed conversation
-                                        await update_conversation_activity(claude_session_id)
+                                    # Send to client so they can save for resume
+                                    # Client should save conversation_id and send it back in next messages
+                                    await output_queue.put({
+                                        "type": "session_init",
+                                        "session_id": session_id,  # Zero-Trust session (unchanged)
+                                        "conversation_id": claude_session_id,  # Claude conversation (NEW!)
+                                    })
 
-                                    # Save user message to DB (only once per query)
-                                    # Use data["prompt"] to save current message, not just first
-                                    user_prompt = data.get("prompt", "")
-                                    if not user_message_saved and user_prompt:
-                                        await save_message(
-                                            conversation_id=claude_session_id,
-                                            role="user",
-                                            content=user_prompt,
-                                            message_type="text"
-                                        )
-                                        user_message_saved = True
-                                        logger.info(f"💾 Saved user message for conversation {claude_session_id}")
-
-                                # Send to client so they can save for resume
-                                # Client should save conversation_id and send it back in next messages
-                                await output_queue.put({
-                                    "type": "session_init",
-                                    "session_id": session_id,  # Zero-Trust session (unchanged)
-                                    "conversation_id": claude_session_id,  # Claude conversation (NEW!)
-                                })
-
-                    if isinstance(message, ResultMessage):
-                        await output_queue.put(
-                            {"type": message.subtype, "result": message.result}
-                        )
-
-                        # Save assistant message to DB when response is complete
-                        if current_conversation_id and assistant_text_buffer:
-                            assistant_content = "".join(assistant_text_buffer)
-                            await save_message(
-                                conversation_id=current_conversation_id,
-                                role="assistant",
-                                content=assistant_content,
-                                message_type="text"
+                        if isinstance(message, ResultMessage):
+                            await output_queue.put(
+                                {"type": message.subtype, "result": message.result}
                             )
-                            logger.info(f"💾 Saved assistant message ({len(assistant_content)} chars) for conversation {current_conversation_id}")
 
+                            # Save assistant message to DB when response is complete
+                            if current_conversation_id and assistant_text_buffer:
+                                assistant_content = "".join(assistant_text_buffer)
+                                await save_message(
+                                    conversation_id=current_conversation_id,
+                                    role="assistant",
+                                    content=assistant_content,
+                                    message_type="text"
+                                )
+                                logger.info(f"💾 Saved assistant message ({len(assistant_content)} chars) for conversation {current_conversation_id}")
+
+                    # Send complete signal to frontend (resets isSending state)
+                    await output_queue.put({"type": "complete"})
+                    logger.info("✅ Response complete")
+
+                finally:
+                    # Cancel interrupt monitor when receive loop finishes
+                    if not monitor_task.done():
+                        monitor_task.cancel()
+                        try:
+                            await monitor_task
+                        except asyncio.CancelledError:
+                            pass
+                    logger.info("🧹 Interrupt monitor stopped")
+
+            # Log when async with block exits - this is where loop should continue
+            logger.info("🔄 Claude client closed, ready for next message")
 
     except asyncio.CancelledError:
         logger.info("🤖 Agent task: Cancelled")
@@ -839,1731 +1494,7 @@ async def agent_task(
         logger.info("🧹 Agent task finished")
 
 
-@app.post("/api/sync-bucket")
-async def sync_bucket(request: Request):
-    """
-    Sync all files (MCP config + skills) from bucket to workspace.
-
-    Flow:
-    1. Sync all regular files from bucket (.mcp.json, .claude/skills/, etc.)
-    2. Unzip ONLY installed plugins from marketplace ZIPs
-
-    This endpoint should be called by frontend when user opens AI agent page,
-    BEFORE opening WebSocket connection.
-
-    Request body: {"auth_token": "Bearer ..."}
-
-    Returns:
-        {
-            "success": bool,
-            "skipped": bool,
-            "message": str,
-            "files_synced": int,
-            "plugins_unzipped": int
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token, unzip_installed_plugins
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            logger.warning("⚠️  No auth token provided for bucket sync")
-            return {
-                "success": False,
-                "skipped": False,
-                "message": "No auth token provided",
-            }
-
-        logger.info("🔄 Starting bucket sync...")
-
-        # Step 1: Sync all from bucket (MCP config + skills)
-        sync_result = await sync_all_from_bucket(auth_token)
-
-        if not sync_result["success"]:
-            return sync_result
-
-        # Log sync status
-        if sync_result.get("skipped"):
-            logger.info("⏭️  Bucket sync skipped (unchanged)")
-        else:
-            logger.info(f"✅ Bucket synced: {sync_result['message']}")
-
-        # Step 2: ALWAYS unzip installed plugins (even if sync skipped)
-        # This ensures plugins are extracted when user installs new ones
-        user_id = extract_user_id_from_token(auth_token)
-        if user_id:
-            logger.info(f"📦 Unzipping installed plugins for user: {user_id}")
-            unzip_result = await unzip_installed_plugins(user_id)
-
-            if unzip_result["success"]:
-                logger.info(f"✅ Unzipped {unzip_result['unzipped_count']} plugins")
-
-                # Build message based on sync status
-                if sync_result.get("skipped"):
-                    message = f"Sync skipped (unchanged), unzipped {unzip_result['unzipped_count']} plugins"
-                else:
-                    message = f"Synced {sync_result.get('files_synced', 0)} files, unzipped {unzip_result['unzipped_count']} plugins"
-
-                return {
-                    "success": True,
-                    "skipped": sync_result.get("skipped", False),
-                    "message": message,
-                    "files_synced": sync_result.get("files_synced", 0),
-                    "plugins_unzipped": unzip_result["unzipped_count"],
-                }
-            else:
-                logger.warning(f"⚠️  Failed to unzip plugins: {unzip_result['message']}")
-
-                # Build error message based on sync status
-                if sync_result.get("skipped"):
-                    error_message = f"Sync skipped (unchanged), but failed to unzip plugins: {unzip_result['message']}"
-                else:
-                    error_message = f"Synced {sync_result.get('files_synced', 0)} files, but failed to unzip plugins: {unzip_result['message']}"
-
-                # Don't fail the entire sync if unzip fails
-                return {
-                    "success": True,
-                    "skipped": sync_result.get("skipped", False),
-                    "message": error_message,
-                    "files_synced": sync_result.get("files_synced", 0),
-                    "plugins_unzipped": 0,
-                }
-        else:
-            logger.warning("⚠️  Could not extract user_id from token for plugin unzip")
-
-        return sync_result
-
-    except Exception as e:
-        return {
-            "success": False,
-            "skipped": False,
-            "message": sanitize_error_message(e, "syncing bucket"),
-        }
-
-
-@app.post("/api/sync-mcp-config")
-async def sync_mcp_config(request: Request):
-    """
-    Event-driven sync endpoint - called by frontend after successful save.
-
-    This endpoint:
-    1. Extracts user_id from auth token
-    2. Downloads latest .mcp.json from Supabase Storage
-    3. Updates in-memory cache
-
-    Request body: {"auth_token": "Bearer ..."}
-
-    Returns:
-        {"success": bool, "message": str, "servers_count": int}
-    """
-    try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            logger.warning("⚠️  No auth token provided for sync")
-            return {"success": False, "message": "No auth token provided"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-
-        if not user_id:
-            logger.warning("⚠️  Could not extract user_id from token")
-            return {"success": False, "message": "Invalid auth token"}
-
-        logger.info(f"🔄 Syncing MCP config for user: {user_id}")
-
-        # Download fresh config from Supabase (pass user_id directly for efficiency)
-        user_mcp_servers = await get_user_mcp_servers(user_id=user_id)
-
-        if user_mcp_servers:
-            # Update cache
-            user_mcp_cache[user_id] = user_mcp_servers
-            logger.info(f"✅ Config synced and cached for user: {user_id}")
-            logger.info(f"   Servers: {list(user_mcp_servers.keys())}")
-
-            return {
-                "success": True,
-                "message": "MCP config synced successfully",
-                "servers_count": len(user_mcp_servers),
-                "servers": list(user_mcp_servers.keys()),
-            }
-        else:
-            logger.info(f"ℹ️  No MCP config found for user: {user_id}")
-            # Clear cache if no config found
-            if user_id in user_mcp_cache:
-                del user_mcp_cache[user_id]
-
-            return {
-                "success": True,
-                "message": "No MCP config found - cache cleared",
-                "servers_count": 0,
-                "servers": [],
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "message": sanitize_error_message(e, "syncing MCP config")
-        }
-
-
-@app.get("/api/mcp-servers")
-async def get_mcp_servers(request: Request):
-    """
-    Get all MCP servers for current user from PostgreSQL.
-
-    Query params:
-        auth_token: Bearer token (or from Authorization header)
-
-    Returns:
-        {
-            "success": bool,
-            "servers": [
-                {
-                    "id": "uuid",
-                    "server_name": "context7",
-                    "command": "npx",
-                    "args": ["-y", "@uptudev/mcp-context7"],
-                    "env": {},
-                    "status": "active"
-                }
-            ]
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Query from PostgreSQL using raw SQL
-        servers = execute_query(
-            """
-            SELECT * FROM user_mcp_servers
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            """,
-            (user_id,),
-            fetch="all"
-        )
-
-        return {"success": True, "servers": servers or []}
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting MCP servers")
-        }
-
-
-@app.post("/api/allowed-tools")
-async def add_allowed_tool(request: Request):
-    """
-    Add a tool to the user's allowed tools list.
-    
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "tool_name": "tool_name"
-        }
-        
-    Returns:
-        {"success": bool, "message": str}
-    """
-    try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        tool_name = body.get("tool_name")
-        
-        if not auth_token:
-            return {"success": False, "message": "Missing auth_token"}
-            
-        if not tool_name:
-            return {"success": False, "message": "Missing tool_name"}
-            
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        
-        if not user_id:
-            return {"success": False, "message": "Invalid auth_token"}
-            
-        success = await add_user_allowed_tool(user_id, tool_name)
-        
-        if success:
-            return {"success": True, "message": f"Tool {tool_name} added to allowed list"}
-        else:
-            return {"success": False, "message": "Failed to add tool to allowed list"}
-            
-    except Exception as e:
-        return {"success": False, "message": sanitize_error_message(e, "adding allowed tool")}
-
-
-@app.get("/api/allowed-tools")
-async def get_allowed_tools(request: Request):
-    """
-    Get list of allowed tools for the user.
-    
-    Query params:
-        auth_token: Bearer token
-        
-    Returns:
-        {"success": bool, "tools": [str]}
-    """
-    try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-        
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-            
-        user_id = extract_user_id_from_token(auth_token)
-        
-        if not user_id:
-            return {"success": False, "error": "Invalid auth_token"}
-            
-        allowed_tools = await get_user_allowed_tools(user_id)
-        return {"success": True, "tools": allowed_tools}
-        
-    except Exception as e:
-        return {"success": False, "error": sanitize_error_message(e, "getting allowed tools")}
-
-
-@app.delete("/api/allowed-tools")
-async def remove_allowed_tool(request: Request):
-    """
-    Remove a tool from the user's allowed tools list.
-    
-    Query params:
-        auth_token: Bearer token
-        tool_name: Name of tool to remove
-        
-    Returns:
-        {"success": bool, "message": str}
-    """
-    try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-        tool_name = request.query_params.get("tool_name")
-        
-        if not auth_token:
-            return {"success": False, "message": "Missing auth_token"}
-            
-        if not tool_name:
-            return {"success": False, "message": "Missing tool_name"}
-            
-        user_id = extract_user_id_from_token(auth_token)
-        
-        if not user_id:
-            return {"success": False, "message": "Invalid auth_token"}
-            
-        success = await delete_user_allowed_tool(user_id, tool_name)
-        
-        if success:
-            return {"success": True, "message": f"Tool {tool_name} removed from allowed list"}
-        else:
-            return {"success": False, "message": "Failed to remove tool from allowed list"}
-            
-    except Exception as e:
-        return {"success": False, "message": sanitize_error_message(e, "removing allowed tool")}
-
-
-@app.post("/api/mcp-servers")
-async def create_mcp_server(request: Request):
-    """
-    Create or update MCP server configuration.
-
-    Supports three server types:
-    1. stdio (command-based): Requires command field
-    2. sse (server-sent events): Requires url field
-    3. http (HTTP API): Requires url field
-
-    Request body (stdio):
-        {
-            "auth_token": "Bearer ...",
-            "server_name": "context7",
-            "server_type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@uptudev/mcp-context7"],
-            "env": {"API_KEY": "..."}
-        }
-
-    Request body (sse/http):
-        {
-            "auth_token": "Bearer ...",
-            "server_name": "remote-api",
-            "server_type": "sse",  # or "http"
-            "url": "https://api.example.com/mcp/sse",
-            "headers": {"Authorization": "Bearer ${API_TOKEN}"}
-        }
-
-    Returns:
-        {"success": bool, "server": {...}}
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        server_name = body.get("server_name")
-        server_type = body.get(
-            "server_type", "stdio"
-        )  # Default to stdio for backward compatibility
-
-        # Basic validation
-        if not auth_token or not server_name:
-            return {
-                "success": False,
-                "error": "Missing required fields: auth_token, server_name",
-            }
-
-        # Validate server_type
-        if server_type not in ["stdio", "sse", "http"]:
-            return {
-                "success": False,
-                "error": f"Invalid server_type: {server_type}. Must be 'stdio', 'sse', or 'http'",
-            }
-
-        # Validate based on server_type
-        if server_type == "stdio":
-            command = body.get("command")
-            if not command:
-                return {
-                    "success": False,
-                    "error": "Missing required field for stdio server: command",
-                }
-        else:  # sse or http
-            url = body.get("url")
-            if not url:
-                return {
-                    "success": False,
-                    "error": f"Missing required field for {server_type} server: url",
-                }
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Build server record based on type
-        server_record = {
-            "user_id": user_id,
-            "server_name": server_name,
-            "server_type": server_type,
-            "status": "active",
-        }
-
-        # Add type-specific fields
-        if server_type == "stdio":
-            server_record["command"] = body.get("command")
-            server_record["args"] = body.get("args", [])
-            server_record["env"] = body.get("env", {})
-        else:  # sse or http
-            server_record["url"] = body.get("url")
-            server_record["headers"] = body.get("headers", {})
-
-        # Upsert to PostgreSQL using raw SQL
-        execute_query(
-            """
-            INSERT INTO user_mcp_servers (user_id, server_name, server_type, status, command, args, env, url, headers)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (user_id, server_name) DO UPDATE SET
-                server_type = EXCLUDED.server_type,
-                status = EXCLUDED.status,
-                command = EXCLUDED.command,
-                args = EXCLUDED.args,
-                env = EXCLUDED.env,
-                url = EXCLUDED.url,
-                headers = EXCLUDED.headers,
-                updated_at = NOW()
-            """,
-            (
-                user_id,
-                server_name,
-                server_type,
-                "active",
-                server_record.get("command"),
-                json.dumps(server_record.get("args", [])),
-                json.dumps(server_record.get("env", {})),
-                server_record.get("url"),
-                json.dumps(server_record.get("headers", {})),
-            ),
-            fetch="none"
-        )
-
-        logger.info(
-            f"✅ Saved MCP server ({server_type}): {server_name} for user {user_id}"
-        )
-
-        # Sync to local .mcp.json file
-        sync_result = await sync_mcp_config_to_local(user_id)
-        if sync_result["success"]:
-            logger.info(f"✅ Synced MCP config to local file: {sync_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to sync MCP config to local: {sync_result['message']}")
-
-        return {
-            "success": True,
-            "server": server_record,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "creating MCP server")
-        }
-
-
-@app.delete("/api/mcp-servers/{server_name}")
-async def delete_mcp_server(server_name: str, request: Request):
-    """
-    Delete MCP server configuration.
-
-    Path params:
-        server_name: Name of server to delete
-
-    Query params:
-        auth_token: Bearer token
-
-    Returns:
-        {"success": bool, "message": str}
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Delete from PostgreSQL using raw SQL
-        execute_query(
-            "DELETE FROM user_mcp_servers WHERE user_id = %s AND server_name = %s",
-            (user_id, server_name),
-            fetch="none"
-        )
-
-        logger.info(f"✅ Deleted MCP server: {server_name} for user {user_id}")
-
-        # Sync to local .mcp.json file
-        sync_result = await sync_mcp_config_to_local(user_id)
-        if sync_result["success"]:
-            logger.info(f"✅ Synced MCP config to local file: {sync_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to sync MCP config to local: {sync_result['message']}")
-
-        return {
-            "success": True,
-            "message": f"Server {server_name} deleted successfully",
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting MCP server")
-        }
-
-
-@app.get("/api/memory")
-async def get_memory(request: Request):
-    """
-    Get CLAUDE.md content (memory/context) for current user from PostgreSQL.
-
-    Query params:
-        auth_token: Bearer token (or from Authorization header)
-        scope: Memory scope ('local' or 'user', default: 'local')
-
-    Returns:
-        {
-            "success": bool,
-            "content": str,
-            "updated_at": str
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-        scope = request.query_params.get("scope", "local")  # default to 'local'
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Query from PostgreSQL using raw SQL
-        result = execute_query(
-            "SELECT * FROM claude_memory WHERE user_id = %s AND scope = %s",
-            (user_id, scope),
-            fetch="one"
-        )
-
-        if result:
-            return {
-                "success": True,
-                "content": result.get("content", ""),
-                "updated_at": str(result.get("updated_at")) if result.get("updated_at") else None,
-            }
-        else:
-            # No memory yet, return empty
-            return {"success": True, "content": "", "updated_at": None}
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting memory")
-        }
-
-
-@app.post("/api/memory")
-async def update_memory(request: Request):
-    """
-    Create or update CLAUDE.md content (memory/context).
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "content": "## My Context\\n\\n...",
-            "scope": "local" or "user" (optional, default: "local")
-        }
-
-    Returns:
-        {
-            "success": bool,
-            "content": str,
-            "updated_at": str
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        content = body.get("content", "")
-        scope = body.get("scope", "local")  # default to 'local'
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Upsert to PostgreSQL using raw SQL
-        execute_query(
-            """
-            INSERT INTO claude_memory (user_id, content, scope)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, scope) DO UPDATE SET
-                content = EXCLUDED.content,
-                updated_at = NOW()
-            """,
-            (user_id, content, scope),
-            fetch="none"
-        )
-
-        logger.info(f"✅ Memory updated for user {user_id} ({len(content)} chars)")
-
-        # Sync to CLAUDE.md file (path depends on scope)
-        sync_result = await sync_memory_to_workspace(user_id, scope)
-        if sync_result["success"]:
-            logger.info(f"✅ Synced memory to file: {sync_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to sync memory: {sync_result['message']}")
-
-        return {
-            "success": True,
-            "content": content,
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "updating memory")
-        }
-
-
-@app.delete("/api/memory")
-async def delete_memory(request: Request):
-    """
-    Delete CLAUDE.md content (memory/context).
-
-    Query params:
-        auth_token: Bearer token
-        scope: Memory scope ('local' or 'user', default: 'local')
-
-    Returns:
-        {"success": bool, "message": str}
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-        scope = request.query_params.get("scope", "local")  # default to 'local'
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Delete from PostgreSQL using raw SQL
-        execute_query(
-            "DELETE FROM claude_memory WHERE user_id = %s AND scope = %s",
-            (user_id, scope),
-            fetch="none"
-        )
-
-        logger.info(f"✅ Memory deleted for user {user_id}")
-
-        # Sync to CLAUDE.md file (will create empty file or delete it)
-        sync_result = await sync_memory_to_workspace(user_id, scope)
-        if sync_result["success"]:
-            logger.info(f"✅ Synced memory to file: {sync_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to sync memory: {sync_result['message']}")
-
-        return {"success": True, "message": "Memory deleted successfully"}
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting memory")
-        }
-
-
-@app.post("/api/sync-skills")
-async def sync_skills(request: Request):
-    """
-    Event-driven sync endpoint - called by frontend after successful skill upload.
-
-    This endpoint:
-    1. Extracts user_id from auth token
-    2. Lists all skill files in Supabase Storage
-    3. Downloads each skill file
-    4. Extracts/copies to .claude/skills directory in user's workspace
-
-    Request body: {"auth_token": "Bearer ..."}
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "synced_count": int,
-            "failed_count": int,
-            "skills": ["skill1.skill", "skill2.skill"],
-            "errors": []
-        }
-    """
-    try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            logger.warning("⚠️  No auth token provided for skill sync")
-            return {
-                "success": False,
-                "message": "No auth token provided",
-                "synced_count": 0,
-                "failed_count": 0,
-                "skills": [],
-                "errors": ["No auth token provided"],
-            }
-
-        logger.info("🔄 Starting skill sync...")
-
-        # Sync all skills to workspace
-        result = await sync_user_skills(auth_token)
-
-        if result["success"]:
-            logger.info(
-                f"✅ Skills synced successfully: "
-                f"{result['synced_count']} synced, {result['failed_count']} failed"
-            )
-        else:
-            logger.warning(
-                f"⚠️  Skill sync completed with errors: "
-                f"{result['synced_count']} synced, {result['failed_count']} failed"
-            )
-
-        return {
-            "success": result["success"],
-            "message": result.get("message", "Skill sync completed"),
-            "synced_count": result["synced_count"],
-            "failed_count": result["failed_count"],
-            "skills": result["skills"],
-            "errors": result.get("errors", []),
-        }
-
-    except Exception as e:
-        error_message = sanitize_error_message(e, "syncing skills")
-        return {
-            "success": False,
-            "message": error_message,
-            "synced_count": 0,
-            "failed_count": 0,
-            "skills": [],
-            "errors": [error_message],
-        }
-
-
-@app.post("/api/marketplace/install-plugin")
-async def install_plugin_from_marketplace(request: Request):
-    """
-    Mark a plugin as installed (files already in S3 from marketplace ZIP).
-
-    This endpoint ONLY updates the database to mark a plugin as installed.
-    The actual plugin files are already in S3 (uploaded when marketplace was added).
-    When user opens AI agent, sync_bucket will unzip only installed plugins.
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "marketplace_name": "anthropic-agent-skills",
-            "plugin_name": "internal-comms",
-            "version": "1.0.0"
-        }
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "plugin": {
-                "id": "uuid",
-                "plugin_name": "internal-comms",
-                "marketplace_name": "anthropic-agent-skills",
-                "status": "active"
-            }
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        marketplace_name = body.get("marketplace_name")
-        plugin_name = body.get("plugin_name")
-        version = body.get("version", "1.0.0")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not all([marketplace_name, plugin_name]):
-            return {
-                "success": False,
-                "error": "Missing required fields: marketplace_name, plugin_name",
-            }
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        logger.info(
-            f"📦 User {user_id}: Installing plugin {plugin_name} from {marketplace_name}"
-        )
-
-        # Get plugin source path from PostgreSQL marketplace metadata
-        # (marketplace.json might not be unzipped yet from bucket)
-        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{plugin_name}"  # Default fallback
-
-        def get_marketplace_metadata_sync():
-            """Get marketplace metadata from PostgreSQL using raw SQL"""
-            try:
-                result = execute_query(
-                    "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
-                    (user_id, marketplace_name),
-                    fetch="one"
-                )
-                return result
-            except Exception as e:
-                logger.error(f"Failed to fetch marketplace from PostgreSQL: {e}")
-            return None
-
-        marketplace_record = await asyncio.get_event_loop().run_in_executor(
-            None, get_marketplace_metadata_sync
-        )
-
-        if not marketplace_record:
-            return {
-                "success": False,
-                "error": f"Marketplace '{marketplace_name}' not found in database",
-            }
-
-        # Verify ZIP file exists (should be uploaded when marketplace was added)
-        if not marketplace_record.get("zip_path"):
-            logger.warning(f"⚠️  No ZIP file for marketplace '{marketplace_name}'")
-            return {
-                "success": False,
-                "error": "Marketplace ZIP not found. Please re-add the marketplace to download plugin files.",
-            }
-
-        if marketplace_record and marketplace_record.get("plugins"):
-            # Find plugin in marketplace metadata (stored as JSONB in PostgreSQL)
-            for plugin_def in marketplace_record["plugins"]:
-                if plugin_def.get("name") == plugin_name:
-                    # Install path = marketplace + plugin.source
-                    source_path = plugin_def.get("source", "./")
-                    logger.info(
-                        f"✅ Found plugin '{plugin_name}' in PostgreSQL with source: {source_path}"
-                    )
-
-                    # Clean source path: "./plugins/code-documentation" → "plugins/code-documentation"
-                    source_path_clean = source_path.replace("./", "")
-
-                    if source_path_clean:
-                        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{source_path_clean}"
-                    else:
-                        # Source is "./" means plugin root
-                        install_path = (
-                            f".claude/plugins/marketplaces/{marketplace_name}"
-                        )
-
-                    logger.info(f"📁 Calculated install path: {install_path}")
-                    break
-            else:
-                logger.warning(
-                    f"⚠️  Plugin '{plugin_name}' not found in marketplace metadata"
-                )
-        else:
-            logger.warning(
-                f"⚠️  No marketplace metadata found in PostgreSQL for '{marketplace_name}'"
-            )
-
-        # Update database with correct install_path
-        def add_to_db_sync():
-            plugin_record = {
-                "user_id": user_id,
-                "plugin_name": plugin_name,
-                "marketplace_name": marketplace_name,
-                "version": version,
-                "install_path": install_path,
-                "status": "active",
-                "is_local": False,
-            }
-
-            execute_query(
-                """
-                INSERT INTO installed_plugins (user_id, plugin_name, marketplace_name, version, install_path, status, is_local)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, plugin_name, marketplace_name) DO UPDATE SET
-                    version = EXCLUDED.version,
-                    install_path = EXCLUDED.install_path,
-                    status = EXCLUDED.status,
-                    is_local = EXCLUDED.is_local,
-                    updated_at = NOW()
-                """,
-                (user_id, plugin_name, marketplace_name, version, install_path, "active", False),
-                fetch="none"
-            )
-
-            return plugin_record
-
-        plugin_record = await asyncio.get_event_loop().run_in_executor(
-            None, add_to_db_sync
-        )
-        logger.info("✅ Plugin marked as installed in PostgreSQL")
-
-        # Sync plugin to local workspace immediately (unzip from marketplace ZIP)
-        logger.info(f"📦 Unzipping plugin to local workspace for user {user_id}...")
-        unzip_result = await unzip_installed_plugins(user_id)
-
-        if unzip_result["success"]:
-            logger.info(f"✅ Plugin unzipped to local: {unzip_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to unzip plugin: {unzip_result['message']}")
-            # Don't fail the install - plugin is still in database
-
-        return {
-            "success": True,
-            "message": f"Plugin '{plugin_name}' installed successfully",
-            "plugin": plugin_record,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "installing plugin from marketplace")
-        }
-
-
-@app.post("/api/plugins/install")
-async def install_plugin(request: Request):
-    """
-    Install a plugin to user's installed_plugins.json.
-
-    Solves race condition problem when installing multiple plugins concurrently:
-    - Uses per-user lock to serialize access to installed_plugins.json
-    - Ensures atomic read-modify-write operations
-    - No more lost updates from concurrent installs
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "plugin": {
-                "name": "skill-name",
-                "marketplaceName": "anthropic-agent-skills",
-                "version": "1.0.0",
-                "installPath": ".claude/plugins/marketplaces/anthropic-agent-skills/skill-name",
-                "isLocal": false,
-                "gitCommitSha": "abc123"  # optional
-            }
-        }
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "pluginKey": "skill-name@anthropic-agent-skills"
-        }
-    """
-    try:
-        from datetime import datetime
-
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        plugin = body.get("plugin", {})
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not plugin or not plugin.get("name") or not plugin.get("marketplaceName"):
-            return {
-                "success": False,
-                "error": "Missing required plugin fields: name, marketplaceName",
-            }
-
-        # Extract user_id from token
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Get or create lock for this user
-        if user_id not in user_plugin_locks:
-            user_plugin_locks[user_id] = Lock()
-
-        user_lock = user_plugin_locks[user_id]
-
-        logger.info(
-            f"🔒 Acquiring lock for user {user_id} to install plugin: {plugin['name']}"
-        )
-
-        # Acquire lock (serialize access)
-        async with user_lock:
-            logger.info(f"✅ Lock acquired for user {user_id}")
-
-            supabase = get_supabase_client()
-
-            # Path to installed_plugins.json
-            plugins_json_path = ".claude/plugins/installed_plugins.json"
-
-            # Read current installed_plugins.json
-            try:
-                response = supabase.storage.from_(user_id).download(plugins_json_path)
-                current_data = json.loads(response)
-                plugins = current_data.get("plugins", {})
-            except Exception as e:
-                logger.info(f"ℹ️  No installed_plugins.json found, creating new: {e}")
-                plugins = {}
-
-            # Create plugin key: pluginName@marketplaceName
-            plugin_key = f"{plugin['name']}@{plugin['marketplaceName']}"
-            now = datetime.utcnow().isoformat() + "Z"
-
-            # Check if already installed
-            if plugin_key in plugins:
-                logger.info(f"📦 Updating existing plugin: {plugin_key}")
-                # Update existing
-                plugins[plugin_key] = {
-                    **plugins[plugin_key],
-                    "version": plugin.get(
-                        "version", plugins[plugin_key].get("version", "unknown")
-                    ),
-                    "lastUpdated": now,
-                    "installPath": plugin.get(
-                        "installPath", plugins[plugin_key].get("installPath", "")
-                    ),
-                    "gitCommitSha": plugin.get(
-                        "gitCommitSha", plugins[plugin_key].get("gitCommitSha")
-                    ),
-                    "isLocal": plugin.get(
-                        "isLocal", plugins[plugin_key].get("isLocal", False)
-                    ),
-                }
-            else:
-                logger.info(f"📦 Adding new plugin: {plugin_key}")
-                # Add new
-                plugins[plugin_key] = {
-                    "version": plugin.get("version", "unknown"),
-                    "installedAt": now,
-                    "lastUpdated": now,
-                    "installPath": plugin.get(
-                        "installPath",
-                        f".claude/plugins/marketplaces/{plugin['marketplaceName']}/{plugin['name']}",
-                    ),
-                    "isLocal": plugin.get("isLocal", False),
-                }
-
-                if plugin.get("gitCommitSha"):
-                    plugins[plugin_key]["gitCommitSha"] = plugin["gitCommitSha"]
-
-            # Write back to storage
-            updated_data = {"version": 1, "plugins": plugins}
-
-            json_blob = json.dumps(updated_data, indent=2).encode("utf-8")
-
-            supabase.storage.from_(user_id).upload(
-                path=plugins_json_path,
-                file=json_blob,
-                file_options={"content-type": "application/json", "upsert": "true"},
-            )
-
-            logger.info(f"✅ Plugin installed successfully: {plugin_key}")
-
-        logger.info(f"🔓 Lock released for user {user_id}")
-
-        # Sync plugin to local workspace immediately (unzip from marketplace ZIP)
-        logger.info(f"📦 Unzipping plugin to local workspace for user {user_id}...")
-        unzip_result = await unzip_installed_plugins(user_id)
-
-        if unzip_result["success"]:
-            logger.info(f"✅ Plugin unzipped to local: {unzip_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to unzip plugin: {unzip_result['message']}")
-            # Don't fail the install - plugin is still in database
-
-        return {
-            "success": True,
-            "message": f"Plugin {plugin['name']} installed successfully",
-            "pluginKey": plugin_key,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "installing plugin")
-        }
-
-
-@app.post("/api/marketplace/fetch-metadata")
-async def fetch_marketplace_metadata(request: Request):
-    """
-    Fetch marketplace metadata from GitHub API (lightweight, fast!).
-
-    New approach (Option 4: GitHub API + PostgreSQL):
-    - Fetch marketplace.json từ GitHub API (~10-50KB)
-    - Save metadata to PostgreSQL (instant!)
-    - NO ZIP download (save bandwidth & storage)
-    - Download plugin files only when installing (lazy loading)
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "owner": "anthropics",
-            "repo": "skills",
-            "branch": "main",  # optional, defaults to "main"
-            "marketplace_name": "anthropic-agent-skills"  # optional
-        }
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "marketplace": {
-                "id": "uuid",
-                "name": "anthropic-agent-skills",
-                "repository_url": "https://github.com/anthropics/skills",
-                "plugins": [...],
-                "version": "1.0.0"
-            }
-        }
-    """
-    try:
-        import json
-
-        import httpx
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        owner = body.get("owner")
-        repo = body.get("repo")
-        branch = body.get("branch", "main")
-        marketplace_name = body.get("marketplace_name") or f"{owner}-{repo}"
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not owner or not repo:
-            return {"success": False, "error": "Missing required fields: owner, repo"}
-
-        # Extract user_id from token
-        try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(
-                f"📦 User {user_id}: Fetching metadata for {owner}/{repo}@{branch}"
-            )
-        except Exception as e:
-            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
-
-        # Fetch marketplace.json from GitHub API (lightweight!)
-        marketplace_json_url = f"https://api.github.com/repos/{owner}/{repo}/contents/.claude-plugin/marketplace.json?ref={branch}"
-        repository_url = f"https://github.com/{owner}/{repo}"
-
-        logger.info(
-            f"🌐 Fetching marketplace.json from GitHub API: {marketplace_json_url}"
-        )
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                marketplace_json_url,
-                headers={
-                    "Accept": "application/vnd.github.v3+json",
-                    "User-Agent": "SLAR-Marketplace-Client",
-                },
-            )
-
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Failed to fetch marketplace.json: HTTP {response.status_code}",
-                }
-
-            # GitHub API returns base64 encoded content
-            github_response = response.json()
-            import base64
-
-            marketplace_json_content = base64.b64decode(
-                github_response["content"]
-            ).decode("utf-8")
-            marketplace_metadata = json.loads(marketplace_json_content)
-
-        logger.info(
-            f"✅ Fetched marketplace.json ({len(marketplace_json_content)} bytes)"
-        )
-        logger.info(f"   Marketplace: {marketplace_metadata.get('name')}")
-        logger.info(f"   Plugins: {len(marketplace_metadata.get('plugins', []))}")
-
-        # Save marketplace metadata to PostgreSQL (instant, no lag!)
-        logger.info("💾 Saving marketplace metadata to PostgreSQL...")
-
-        def save_to_db_sync():
-            """Save marketplace to PostgreSQL using raw SQL"""
-            marketplace_record = {
-                "user_id": user_id,
-                "name": marketplace_name,
-                "repository_url": repository_url,
-                "branch": branch,
-                "display_name": marketplace_metadata.get("name", marketplace_name),
-                "description": marketplace_metadata.get("description"),
-                "version": marketplace_metadata.get("version", "1.0.0"),
-                "plugins": marketplace_metadata.get("plugins", []),
-                "zip_path": None,  # No ZIP file
-                "zip_size": 0,
-                "status": "active",
-            }
-
-            # Upsert to PostgreSQL using raw SQL
-            execute_query(
-                """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (user_id, name) DO UPDATE SET
-                    repository_url = EXCLUDED.repository_url,
-                    branch = EXCLUDED.branch,
-                    display_name = EXCLUDED.display_name,
-                    description = EXCLUDED.description,
-                    version = EXCLUDED.version,
-                    plugins = EXCLUDED.plugins,
-                    zip_path = EXCLUDED.zip_path,
-                    zip_size = EXCLUDED.zip_size,
-                    status = EXCLUDED.status,
-                    last_synced_at = NOW(),
-                    updated_at = NOW()
-                """,
-                (
-                    user_id, marketplace_name, repository_url, branch,
-                    marketplace_record["display_name"], marketplace_record["description"],
-                    marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    None, 0, "active"
-                ),
-                fetch="none"
-            )
-
-            return marketplace_record
-
-        db_record = await asyncio.get_event_loop().run_in_executor(
-            None, save_to_db_sync
-        )
-        logger.info("✅ Marketplace metadata saved to PostgreSQL")
-
-        # Return marketplace data immediately (no lag!)
-        return {
-            "success": True,
-            "message": f"Marketplace '{marketplace_name}' metadata fetched successfully",
-            "marketplace": db_record,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "fetching marketplace metadata")
-        }
-
-
-@app.post("/api/marketplace/download-repo-zip")
-async def download_repo_zip(request: Request):
-    """
-    Download GitHub repository and save metadata to PostgreSQL + ZIP to S3.
-
-    New approach (Option 3.5):
-    - Metadata → PostgreSQL (instant reads, no lag)
-    - Files → S3 Storage (actual ZIP file)
-    - Returns marketplace data immediately (no need to GET again)
-
-    Solves the 10-15s lag problem by storing metadata in PostgreSQL instead of S3.
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",  # Supabase JWT token
-            "owner": "anthropics",
-            "repo": "skills",
-            "branch": "main",  # optional, defaults to "main"
-            "marketplace_name": "anthropic-agent-skills"  # optional, defaults to repo name
-        }
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "marketplace": {  # Full marketplace data for immediate use
-                "id": "uuid",
-                "name": "anthropic-agent-skills",
-                "repository_url": "https://github.com/anthropics/skills",
-                "plugins": [...],
-                "version": "1.0.0",
-                "zip_path": ".claude/plugins/marketplaces/...",
-                "status": "active"
-            },
-            "error": str  # if success=False
-        }
-    """
-    try:
-        import io
-        import json
-        import zipfile
-
-        import httpx
-        from supabase_storage import extract_user_id_from_token, get_supabase_client
-        from database_util import execute_query
-
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        owner = body.get("owner")
-        repo = body.get("repo")
-        branch = body.get("branch", "main")
-        marketplace_name = body.get("marketplace_name") or repo
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not owner or not repo:
-            return {"success": False, "error": "Missing required fields: owner, repo"}
-
-        # Extract user_id from token
-        try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"📦 User {user_id}: Downloading {owner}/{repo}@{branch}")
-        except Exception as e:
-            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
-
-        # Download ZIP from GitHub
-        zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
-        repository_url = f"https://github.com/{owner}/{repo}"
-
-        logger.info(f"⬇️  Downloading from {zip_url}...")
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(zip_url, follow_redirects=True)
-
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Failed to download ZIP: HTTP {response.status_code}",
-                }
-
-            zip_data = response.content
-
-        zip_size = len(zip_data)
-        logger.info(f"📦 Downloaded {zip_size} bytes ({zip_size / 1024 / 1024:.2f} MB)")
-
-        # Parse marketplace.json from ZIP to get metadata
-        marketplace_metadata = None
-        try:
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
-                # Find marketplace.json in ZIP (usually in .claude-plugin/marketplace.json)
-                marketplace_json_path = None
-                for file_info in zip_ref.filelist:
-                    if file_info.filename.endswith(".claude-plugin/marketplace.json"):
-                        marketplace_json_path = file_info.filename
-                        break
-
-                if marketplace_json_path:
-                    marketplace_json_content = zip_ref.read(marketplace_json_path)
-                    marketplace_metadata = json.loads(marketplace_json_content)
-                    logger.info("✅ Parsed marketplace.json from ZIP")
-                else:
-                    logger.warning("⚠️  No marketplace.json found in ZIP")
-                    # Use default metadata
-                    marketplace_metadata = {
-                        "name": marketplace_name,
-                        "version": "unknown",
-                        "plugins": [],
-                    }
-        except Exception as e:
-            logger.error(f"❌ Failed to parse marketplace.json from ZIP: {e}")
-            marketplace_metadata = {
-                "name": marketplace_name,
-                "version": "unknown",
-                "plugins": [],
-            }
-
-        # Upload ZIP to S3 storage (background, non-blocking)
-        supabase = get_supabase_client()
-        storage_path = (
-            f".claude/plugins/marketplaces/{marketplace_name}/{repo}-{branch}.zip"
-        )
-
-        logger.info(f"⬆️  Uploading ZIP to storage: {storage_path}")
-
-        def upload_zip_sync():
-            """Synchronous upload function for executor"""
-            supabase.storage.from_(user_id).upload(
-                path=storage_path,
-                file=zip_data,
-                file_options={"content-type": "application/zip", "upsert": "true"},
-            )
-
-        await asyncio.get_event_loop().run_in_executor(None, upload_zip_sync)
-        logger.info("✅ ZIP uploaded to storage")
-
-        # Save marketplace metadata to PostgreSQL (instant, no lag!)
-        logger.info("💾 Saving marketplace metadata to PostgreSQL...")
-
-        def save_to_db_sync():
-            """Save marketplace to PostgreSQL using raw SQL"""
-            marketplace_record = {
-                "user_id": user_id,
-                "name": marketplace_name,
-                "repository_url": repository_url,
-                "branch": branch,
-                "display_name": marketplace_metadata.get("name", marketplace_name),
-                "description": marketplace_metadata.get("description"),
-                "version": marketplace_metadata.get("version", "unknown"),
-                "plugins": marketplace_metadata.get("plugins", []),
-                "zip_path": storage_path,
-                "zip_size": zip_size,
-                "status": "active",
-            }
-
-            # Upsert to PostgreSQL using raw SQL
-            execute_query(
-                """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (user_id, name) DO UPDATE SET
-                    repository_url = EXCLUDED.repository_url,
-                    branch = EXCLUDED.branch,
-                    display_name = EXCLUDED.display_name,
-                    description = EXCLUDED.description,
-                    version = EXCLUDED.version,
-                    plugins = EXCLUDED.plugins,
-                    zip_path = EXCLUDED.zip_path,
-                    zip_size = EXCLUDED.zip_size,
-                    status = EXCLUDED.status,
-                    last_synced_at = NOW(),
-                    updated_at = NOW()
-                """,
-                (
-                    user_id, marketplace_name, repository_url, branch,
-                    marketplace_record["display_name"], marketplace_record["description"],
-                    marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    storage_path, zip_size, "active"
-                ),
-                fetch="none"
-            )
-
-            return marketplace_record
-
-        db_record = await asyncio.get_event_loop().run_in_executor(
-            None, save_to_db_sync
-        )
-        logger.info("✅ Marketplace metadata saved to PostgreSQL")
-
-        # Sync marketplace ZIP to local workspace
-        logger.info(f"📦 Downloading marketplace ZIP to local workspace...")
-        sync_result = await sync_marketplace_zip_to_local(user_id, marketplace_name, storage_path)
-
-        if sync_result["success"]:
-            logger.info(f"✅ Marketplace ZIP synced to local: {sync_result['message']}")
-        else:
-            logger.warning(f"⚠️ Failed to sync marketplace ZIP: {sync_result['message']}")
-            # Don't fail the marketplace add - metadata is still in database
-
-        # Return marketplace data immediately (no lag!)
-        return {
-            "success": True,
-            "message": f"Marketplace '{marketplace_name}' downloaded and saved to database",
-            "marketplace": db_record,  # Return data immediately for frontend
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "downloading repository")
-        }
-
-
-@app.delete("/api/marketplace/{marketplace_name}")
-async def delete_marketplace(marketplace_name: str, request: Request):
-    """
-    Delete marketplace and all associated files.
-
-    This endpoint performs immediate cleanup:
-    1. Delete workspace directories
-    2. Delete ZIP files from S3
-    3. Delete installed plugins (cascade)
-    4. Delete marketplace record from PostgreSQL
-
-    Path params:
-        marketplace_name: Name of marketplace to delete
-
-    Query params:
-        auth_token: Bearer token
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "cleaned_items": list  # List of cleaned items
-        }
-    """
-    try:
-        from supabase_storage import extract_user_id_from_token
-        from database_util import execute_query
-
-        # Get auth token from query or header
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        # Extract user_id
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        logger.info(f"🗑️  User {user_id}: Deleting marketplace '{marketplace_name}'")
-
-        # Check if marketplace exists using raw SQL
-        marketplace = execute_query(
-            "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
-            (user_id, marketplace_name),
-            fetch="one"
-        )
-
-        if not marketplace:
-            return {"success": False, "error": "Marketplace not found"}
-
-        # Perform cleanup directly (no PGMQ, no background worker)
-        cleanup_result = await cleanup_marketplace_task(
-            user_id=user_id,
-            marketplace_name=marketplace_name,
-            marketplace_id=marketplace["id"],
-            zip_path=marketplace.get("zip_path")
-        )
-
-        if cleanup_result["success"]:
-            logger.info(f"✅ Marketplace '{marketplace_name}' deleted successfully")
-            return {
-                "success": True,
-                "message": f"Marketplace '{marketplace_name}' deleted successfully",
-                "cleaned_items": cleanup_result.get("cleaned_items", [])
-            }
-        else:
-            logger.error(f"❌ Failed to delete marketplace: {cleanup_result.get('message')}")
-            return {
-                "success": False,
-                "error": cleanup_result.get("message", "Failed to delete marketplace")
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting marketplace"),
-        }
-
-
-# NOTE: installed_plugins and marketplaces endpoints moved to routes_db.py
-
-
-async def cleanup_marketplace_task(
-    user_id: str, marketplace_name: str, marketplace_id: str, zip_path: str = None
-):
-    """
-    Background task to cleanup marketplace files and metadata.
-
-    This function is called by the PGMQ worker to cleanup:
-    1. User workspace directories (.claude/plugins/marketplaces/{marketplace_name})
-    2. S3 storage (ZIP files)
-    3. Installed plugins (cascade delete)
-    4. Marketplace metadata (PostgreSQL)
-
-    Args:
-        user_id: User ID
-        marketplace_name: Marketplace name
-        marketplace_id: Marketplace UUID
-        zip_path: Path to ZIP file in S3
-
-    Returns:
-        dict: {"success": bool, "message": str, "cleaned_files": int}
-    """
-    from pathlib import Path
-
-    from supabase_storage import get_supabase_client, get_user_workspace_path
-    from database_util import execute_query
-
-    logger.info(
-        f"🧹 Starting cleanup for marketplace '{marketplace_name}' (user: {user_id})"
-    )
-
-    try:
-        supabase = get_supabase_client()  # Keep for storage operations only
-        cleaned_items = []
-
-        # Step 1: Cleanup workspace directory
-        try:
-            workspace_path = get_user_workspace_path(user_id)
-            marketplace_dir = (
-                workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
-            )
-
-            if marketplace_dir.exists():
-                import shutil
-
-                shutil.rmtree(marketplace_dir)
-                cleaned_items.append(f"workspace:{marketplace_dir}")
-                logger.info(f"✅ Deleted workspace directory: {marketplace_dir}")
-            else:
-                logger.info(f"ℹ️  Workspace directory not found: {marketplace_dir}")
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to cleanup workspace: {e}")
-
-        # Step 2: Cleanup S3 storage (entire marketplace folder)
-        try:
-            # Delete entire marketplace folder, not just ZIP
-            marketplace_folder = f".claude/plugins/marketplaces/{marketplace_name}"
-            
-            # List all files in marketplace folder
-            file_list = supabase.storage.from_(user_id).list(marketplace_folder)
-            
-            if file_list:
-                # Build list of file paths to delete
-                files_to_delete = [f"{marketplace_folder}/{file['name']}" for file in file_list]
-                
-                # Delete all files
-                supabase.storage.from_(user_id).remove(files_to_delete)
-                cleaned_items.append(f"s3:{marketplace_folder} ({len(files_to_delete)} files)")
-                logger.info(f"✅ Deleted {len(files_to_delete)} files from S3: {marketplace_folder}")
-            else:
-                logger.info(f"ℹ️  No files found in S3: {marketplace_folder}")
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to delete files from S3: {e}")
-
-        # Step 3: Delete installed plugins (CASCADE will handle this, but let's be explicit)
-        try:
-            execute_query(
-                "DELETE FROM installed_plugins WHERE user_id = %s AND marketplace_name = %s",
-                (user_id, marketplace_name),
-                fetch="none"
-            )
-            cleaned_items.append(f"plugins:deleted")
-            logger.info(
-                f"✅ Deleted installed plugins for marketplace"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to delete installed plugins: {e}")
-
-        # Step 4: Delete marketplace record from PostgreSQL
-        try:
-            execute_query(
-                "DELETE FROM marketplaces WHERE id = %s",
-                (marketplace_id,),
-                fetch="none"
-            )
-            cleaned_items.append(f"metadata:marketplace")
-            logger.info(f"✅ Deleted marketplace metadata from PostgreSQL")
-        except Exception as e:
-            logger.error(f"❌ Failed to delete marketplace metadata: {e}")
-            raise  # This is critical, raise to retry
-
-        logger.info(
-            f"🎉 Marketplace cleanup completed: {marketplace_name} ({len(cleaned_items)} items)"
-        )
-
-        return {
-            "success": True,
-            "message": f"Marketplace '{marketplace_name}' cleaned up successfully",
-            "cleaned_items": cleaned_items,
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Marketplace cleanup failed: {e}", exc_info=True)
-        return {
-            "success": False,
-            "message": f"Cleanup failed: {sanitize_error_message(e, 'cleaning up marketplace')}",
-            "cleaned_items": cleaned_items,
-        }
-
+# API routes moved to separate files (routes_*.py)
 
 async def marketplace_cleanup_worker():
     """
@@ -2579,6 +1510,7 @@ async def marketplace_cleanup_worker():
     """
     import psycopg2
     import psycopg2.extras
+    from routes_marketplace import cleanup_marketplace_task
 
     logger.info("🚀 Marketplace cleanup worker started")
 
@@ -2726,10 +1658,20 @@ async def websocket_chat(websocket: WebSocket):
     # Now safe to accept - user is authenticated
     await websocket.accept()
 
-    # Store user_id for session
+    # Store user_id and auth_token for session
     authenticated_user_id = result
+    ws_auth_token = websocket.query_params.get("token") or ""
     ws_session_id = str(uuid.uuid4())  # Generate unique session ID for this WebSocket
     logger.info(f"📡 WebSocket accepted for user: {authenticated_user_id}")
+
+    # Send session_id to client IMMEDIATELY so they can use it for interrupts
+    # This is separate from Claude's conversation_id which comes later
+    await websocket.send_json({
+        "type": "session_created",
+        "session_id": ws_session_id,
+        "message": "WebSocket session established. Use this session_id for interrupts."
+    })
+    logger.info(f"📤 Sent session_created to client: {ws_session_id}")
 
     # Log session created with org_id and project_id from URL
     await audit.log_session_created(
@@ -2854,7 +1796,7 @@ async def websocket_chat(websocket: WebSocket):
 
         # Start all tasks
         heartbeat = asyncio.create_task(
-            heartbeat_task(websocket, interval=30), name="heartbeat"
+            heartbeat_task(websocket, output_queue=output_queue, interval=30), name="heartbeat"
         )
 
         router = asyncio.create_task(
@@ -2870,18 +1812,20 @@ async def websocket_chat(websocket: WebSocket):
         )
 
         interrupt = asyncio.create_task(
-            interrupt_task(interrupt_queue, stop_events, websocket), name="interrupt"
+            interrupt_task(interrupt_queue, stop_events, output_queue), name="interrupt"
         )
 
-        # Pass output_queue instead of websocket, but keep websocket for sync
+        # Use streaming mode for continuous message handling
         agent = asyncio.create_task(
-            agent_task(
+            agent_task_streaming(
                 agent_queue,
                 stop_events,
                 output_queue,
                 _my_permission_callback,
                 websocket,
                 hooks_config,  # Audit hooks for tool execution logging
+                initial_user_id=authenticated_user_id,
+                initial_auth_token=ws_auth_token,
             ),
             name="agent",
         )
@@ -3216,7 +2160,7 @@ async def websocket_secure_chat(websocket: WebSocket):
 
         # Start tasks
         heartbeat = asyncio.create_task(
-            heartbeat_task(websocket, interval=30), name="secure_heartbeat"
+            heartbeat_task(websocket, output_queue=output_queue, interval=30), name="secure_heartbeat"
         )
 
         router_task = asyncio.create_task(
@@ -3228,17 +2172,20 @@ async def websocket_secure_chat(websocket: WebSocket):
         )
 
         interrupt = asyncio.create_task(
-            interrupt_task(interrupt_queue, stop_events, websocket), name="secure_interrupt"
+            interrupt_task(interrupt_queue, stop_events, output_queue), name="secure_interrupt"
         )
 
+        # Use streaming mode for continuous message handling
         agent = asyncio.create_task(
-            agent_task(
+            agent_task_streaming(
                 agent_queue,
                 stop_events,
                 output_queue,
                 secure_permission_callback,
                 websocket,
                 hooks_config,  # Audit hooks for tool execution logging
+                initial_user_id=session.user_id,
+                initial_auth_token=None,  # Zero-Trust uses device cert, not JWT
             ),
             name="secure_agent",
         )

@@ -104,6 +104,14 @@ const summarizeToolResult = (content, maxLength = 300) => {
 
 // Memoized Message Component để tránh re-render không cần thiết
 const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlways, onDeny, pendingApprovals = [] }) => {
+  // Debug log
+  console.log('[MessageComponent] Rendering:', {
+    role: message.role,
+    type: message.type,
+    contentLen: message.content?.length || 0,
+    hasThought: !!message.thought
+  });
+
   // State for expandable tool results and thought
   const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
   const [isThoughtExpanded, setIsThoughtExpanded] = useState(false);
@@ -277,9 +285,15 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
     if (message.type === 'tool_result' && toolResultData) {
       const displayContent = isToolResultExpanded ? toolResultData.full : toolResultData.summary;
 
+      // Check if content looks like plain text output (not JSON/markdown)
+      const isPlainTextOutput = !displayContent.startsWith('{') &&
+                                !displayContent.startsWith('[') &&
+                                !displayContent.startsWith('#') &&
+                                !displayContent.startsWith('*');
+
       return (
-        <div className="border rounded-lg p-2">
-          <div className="flex items-center justify-between mb-2">
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-2">
               <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -295,14 +309,24 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
               </button>
             )}
           </div>
-          <div className="text-sm overflow-hidden">
-            <Markdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={markdownComponents}
-            >
-              {displayContent}
-            </Markdown>
+          <div className="p-3 overflow-x-auto max-h-96 overflow-y-auto bg-gray-900 text-gray-100">
+            {isPlainTextOutput ? (
+              /* Plain text output (like kubectl, ls, etc.) - preserve formatting */
+              <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed">
+                {displayContent}
+              </pre>
+            ) : (
+              /* JSON/Markdown content - render with Markdown */
+              <div className="text-sm">
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                  components={markdownComponents}
+                >
+                  {displayContent}
+                </Markdown>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -504,7 +528,14 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       );
     }
 
+    // Thinking message (empty content but has thought) - render placeholder
+    if (message.type === 'thinking' && (!message.content || message.content.trim() === '')) {
+      // Just return null since thought is rendered above
+      return null;
+    }
+
     // Default text message
+    console.log('[MessageComponent] Rendering default text, content:', message.content?.substring(0, 50));
     return (
       <div className="relative overflow-hidden">
         <Markdown

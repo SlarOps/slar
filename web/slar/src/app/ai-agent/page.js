@@ -260,7 +260,7 @@ function AIAgentContent() {
             onStop={stopStreaming}
             isSending={isSending}
             sessionId={sessionId}
-            onSessionReset={handleSessionReset}
+            onNewChat={handleNewConversation}
             syncStatus={syncStatus}
             todos={todos}
             conversationId={conversationId}

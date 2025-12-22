@@ -203,12 +203,18 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
           }
 
           // Handle JSON messages
-          console.log('WebSocket JSON message:', data);
 
           // Handle different message types from Claude Agent API
           switch (data.type) {
             case 'connected':
               console.log('Connection established:', data.connection_id);
+              break;
+
+            case 'session_created':
+              // Session created IMMEDIATELY after WebSocket connects
+              // This provides session_id for interrupts before Claude starts responding
+              setSessionId(data.session_id);
+              console.log('Session created (for interrupts):', data.session_id);
               break;
 
             case 'ping':
@@ -236,22 +242,37 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               }
               break;
 
+            case 'conversation_started':
+              // Claude conversation started - store conversation_id for resume
+              // NOTE: This is separate from session_id (used for interrupts)
+              if (data.conversation_id) {
+                setConversationId(data.conversation_id);
+                console.log('Conversation started:', data.conversation_id);
+              }
+              break;
+
             case 'processing':
               console.log('Processing started:', data.content);
               break;
 
             case 'thinking':
-              // Agent thinking - update last message with thought
+              // Agent thinking - update last text message OR create new
               setMessages(prev => {
                 const lastMsg = prev[prev.length - 1];
-                if (lastMsg && lastMsg.role === 'assistant') {
+                // Only update if last message is text or thinking type
+                // Don't update tool_result, tool_use, or permission_request
+                const canUpdate = lastMsg &&
+                  lastMsg.role === 'assistant' &&
+                  (lastMsg.type === 'text' || lastMsg.type === 'thinking' || !lastMsg.type);
+
+                if (canUpdate) {
                   return [...prev.slice(0, -1), {
                     ...lastMsg,
                     thought: data.content,
                     isStreaming: true
                   }];
                 }
-                // No assistant message yet, create one
+                // Create new thinking message
                 return [...prev, {
                   role: 'assistant',
                   source: 'assistant',
@@ -265,10 +286,20 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'text':
-              // Text content - append to last message
+              // Text content - append to last message OR create new
+              // Skip empty text
+              if (!data.content) break;
+
               setMessages(prev => {
                 const lastMsg = prev[prev.length - 1];
-                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+                // Only append if last message is assistant, streaming, AND is text/thinking type
+                // Don't append to tool_result or tool_use messages
+                const canAppend = lastMsg &&
+                  lastMsg.role === 'assistant' &&
+                  lastMsg.isStreaming &&
+                  (lastMsg.type === 'text' || lastMsg.type === 'thinking');
+
+                if (canAppend) {
                   return [...prev.slice(0, -1), {
                     ...lastMsg,
                     content: (lastMsg.content || '') + data.content,
@@ -302,20 +333,20 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'tool_result':
-              console.log('Tool result:', data.content);
-              // Add tool result message
+              // Add tool result message (NOT streaming - this is a complete result)
               setMessages(prev => [...prev, {
                 role: 'assistant',
                 source: 'assistant',
                 content: typeof data.content === 'string' ? data.content : JSON.stringify(data.content, null, 2),
                 type: 'tool_result',
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                isStreaming: false  // Tool results are complete, not streaming
               }]);
               break;
 
 
             case 'permission_request':
-              // Tool approval request
+              // Tool approval request - agent is waiting for user input
               console.log('Tool approval requested:', data.tool_name);
               const requestId = data.request_id || Date.now(); // Backend sends request_id
               const newApproval = {
@@ -339,6 +370,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
                 tool_input: data.input_data || data.tool_input,
                 timestamp: new Date().toISOString()
               }]);
+
+              // Allow user to interact while waiting for approval
+              // (agent is blocked waiting for permission, not processing)
+              setIsSending(false);
               break;
 
             case 'interrupt_acknowledged':
@@ -359,8 +394,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
 
             case 'complete':
             case 'success':
-              // Query completed
-              console.log('Query completed');
+              // Query completed - mark all streaming messages as complete
+              setMessages(prev => prev.map(msg =>
+                msg.isStreaming ? { ...msg, isStreaming: false } : msg
+              ));
               setIsSending(false);
               break;
 
@@ -473,7 +510,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     setConnectionStatus('disconnected');
   }, []);
 
-  // Send message
+  // Send message - messages are queued on backend, no blocking needed
   const sendMessage = useCallback((message, options = {}) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
@@ -481,12 +518,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       return;
     }
 
-    if (isSending) {
-      console.warn('Already sending a message');
-      return;
-    }
-
     try {
+      // Set sending state for UI feedback (but don't block)
       setIsSending(true);
 
       // Mark previous streaming message as complete before adding new user message
@@ -537,7 +570,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         timestamp: new Date().toISOString()
       }]);
     }
-  }, [sessionId, conversationId, isSending, connect]);
+  }, [sessionId, conversationId, connect]);
 
   // Approve tool
   const approveTool = useCallback((requestId, reason = 'Approved by user') => {
@@ -553,6 +586,9 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         request_id: requestId, // Use request_id to match backend
         allow: 'yes'
       }));
+
+      // Agent will continue processing after approval
+      setIsSending(true);
 
       // Mark the message as approved
       setMessages(prev => prev.map(msg =>
@@ -616,6 +652,9 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         request_id: requestId, // Use request_id to match backend
         allow: 'no'
       }));
+
+      // Agent will continue processing (may try different approach or complete)
+      setIsSending(true);
 
       // Mark the message as denied
       setMessages(prev => prev.map(msg =>

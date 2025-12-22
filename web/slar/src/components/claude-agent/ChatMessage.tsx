@@ -25,6 +25,8 @@ interface ChatMessageProps {
 export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps) {
   const isUser = message.type === 'user';
   const isError = message.type === 'error';
+  const isToolResult = message.type === 'tool_result';
+  const isToolUse = message.type === 'tool_use';
   const [copied, setCopied] = useState(false);
   const [liked, setLiked] = useState<boolean | null>(null);
 
@@ -64,6 +66,22 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
           {isError ? (
             <div className="text-[17px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 leading-[1.75]">
               {message.content}
+            </div>
+          ) : isToolResult ? (
+            /* Tool result - preserve formatting with monospace font */
+            <div className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto">
+              <div className="text-xs text-gray-400 mb-2 font-sans">Tool Result</div>
+              <pre className="text-[0.9rem] font-mono whitespace-pre-wrap leading-relaxed">
+                {message.content}
+              </pre>
+            </div>
+          ) : isToolUse ? (
+            /* Tool use - show as collapsible JSON */
+            <div className="bg-blue-900/30 text-blue-100 rounded-lg p-4 overflow-x-auto">
+              <div className="text-xs text-blue-400 mb-2 font-sans">Tool Execution</div>
+              <pre className="text-[0.85rem] font-mono whitespace-pre-wrap leading-relaxed">
+                {message.content}
+              </pre>
             </div>
           ) : (
             <div className="prose prose-lg dark:prose-invert max-w-none">
@@ -117,6 +135,14 @@ export function ChatMessageComponent({ message, onRegenerate }: ChatMessageProps
                   },
                   strong({ children }) {
                     return <strong className="font-semibold">{children}</strong>;
+                  },
+                  pre({ children }) {
+                    // Handle preformatted text (code blocks) with proper formatting
+                    return (
+                      <pre className="overflow-x-auto bg-gray-900 text-gray-100 rounded-lg p-4 my-4 text-[0.95rem] font-mono whitespace-pre-wrap">
+                        {children}
+                      </pre>
+                    );
                   },
                 }}
               >

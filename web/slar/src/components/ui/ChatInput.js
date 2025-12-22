@@ -15,7 +15,7 @@ const ChatInput = ({
   showModeSelector = true,
   onStop = null,
   sessionId = null,
-  onSessionReset = null,
+  onNewChat = null,
   isSending = false,
   syncStatus = 'idle',
   todos = [],
@@ -53,14 +53,14 @@ const ChatInput = ({
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
             <div className="flex items-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/50">
-              {/* New Session Button */}
-              {sessionId && onSessionReset && (
+              {/* New Chat Button - keeps WebSocket session for interrupts */}
+              {sessionId && onNewChat && (
                 <div className="flex-shrink-0">
                   <button
                     type="button"
-                    onClick={onSessionReset}
-                    className="p-2 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-300 dark:hover:bg-red-900/20 rounded-md transition-colors"
-                    title="Start new session"
+                    onClick={onNewChat}
+                    className="p-2 text-blue-600 dark:text-blue-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                    title="Start new conversation"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
