@@ -3,7 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Badge } from './Badge';
-import { statusColor, severityColor } from './utils';
+import { statusColor, severityColor, formatToolCall, generatePermissionPattern } from './utils';
 
 // Utility to summarize large tool execution results
 const summarizeToolResult = (content, maxLength = 300) => {
@@ -104,9 +104,19 @@ const summarizeToolResult = (content, maxLength = 300) => {
 
 // Memoized Message Component để tránh re-render không cần thiết
 const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlways, onDeny, pendingApprovals = [] }) => {
+  // Debug log
+  console.log('[MessageComponent] Rendering:', {
+    role: message.role,
+    type: message.type,
+    contentLen: message.content?.length || 0,
+    hasThought: !!message.thought
+  });
+
   // State for expandable tool results and thought
   const [isToolResultExpanded, setIsToolResultExpanded] = useState(false);
   const [isThoughtExpanded, setIsThoughtExpanded] = useState(false);
+  const [isToolContentExpanded, setIsToolContentExpanded] = useState(false);
+  const [isPermissionContentExpanded, setIsPermissionContentExpanded] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
 
   // Memoize tool result summary
@@ -119,28 +129,28 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
   const markdownComponents = useMemo(() => ({
     p: ({ node, ...props }) => (
-      <p className="my-2 leading-relaxed break-words" {...props} />
+      <p className="text-left last:mb-0 break-words" {...props} />
     ),
     ul: ({ node, ...props }) => (
-      <ul className="my-2 list-disc" {...props} />
+      <ul className="ml-6 list-disc" {...props} />
     ),
     ol: ({ node, ...props }) => (
-      <ol className="my-2 list-decimal pl-5" {...props} />
+      <ol className="ml-6 list-decimal" {...props} />
     ),
     li: ({ node, ...props }) => (
-      <li className="my-1 break-words" {...props} />
+      <li className="break-words" {...props} />
     ),
     a: ({ node, ...props }) => (
       <a className="underline hover:no-underline break-all" {...props} />
     ),
     pre: ({ node, ...props }) => (
-      <pre className="my-2 p-3 rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto max-w-full text-sm" {...props} />
+      <pre className="rounded bg-gray-100 dark:bg-gray-900 overflow-x-auto max-w-full text-[0.95rem]" {...props} />
     ),
     code: ({ node, inline, className, children, ...props }) => {
       // Inline code (not in pre block)
       if (inline) {
         return (
-          <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-sm break-all" {...props}>
+          <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[0.9em] font-mono break-all" {...props}>
             {children}
           </code>
         );
@@ -153,13 +163,13 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       );
     },
     h1: ({ node, ...props }) => (
-      <h1 className="text-lg font-semibold mt-3 mb-2 break-words" {...props} />
+      <h1 className="text-[17px] font-semibold mb-4 mt-8 break-words" {...props} />
     ),
     h2: ({ node, ...props }) => (
-      <h2 className="text-base font-semibold mt-3 mb-2 break-words" {...props} />
+      <h2 className="text-[17px] font-semibold mb-3 mt-6 break-words" {...props} />
     ),
     h3: ({ node, ...props }) => (
-      <h3 className="text-sm font-semibold mt-2 mb-1 break-words" {...props} />
+      <h3 className="text-[17px] font-semibold mb-2 mt-5 break-words" {...props} />
     ),
     blockquote: ({ node, ...props }) => (
       <blockquote className="border-l-4 border-gray-300 dark:border-gray-700 pl-3 my-3 text-gray-600 dark:text-gray-300" {...props} />
@@ -197,22 +207,73 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
   // Render different message types
   const renderMessageContent = () => {
-    // Tool use message
+    // Tool use message - Claude Code style format with expandable content
     if (message.type === 'tool_use') {
       try {
         const toolData = typeof message.content === 'string' ? JSON.parse(message.content) : message.content;
+        const formattedCall = formatToolCall(toolData.name, toolData.input);
+        const toolName = toolData.name;
+        const toolInput = toolData.input || {};
+
+        // Check if tool has content to display (Write, Edit, Bash, etc.)
+        const hasContent = ['Write', 'Edit', 'Bash', 'Grep', 'Glob'].includes(toolName);
+        const contentToShow = toolName === 'Write' || toolName === 'Edit'
+          ? toolInput.content || toolInput.new_string
+          : toolName === 'Bash'
+            ? toolInput.command
+            : toolName === 'Grep' || toolName === 'Glob'
+              ? toolInput.pattern
+              : null;
+
+        // Determine language for syntax highlighting
+        const getLanguage = () => {
+          if (toolName === 'Bash') return 'bash';
+          if (toolName === 'Grep' || toolName === 'Glob') return 'text';
+          const filePath = toolInput.file_path || '';
+          if (filePath.endsWith('.py')) return 'python';
+          if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'javascript';
+          if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
+          if (filePath.endsWith('.go')) return 'go';
+          if (filePath.endsWith('.json')) return 'json';
+          if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'yaml';
+          if (filePath.endsWith('.md')) return 'markdown';
+          if (filePath.endsWith('.sql')) return 'sql';
+          if (filePath.endsWith('.sh')) return 'bash';
+          return 'text';
+        };
+
         return (
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 my-2">
-            <div className="flex items-center gap-2 mb-2">
-              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Tool: {toolData.name}</span>
+          <div className="my-2">
+            <div className="flex items-center gap-2">
+              <code className="text-sm font-mono text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded">
+                {formattedCall}
+              </code>
+              {hasContent && contentToShow && (
+                <button
+                  onClick={() => setIsToolContentExpanded(!isToolContentExpanded)}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  {isToolContentExpanded ? 'Hide' : 'Show'} content
+                </button>
+              )}
             </div>
-            <pre className="text-xs bg-white dark:bg-gray-900 p-2 rounded overflow-x-auto max-w-full">
-              {JSON.stringify(toolData.input, null, 2)}
-            </pre>
+            {hasContent && contentToShow && isToolContentExpanded && (
+              <div className="mt-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                    {toolInput.file_path || toolName}
+                  </span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    {contentToShow.split('\n').length} lines
+                  </span>
+                </div>
+                <pre className="p-3 overflow-x-auto text-sm max-h-96 overflow-y-auto">
+                  <code className={`language-${getLanguage()}`}>
+                    {contentToShow}
+                  </code>
+                </pre>
+              </div>
+            )}
           </div>
         );
       } catch (e) {
@@ -224,9 +285,15 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
     if (message.type === 'tool_result' && toolResultData) {
       const displayContent = isToolResultExpanded ? toolResultData.full : toolResultData.summary;
 
+      // Check if content looks like plain text output (not JSON/markdown)
+      const isPlainTextOutput = !displayContent.startsWith('{') &&
+                                !displayContent.startsWith('[') &&
+                                !displayContent.startsWith('#') &&
+                                !displayContent.startsWith('*');
+
       return (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 my-2">
-          <div className="flex items-center justify-between mb-2">
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-2">
               <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -242,20 +309,30 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
               </button>
             )}
           </div>
-          <div className="text-sm overflow-hidden">
-            <Markdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={markdownComponents}
-            >
-              {displayContent}
-            </Markdown>
+          <div className="p-3 overflow-x-auto max-h-96 overflow-y-auto bg-gray-900 text-gray-100">
+            {isPlainTextOutput ? (
+              /* Plain text output (like kubectl, ls, etc.) - preserve formatting */
+              <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed">
+                {displayContent}
+              </pre>
+            ) : (
+              /* JSON/Markdown content - render with Markdown */
+              <div className="text-sm">
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                  components={markdownComponents}
+                >
+                  {displayContent}
+                </Markdown>
+              </div>
+            )}
           </div>
         </div>
       );
     }
 
-    // Permission request message - inline approval UI
+    // Permission request message - inline approval UI with Claude Code style format
     if (message.type === 'permission_request') {
       // Parse tool info from message content
       let toolName = 'Unknown Tool';
@@ -284,38 +361,70 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       }
 
       const isPending = pendingApprovals.some(a => a.request_id === message.request_id);
+      const formattedCall = formatToolCall(toolName, toolInput);
+      const permissionPattern = generatePermissionPattern(toolName, toolInput);
+
+      // Check if tool has content to display
+      const hasContent = ['Write', 'Edit', 'Bash', 'Grep', 'Glob'].includes(toolName);
+      const contentToShow = toolName === 'Write' || toolName === 'Edit'
+        ? toolInput.content || toolInput.new_string
+        : toolName === 'Bash'
+          ? toolInput.command
+          : toolName === 'Grep' || toolName === 'Glob'
+            ? toolInput.pattern
+            : null;
+
+      // Determine language for syntax highlighting
+      const getLanguage = () => {
+        if (toolName === 'Bash') return 'bash';
+        if (toolName === 'Grep' || toolName === 'Glob') return 'text';
+        const filePath = toolInput.file_path || '';
+        if (filePath.endsWith('.py')) return 'python';
+        if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'javascript';
+        if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
+        if (filePath.endsWith('.go')) return 'go';
+        if (filePath.endsWith('.json')) return 'json';
+        if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'yaml';
+        if (filePath.endsWith('.md')) return 'markdown';
+        if (filePath.endsWith('.sql')) return 'sql';
+        if (filePath.endsWith('.sh')) return 'bash';
+        return 'text';
+      };
 
       return (
         <div className="rounded-lg my-2">
           <div className="">
-            {/* Warning icon */}
-            <div className="flex-shrink-0 mt-1">
-
-            </div>
-
             <div className="flex-1">
-              {/* Title */}
-              {/* <h5 className="text-xs sm:text-sm font-semibold text-yellow-900 dark:text-yellow-100 py-2">
-                Approval Required
-              </h5> */}
-
-              {/* Description */}
-              {/* <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
-                Claude wants to execute the following tool. Please review and approve or deny.
-              </p> */}
-
-              {/* Tool details */}
-              <div className="dark:bg-gray-900 rounded-md sm:p-3 space-y-2">
-                <div>
-                  <div className="text-xs sm:text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 break-all">
-                    {toolName}
-                  </div>
+              {/* Tool details - Claude Code style */}
+              <div className="dark:bg-gray-900 rounded-md space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-sm font-mono text-yellow-700 dark:text-yellow-300 dark:bg-yellow-900/30 px-2 py-1 rounded break-all">
+                    {formattedCall}
+                  </code>
+                  {hasContent && contentToShow && (
+                    <button
+                      onClick={() => setIsPermissionContentExpanded(!isPermissionContentExpanded)}
+                      className="text-xs text-yellow-600 dark:text-yellow-400 hover:underline"
+                    >
+                      {isPermissionContentExpanded ? 'Hide' : 'Show'} content
+                    </button>
+                  )}
                 </div>
-
-                {toolInput && Object.keys(toolInput).length > 0 && (
-                  <div>
-                    <pre className="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded overflow-x-auto">
-                      {JSON.stringify(toolInput, null, 2)}
+                {/* Expandable content preview */}
+                {hasContent && contentToShow && isPermissionContentExpanded && (
+                  <div className="mt-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                      <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                        {toolInput.file_path || toolName}
+                      </span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                        {contentToShow.split('\n').length} lines
+                      </span>
+                    </div>
+                    <pre className="p-3 overflow-x-auto text-sm max-h-64 overflow-y-auto">
+                      <code className={`language-${getLanguage()}`}>
+                        {contentToShow}
+                      </code>
                     </pre>
                   </div>
                 )}
@@ -347,9 +456,9 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
 
                   {onApproveAlways && (
                     <button
-                      onClick={() => onApproveAlways(message.request_id, toolName)}
+                      onClick={() => onApproveAlways(message.request_id, permissionPattern)}
                       className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
-                      title="Approve and don't ask again for this tool"
+                      title={`Always allow: ${permissionPattern}`}
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -359,7 +468,7 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
                   )}
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 text-xs italic">
+                <div className="flex items-center gap-1.5 text-xs italic p-1">
                   {message.approved ? (
                     <>
                       <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -419,7 +528,14 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
       );
     }
 
+    // Thinking message (empty content but has thought) - render placeholder
+    if (message.type === 'thinking' && (!message.content || message.content.trim() === '')) {
+      // Just return null since thought is rendered above
+      return null;
+    }
+
     // Default text message
+    console.log('[MessageComponent] Rendering default text, content:', message.content?.substring(0, 50));
     return (
       <div className="relative overflow-hidden">
         <Markdown
@@ -434,10 +550,10 @@ const MessageComponent = memo(({ message, onRegenerate, onApprove, onApproveAlwa
   };
 
   return (
-    <div className={`mb-6 ${message.role === "user" ? "text-right" : "text-left"}`}>
+    <div className={`mb-2 ${message.role === "user" ? "text-right" : "text-left"}`}>
       <div
-        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block max-w-full overflow-hidden"} rounded-3xl px-2 sm:px-4 text-sm sm:text-md leading-relaxed ${message.role === "user"
-          ? "bg-gray-100 text-gray-800"
+        className={`${message.role === "user" ? "inline-block max-w-[85%] sm:max-w-[80%]" : "block max-w-full overflow-hidden"} rounded-2xl p-2 sm:px-4 text-[17px] leading-[1.75] ${message.role === "user"
+          ? "bg-gray-100 text-gray-800 border"
           : "dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           }`}
       >

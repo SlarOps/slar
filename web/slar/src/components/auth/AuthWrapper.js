@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import { apiClient } from '../../lib/api';
 
-const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback', '/', '/onboarding'];
+const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback', '/', '/onboarding', '/shared'];
 
 export default function AuthWrapper({ children }) {
   const { user, session, loading } = useAuth();
@@ -18,7 +18,7 @@ export default function AuthWrapper({ children }) {
   const lastCheckedUserIdRef = useRef(null);
   const isCheckingRef = useRef(false);
 
-  const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
+  const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith('/shared/');
   const isOnboardingPage = pathname === '/onboarding';
 
   useEffect(() => {

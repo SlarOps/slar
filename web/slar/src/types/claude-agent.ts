@@ -5,10 +5,21 @@
 
 export interface ChatMessage {
   id: string;
-  type: 'user' | 'assistant' | 'system' | 'error' | 'thinking';
+  type: 'user' | 'assistant' | 'system' | 'error' | 'thinking' | 'text' | 'tool_use' | 'tool_result' | 'permission_request' | 'interrupted';
   content: string;
   timestamp: number;
   raw?: string;
+  // Extended fields from WebSocket
+  role?: 'user' | 'assistant' | 'system';
+  source?: string;
+  isStreaming?: boolean;
+  thought?: string;
+  request_id?: string | number;
+  tool_name?: string;
+  tool_input?: any;
+  approved?: boolean;
+  denied?: boolean;
+  isHistory?: boolean;
 }
 
 export interface StreamEvent {

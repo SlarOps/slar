@@ -10,6 +10,7 @@ Security Features:
 - Timestamp validation (clock skew tolerance)
 - Device certificate chain validation
 - Permission enforcement
+- PostgreSQL persistence for sessions and nonces (survives restarts)
 
 Flow:
 1. Mobile sends signed authentication with device certificate
@@ -33,6 +34,13 @@ import base64
 import os
 import uuid
 import httpx
+from datetime import datetime, timedelta
+
+# Import database utility
+try:
+    from .database_util import get_db_connection, execute_query
+except ImportError:
+    from database_util import get_db_connection, execute_query
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +48,7 @@ logger = logging.getLogger(__name__)
 CLOCK_SKEW_TOLERANCE = 60  # seconds
 NONCE_EXPIRY = 300  # 5 minutes
 MESSAGE_TIMESTAMP_WINDOW = 60  # seconds
+SESSION_EXPIRY_HOURS = 24 * 7  # 7 days - sessions last longer than certificates
 
 
 @dataclass
@@ -103,22 +112,154 @@ class ZeroTrustVerifier:
     Zero-Trust message verifier for AI Agent WebSocket connections.
 
     Every message is independently verified - no implicit trust after auth.
+    Sessions and nonces are persisted to PostgreSQL for durability across restarts.
     """
 
     def __init__(self, backend_url: Optional[str] = None):
         self.backend_url = backend_url or os.getenv('SLAR_BACKEND_URL', '')
 
-        # Cache of instance public keys
+        # In-memory cache of instance public keys (loaded from DB on demand)
         self._instance_cache: Dict[str, InstanceInfo] = {}
 
-        # Active verified sessions
-        self._sessions: Dict[str, VerifiedSession] = {}
+        # In-memory cache of active sessions (loaded from DB on demand)
+        # This is a performance optimization - DB is source of truth
+        self._sessions_cache: Dict[str, VerifiedSession] = {}
 
-        # Used nonces for replay prevention (cert_id -> set of nonces)
-        self._used_nonces: Dict[str, Set[str]] = {}
+        # Load instance keys from database on startup
+        self._load_instance_keys_from_db()
 
-        # Nonce timestamps for cleanup
-        self._nonce_timestamps: Dict[str, float] = {}
+    def _load_instance_keys_from_db(self):
+        """Load cached instance public keys from database"""
+        try:
+            rows = execute_query(
+                "SELECT instance_id, public_key_pem, last_updated FROM agent_instance_keys",
+                fetch="all"
+            )
+            for row in rows or []:
+                try:
+                    public_key = serialization.load_pem_public_key(
+                        row['public_key_pem'].encode(),
+                        backend=default_backend()
+                    )
+                    if isinstance(public_key, ec.EllipticCurvePublicKey):
+                        self._instance_cache[row['instance_id']] = InstanceInfo(
+                            instance_id=row['instance_id'],
+                            public_key_pem=row['public_key_pem'],
+                            public_key=public_key,
+                            last_updated=row['last_updated'].timestamp() if row['last_updated'] else time.time()
+                        )
+                        logger.info(f"Loaded instance key from DB: {row['instance_id']}")
+                except Exception as e:
+                    logger.warning(f"Failed to load instance key {row['instance_id']}: {e}")
+        except Exception as e:
+            logger.warning(f"Could not load instance keys from DB (table may not exist): {e}")
+
+    def _save_instance_key_to_db(self, instance_id: str, public_key_pem: str):
+        """Save instance public key to database"""
+        try:
+            execute_query(
+                """
+                INSERT INTO agent_instance_keys (instance_id, public_key_pem, last_updated)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (instance_id) DO UPDATE SET
+                    public_key_pem = EXCLUDED.public_key_pem,
+                    last_updated = NOW()
+                """,
+                (instance_id, public_key_pem),
+                fetch="none"
+            )
+            logger.info(f"Saved instance key to DB: {instance_id}")
+        except Exception as e:
+            logger.warning(f"Could not save instance key to DB: {e}")
+
+    def _save_session_to_db(self, session: VerifiedSession):
+        """Save session to database for persistence"""
+        try:
+            expires_at = datetime.now() + timedelta(hours=SESSION_EXPIRY_HOURS)
+            execute_query(
+                """
+                INSERT INTO agent_sessions (session_id, cert_id, user_id, instance_id, permissions, device_public_key, created_at, expires_at, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, TRUE)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    cert_id = EXCLUDED.cert_id,
+                    user_id = EXCLUDED.user_id,
+                    instance_id = EXCLUDED.instance_id,
+                    permissions = EXCLUDED.permissions,
+                    device_public_key = EXCLUDED.device_public_key,
+                    expires_at = EXCLUDED.expires_at,
+                    last_activity_at = NOW(),
+                    is_active = TRUE
+                """,
+                (
+                    session.session_id,
+                    session.cert_id,
+                    session.user_id,
+                    session.instance_id,
+                    session.permissions,
+                    base64.b64encode(session.device_public_key).decode(),
+                    expires_at
+                ),
+                fetch="none"
+            )
+            logger.info(f"Saved session to DB: {session.session_id}")
+        except Exception as e:
+            logger.warning(f"Could not save session to DB: {e}")
+
+    def _load_session_from_db(self, session_id: str) -> Optional[VerifiedSession]:
+        """Load session from database"""
+        try:
+            row = execute_query(
+                """
+                SELECT session_id, cert_id, user_id, instance_id, permissions, device_public_key, created_at
+                FROM agent_sessions
+                WHERE session_id = %s AND is_active = TRUE AND expires_at > NOW()
+                """,
+                (session_id,),
+                fetch="one"
+            )
+            if row:
+                # Update last activity
+                execute_query(
+                    "UPDATE agent_sessions SET last_activity_at = NOW() WHERE session_id = %s",
+                    (session_id,),
+                    fetch="none"
+                )
+                return VerifiedSession(
+                    session_id=str(row['session_id']),
+                    cert_id=row['cert_id'],
+                    user_id=str(row['user_id']),
+                    instance_id=row['instance_id'],
+                    permissions=row['permissions'] or ['chat'],
+                    device_public_key=base64.b64decode(row['device_public_key']),
+                    created_at=row['created_at'].timestamp() if row['created_at'] else time.time()
+                )
+        except Exception as e:
+            logger.warning(f"Could not load session from DB: {e}")
+        return None
+
+    def _check_nonce_in_db(self, cert_id: str, nonce: str) -> bool:
+        """Check if nonce was already used (returns True if already used)"""
+        try:
+            row = execute_query(
+                "SELECT 1 FROM agent_nonces WHERE cert_id = %s AND nonce = %s",
+                (cert_id, nonce),
+                fetch="one"
+            )
+            return row is not None
+        except Exception as e:
+            logger.warning(f"Could not check nonce in DB: {e}")
+            return False
+
+    def _save_nonce_to_db(self, cert_id: str, nonce: str):
+        """Save used nonce to database"""
+        try:
+            execute_query(
+                "INSERT INTO agent_nonces (cert_id, nonce, used_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
+                (cert_id, nonce),
+                fetch="none"
+            )
+        except Exception as e:
+            logger.warning(f"Could not save nonce to DB: {e}")
 
     async def fetch_instance_public_key(self, instance_id: str) -> Optional[str]:
         """Fetch instance public key from self-hosted backend"""
@@ -164,7 +305,7 @@ class ZeroTrustVerifier:
             return None
 
     def register_instance(self, instance_id: str, public_key_pem: str) -> bool:
-        """Register an instance's public key"""
+        """Register an instance's public key and persist to database"""
         try:
             # Parse PEM public key
             public_key = serialization.load_pem_public_key(
@@ -182,6 +323,9 @@ class ZeroTrustVerifier:
                 public_key=public_key,
                 last_updated=time.time()
             )
+
+            # Persist to database for durability across restarts
+            self._save_instance_key_to_db(instance_id, public_key_pem)
 
             logger.info(f"Registered instance {instance_id}")
             return True
@@ -315,10 +459,16 @@ class ZeroTrustVerifier:
                 session_id = str(uuid.uuid4())
 
         # Check if session already exists (reconnection case)
-        existing_session = self._sessions.get(session_id)
+        # First check in-memory cache, then database
+        existing_session = self._sessions_cache.get(session_id)
+        if not existing_session:
+            # Try to load from database (survives server restart)
+            existing_session = self._load_session_from_db(session_id)
+            if existing_session:
+                self._sessions_cache[session_id] = existing_session
+
         if existing_session and existing_session.cert_id == cert.id:
             # Reconnection with same certificate - reuse session
-            # This preserves nonce state for replay attack prevention
             logger.info(f"🔐 ✅ Reconnected to existing session {session_id}")
             return existing_session, "OK"
 
@@ -332,11 +482,11 @@ class ZeroTrustVerifier:
             device_public_key=device_key_bytes,
         )
 
-        self._sessions[session_id] = session
-        
-        # Only initialize nonces if not already tracked for this certificate
-        if cert.id not in self._used_nonces:
-            self._used_nonces[cert.id] = set()
+        # Save to in-memory cache
+        self._sessions_cache[session_id] = session
+
+        # Persist to database for durability across restarts
+        self._save_session_to_db(session)
 
         logger.info(f"🔐 ✅ Authenticated session {session_id} for user {cert.user_id}")
         return session, "OK"
@@ -351,8 +501,14 @@ class ZeroTrustVerifier:
 
         Returns: (is_valid, error_message, payload_data)
         """
-        # 1. Get session
-        session = self._sessions.get(session_id)
+        # 1. Get session (from cache first, then database)
+        session = self._sessions_cache.get(session_id)
+        if not session:
+            # Try to load from database
+            session = self._load_session_from_db(session_id)
+            if session:
+                self._sessions_cache[session_id] = session
+
         if not session:
             return False, "Session not found", None
 
@@ -374,13 +530,12 @@ class ZeroTrustVerifier:
         if abs(current_time - msg_timestamp) > MESSAGE_TIMESTAMP_WINDOW:
             return False, "Message timestamp out of range", None
 
-        # 5. Check nonce (replay prevention)
+        # 5. Check nonce (replay prevention) - check database
         nonce = payload.get('nonce')
         if not nonce:
             return False, "Missing nonce", None
 
-        nonce_key = f"{session.cert_id}:{nonce}"
-        if nonce in self._used_nonces.get(session.cert_id, set()):
+        if self._check_nonce_in_db(session.cert_id, nonce):
             return False, "Nonce already used (replay attack)", None
 
         # 6. Verify Ed25519 signature
@@ -402,11 +557,8 @@ class ZeroTrustVerifier:
         except Exception as e:
             return False, f"Signature verification error: {e}", None
 
-        # 7. Mark nonce as used
-        if session.cert_id not in self._used_nonces:
-            self._used_nonces[session.cert_id] = set()
-        self._used_nonces[session.cert_id].add(nonce)
-        self._nonce_timestamps[nonce_key] = current_time
+        # 7. Mark nonce as used - persist to database
+        self._save_nonce_to_db(session.cert_id, nonce)
 
         # 8. Check permission for message type
         msg_type = payload.get('type', '')
@@ -420,46 +572,81 @@ class ZeroTrustVerifier:
         return True, "OK", data
 
     def get_session(self, session_id: str) -> Optional[VerifiedSession]:
-        """Get verified session by ID"""
-        return self._sessions.get(session_id)
+        """Get verified session by ID (from cache or database)"""
+        # Check cache first
+        session = self._sessions_cache.get(session_id)
+        if session:
+            return session
+
+        # Try to load from database
+        session = self._load_session_from_db(session_id)
+        if session:
+            self._sessions_cache[session_id] = session
+        return session
 
     def revoke_session(self, session_id: str) -> bool:
-        """Revoke a session"""
-        if session_id in self._sessions:
-            session = self._sessions.pop(session_id)
-            # Clean up nonces for this certificate
-            if session.cert_id in self._used_nonces:
-                del self._used_nonces[session.cert_id]
+        """Revoke a session (from cache and database)"""
+        # Remove from cache
+        session = self._sessions_cache.pop(session_id, None)
+
+        # Deactivate in database
+        try:
+            execute_query(
+                "UPDATE agent_sessions SET is_active = FALSE WHERE session_id = %s",
+                (session_id,),
+                fetch="none"
+            )
             logger.info(f"Revoked session {session_id}")
             return True
-        return False
+        except Exception as e:
+            logger.warning(f"Could not revoke session in DB: {e}")
+            return session is not None
 
     def cleanup_expired_nonces(self):
-        """Clean up expired nonces to prevent memory bloat"""
-        current_time = time.time()
-        expired_keys = [
-            key for key, timestamp in self._nonce_timestamps.items()
-            if current_time - timestamp > NONCE_EXPIRY
-        ]
+        """Clean up expired nonces and sessions from database"""
+        try:
+            # Clean up expired nonces (older than 5 minutes)
+            execute_query(
+                "DELETE FROM agent_nonces WHERE used_at < NOW() - INTERVAL '5 minutes'",
+                fetch="none"
+            )
 
-        for key in expired_keys:
-            del self._nonce_timestamps[key]
-            # Also remove from used_nonces sets
-            parts = key.split(':', 1)
-            if len(parts) == 2:
-                cert_id, nonce = parts
-                if cert_id in self._used_nonces:
-                    self._used_nonces[cert_id].discard(nonce)
+            # Clean up expired sessions
+            execute_query(
+                "DELETE FROM agent_sessions WHERE expires_at < NOW() OR is_active = FALSE",
+                fetch="none"
+            )
 
-        if expired_keys:
-            logger.debug(f"Cleaned up {len(expired_keys)} expired nonces")
+            # Also clear cache entries for expired sessions
+            expired_session_ids = []
+            for session_id, session in list(self._sessions_cache.items()):
+                # Check if session is still valid in DB
+                row = execute_query(
+                    "SELECT 1 FROM agent_sessions WHERE session_id = %s AND is_active = TRUE AND expires_at > NOW()",
+                    (session_id,),
+                    fetch="one"
+                )
+                if not row:
+                    expired_session_ids.append(session_id)
+
+            for session_id in expired_session_ids:
+                self._sessions_cache.pop(session_id, None)
+
+            logger.debug(f"Cleanup: removed {len(expired_session_ids)} expired sessions from cache")
+        except Exception as e:
+            logger.warning(f"Cleanup error: {e}")
 
     def _canonical_json(self, data: dict) -> str:
         """
         Convert dict to canonical JSON (sorted keys, no spaces).
         Must match the encoding used by mobile client.
+
+        IMPORTANT: ensure_ascii=False keeps Unicode characters as-is,
+        matching Dart's jsonEncode() behavior. Without this, Vietnamese
+        and other non-ASCII text would be escaped (e.g., "có" → "c\\u00f3")
+        causing signature verification to fail.
         """
-        return json.dumps(data, sort_keys=True, separators=(',', ':'))
+        return json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 
 
 # Singleton instance

@@ -106,17 +106,20 @@ export default function AllowedToolsTab() {
                             type="text"
                             value={newToolName}
                             onChange={(e) => setNewToolName(e.target.value)}
-                            placeholder="Enter tool name (e.g., mcp__incident_tools__get_incidents)"
-                            className="flex-1 rounded-lg border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-blue-500 focus:border-blue-500 dark:text-white"
+                            placeholder="e.g., Bash(kubectl get:*), Read(/src/*)"
+                            className="flex-1 rounded-lg border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-blue-500 focus:border-blue-500 dark:text-white font-mono"
                         />
                         <button
                             type="submit"
                             disabled={isAdding || !newToolName.trim()}
                             className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {isAdding ? 'Adding...' : 'Add Tool'}
+                            {isAdding ? 'Adding...' : 'Add Rule'}
                         </button>
                     </form>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Use <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">*</code> as wildcard. Examples: <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">Bash(kubectl:*)</code>, <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">WebFetch(docs.example.com)</code>
+                    </p>
                 </div>
 
                 {tools.length === 0 ? (
@@ -136,10 +139,10 @@ export default function AllowedToolsTab() {
                                         <CheckCircleIcon className="h-5 w-5 text-green-600 dark:text-green-400" />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                        <code className="text-sm font-mono font-medium text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
                                             {tool}
-                                        </p>
-                                        <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                                        </code>
+                                        <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                                             Auto-approved
                                         </p>
                                     </div>

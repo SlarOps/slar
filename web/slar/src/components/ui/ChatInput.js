@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { TodoList } from '../ai-agent/TodoList';
+import { ShareModal } from './ShareModal';
 
 const ChatInput = ({
   value,
@@ -14,11 +15,15 @@ const ChatInput = ({
   showModeSelector = true,
   onStop = null,
   sessionId = null,
-  onSessionReset = null,
+  onNewChat = null,
   isSending = false,
   syncStatus = 'idle',
-  todos = []
+  todos = [],
+  conversationId = null,
+  hasMessages = false
 }) => {
+  const [showShareModal, setShowShareModal] = useState(false);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!value.trim()) return;
@@ -48,17 +53,33 @@ const ChatInput = ({
           {/* Chat Input */}
           <form onSubmit={handleSubmit}>
             <div className="flex items-center rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/50">
-              {/* New Session Button */}
-              {sessionId && onSessionReset && (
+              {/* New Chat Button - keeps WebSocket session for interrupts */}
+              {sessionId && onNewChat && (
                 <div className="flex-shrink-0">
                   <button
                     type="button"
-                    onClick={onSessionReset}
-                    className="p-2 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-300 dark:hover:bg-red-900/20 rounded-md transition-colors"
-                    title="Start new session"
+                    onClick={onNewChat}
+                    className="p-2 text-blue-600 dark:text-blue-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                    title="Start new conversation"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              {/* Share Button */}
+              {conversationId && hasMessages && (
+                <div className="flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowShareModal(true)}
+                    className="p-2 text-blue-600 dark:text-blue-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                    title="Share conversation"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                     </svg>
                   </button>
                 </div>
@@ -180,6 +201,14 @@ const ChatInput = ({
           </form>
         </div>
       </div>
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        conversationId={conversationId}
+        expiresIn={168}
+      />
     </div>
   );
 };

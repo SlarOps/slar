@@ -20,6 +20,8 @@ const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOS
  * Claude WebSocket Hook Options
  * @typedef {Object} WebSocketOptions
  * @property {boolean} autoConnect - Whether to connect automatically on mount (default: false)
+ * @property {string} orgId - Organization ID for audit logging
+ * @property {string} projectId - Project ID for audit logging
  */
 
 /**
@@ -27,12 +29,13 @@ const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOS
  * @param {WebSocketOptions} options - Configuration options
  */
 export function useClaudeWebSocket(authToken = null, options = {}) {
-  const { autoConnect = false } = options;
+  const { autoConnect = false, orgId = null, projectId = null } = options;
 
   const [messages, setMessages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isSending, setIsSending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [conversationId, setConversationId] = useState(null); // Claude conversation ID for resume
   const [pendingApprovals, setPendingApprovals] = useState([]); // Changed to array for multiple approvals
   const [todos, setTodos] = useState([]);
 
@@ -44,19 +47,34 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const streamingTimeoutRef = useRef(null);
   const streamingInactivityTimeout = 2000; // 2 seconds of inactivity marks message as complete
   const authTokenRef = useRef(authToken); // Store token in ref for WebSocket access
+  const orgIdRef = useRef(orgId); // Store org_id in ref for WebSocket access
+  const projectIdRef = useRef(projectId); // Store project_id in ref for WebSocket access
   const isIntentionalDisconnect = useRef(false); // Track intentional disconnects
 
-  // Update auth token ref when it changes
+  // Update refs when values change
   useEffect(() => {
     authTokenRef.current = authToken;
   }, [authToken]);
 
-  // Load session ID from localStorage on mount
+  useEffect(() => {
+    orgIdRef.current = orgId;
+  }, [orgId]);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
+
+  // Load session ID and conversation ID from localStorage on mount
   useEffect(() => {
     const savedSessionId = localStorage.getItem('claude_session_id');
+    const savedConversationId = localStorage.getItem('claude_conversation_id');
     if (savedSessionId) {
       setSessionId(savedSessionId);
       console.log('Restored session ID:', savedSessionId);
+    }
+    if (savedConversationId) {
+      setConversationId(savedConversationId);
+      console.log('Restored conversation ID:', savedConversationId);
     }
   }, []);
 
@@ -67,6 +85,14 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       console.log('Saved session ID:', sessionId);
     }
   }, [sessionId]);
+
+  // Save conversation ID to localStorage
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem('claude_conversation_id', conversationId);
+      console.log('Saved conversation ID:', conversationId);
+    }
+  }, [conversationId]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -84,11 +110,29 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
 
     try {
-      console.log('Connecting to WebSocket:', DEFAULT_WS_URL);
+      // Build WebSocket URL with token, org_id, and project_id for authentication and audit
+      const token = authTokenRef.current;
+      const currentOrgId = orgIdRef.current;
+      const currentProjectId = projectIdRef.current;
+
+      // Build query params
+      const params = new URLSearchParams();
+      if (token) params.append('token', token);
+      if (currentOrgId) params.append('org_id', currentOrgId);
+      if (currentProjectId) params.append('project_id', currentProjectId);
+
+      const queryString = params.toString();
+      const wsUrl = queryString ? `${DEFAULT_WS_URL}?${queryString}` : DEFAULT_WS_URL;
+
+      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, {
+        hasToken: !!token,
+        orgId: currentOrgId || 'none',
+        projectId: currentProjectId || 'none'
+      });
       setConnectionStatus('connecting');
       isIntentionalDisconnect.current = false;
 
-      const ws = new WebSocket(DEFAULT_WS_URL);
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -159,12 +203,18 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
           }
 
           // Handle JSON messages
-          console.log('WebSocket JSON message:', data);
 
           // Handle different message types from Claude Agent API
           switch (data.type) {
             case 'connected':
               console.log('Connection established:', data.connection_id);
+              break;
+
+            case 'session_created':
+              // Session created IMMEDIATELY after WebSocket connects
+              // This provides session_id for interrupts before Claude starts responding
+              setSessionId(data.session_id);
+              console.log('Session created (for interrupts):', data.session_id);
               break;
 
             case 'ping':
@@ -182,9 +232,23 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'session_init':
-              // Session initialized
+              // Session initialized - extract both session_id and conversation_id
               setSessionId(data.session_id);
-              console.log('Session initialized:', data.session_id);
+              if (data.conversation_id) {
+                setConversationId(data.conversation_id);
+                console.log('Session initialized:', data.session_id, 'Conversation ID:', data.conversation_id);
+              } else {
+                console.log('Session initialized:', data.session_id);
+              }
+              break;
+
+            case 'conversation_started':
+              // Claude conversation started - store conversation_id for resume
+              // NOTE: This is separate from session_id (used for interrupts)
+              if (data.conversation_id) {
+                setConversationId(data.conversation_id);
+                console.log('Conversation started:', data.conversation_id);
+              }
               break;
 
             case 'processing':
@@ -192,17 +256,23 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'thinking':
-              // Agent thinking - update last message with thought
+              // Agent thinking - update last text message OR create new
               setMessages(prev => {
                 const lastMsg = prev[prev.length - 1];
-                if (lastMsg && lastMsg.role === 'assistant') {
+                // Only update if last message is text or thinking type
+                // Don't update tool_result, tool_use, or permission_request
+                const canUpdate = lastMsg &&
+                  lastMsg.role === 'assistant' &&
+                  (lastMsg.type === 'text' || lastMsg.type === 'thinking' || !lastMsg.type);
+
+                if (canUpdate) {
                   return [...prev.slice(0, -1), {
                     ...lastMsg,
                     thought: data.content,
                     isStreaming: true
                   }];
                 }
-                // No assistant message yet, create one
+                // Create new thinking message
                 return [...prev, {
                   role: 'assistant',
                   source: 'assistant',
@@ -216,10 +286,20 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'text':
-              // Text content - append to last message
+              // Text content - append to last message OR create new
+              // Skip empty text
+              if (!data.content) break;
+
               setMessages(prev => {
                 const lastMsg = prev[prev.length - 1];
-                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+                // Only append if last message is assistant, streaming, AND is text/thinking type
+                // Don't append to tool_result or tool_use messages
+                const canAppend = lastMsg &&
+                  lastMsg.role === 'assistant' &&
+                  lastMsg.isStreaming &&
+                  (lastMsg.type === 'text' || lastMsg.type === 'thinking');
+
+                if (canAppend) {
                   return [...prev.slice(0, -1), {
                     ...lastMsg,
                     content: (lastMsg.content || '') + data.content,
@@ -253,20 +333,20 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               break;
 
             case 'tool_result':
-              console.log('Tool result:', data.content);
-              // Add tool result message
+              // Add tool result message (NOT streaming - this is a complete result)
               setMessages(prev => [...prev, {
                 role: 'assistant',
                 source: 'assistant',
                 content: typeof data.content === 'string' ? data.content : JSON.stringify(data.content, null, 2),
                 type: 'tool_result',
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                isStreaming: false  // Tool results are complete, not streaming
               }]);
               break;
 
 
             case 'permission_request':
-              // Tool approval request
+              // Tool approval request - agent is waiting for user input
               console.log('Tool approval requested:', data.tool_name);
               const requestId = data.request_id || Date.now(); // Backend sends request_id
               const newApproval = {
@@ -290,6 +370,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
                 tool_input: data.input_data || data.tool_input,
                 timestamp: new Date().toISOString()
               }]);
+
+              // Allow user to interact while waiting for approval
+              // (agent is blocked waiting for permission, not processing)
+              setIsSending(false);
               break;
 
             case 'interrupt_acknowledged':
@@ -310,8 +394,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
 
             case 'complete':
             case 'success':
-              // Query completed
-              console.log('Query completed');
+              // Query completed - mark all streaming messages as complete
+              setMessages(prev => prev.map(msg =>
+                msg.isStreaming ? { ...msg, isStreaming: false } : msg
+              ));
               setIsSending(false);
               break;
 
@@ -424,7 +510,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     setConnectionStatus('disconnected');
   }, []);
 
-  // Send message
+  // Send message - messages are queued on backend, no blocking needed
   const sendMessage = useCallback((message, options = {}) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
@@ -432,12 +518,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       return;
     }
 
-    if (isSending) {
-      console.warn('Already sending a message');
-      return;
-    }
-
     try {
+      // Set sending state for UI feedback (but don't block)
       setIsSending(true);
 
       // Mark previous streaming message as complete before adding new user message
@@ -464,9 +546,11 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       });
 
       // Prepare WebSocket message (Claude Agent API v1 format)
+      // conversation_id is used for Claude SDK resume functionality
       const wsMessage = {
         prompt: message,
         session_id: sessionId || "",
+        conversation_id: options.conversationId || conversationId || "",
         auth_token: authTokenRef.current || "",
         org_id: options.orgId || "",
         project_id: options.projectId || ""
@@ -486,7 +570,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         timestamp: new Date().toISOString()
       }]);
     }
-  }, [sessionId, isSending, connect]);
+  }, [sessionId, conversationId, connect]);
 
   // Approve tool
   const approveTool = useCallback((requestId, reason = 'Approved by user') => {
@@ -502,6 +586,9 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         request_id: requestId, // Use request_id to match backend
         allow: 'yes'
       }));
+
+      // Agent will continue processing after approval
+      setIsSending(true);
 
       // Mark the message as approved
       setMessages(prev => prev.map(msg =>
@@ -519,24 +606,24 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, []);
 
-  // Approve tool always
-  const approveToolAlways = useCallback(async (requestId, toolName) => {
+  // Approve tool always - saves permission pattern like "Bash(kubectl get:*)"
+  const approveToolAlways = useCallback(async (requestId, permissionPattern) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected');
       return;
     }
 
     try {
-      // 1. Save preference to backend
-      if (authTokenRef.current && toolName) {
+      // 1. Save permission pattern to backend (e.g., "Bash(kubectl get:*)")
+      if (authTokenRef.current && permissionPattern) {
         try {
           // Set token for API client if not already set
           if (!apiClient.token) {
             apiClient.setToken(authTokenRef.current);
           }
 
-          await apiClient.addAllowedTool(toolName);
-          console.log('Tool added to allowed list:', toolName);
+          await apiClient.addAllowedTool(permissionPattern);
+          console.log('Permission pattern added to allowed list:', permissionPattern);
         } catch (err) {
           console.error('Failed to save allowed tool preference:', err);
           // Continue to approve anyway
@@ -566,6 +653,9 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
         allow: 'no'
       }));
 
+      // Agent will continue processing (may try different approach or complete)
+      setIsSending(true);
+
       // Mark the message as denied
       setMessages(prev => prev.map(msg =>
         msg.request_id === requestId
@@ -582,12 +672,60 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, []);
 
-  // Reset session
+  // Reset session and conversation completely
   const resetSession = useCallback(() => {
     setMessages([]);
     setSessionId(null);
+    setConversationId(null);
     localStorage.removeItem('claude_session_id');
-    console.log('Session reset');
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Session and conversation reset');
+  }, []);
+
+  // Start a new conversation (keeps WebSocket session, clears conversation)
+  const newConversation = useCallback(() => {
+    setMessages([]);
+    setConversationId(null);
+    setTodos([]);
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Started new conversation');
+  }, []);
+
+  // Resume an existing conversation by ID and load previous messages
+  const resumeConversation = useCallback(async (convId) => {
+    setMessages([]);
+    setConversationId(convId);
+    setTodos([]);
+    localStorage.setItem('claude_conversation_id', convId);
+    console.log('Resuming conversation:', convId);
+
+    // Load previous messages from API
+    try {
+      if (authTokenRef.current) {
+        // Set token for API client if not already set
+        if (!apiClient.token) {
+          apiClient.setToken(authTokenRef.current);
+        }
+
+        const response = await apiClient.getConversationMessages(convId);
+        if (response.success && response.messages) {
+          // Convert DB messages to UI format
+          const loadedMessages = response.messages.map(msg => ({
+            role: msg.role,
+            content: msg.content || '',
+            type: msg.message_type || 'text',
+            timestamp: msg.created_at,
+            isStreaming: false,
+            isHistory: true  // Mark as history so UI can style differently if needed
+          }));
+          setMessages(loadedMessages);
+          console.log('Loaded', loadedMessages.length, 'messages from history');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load conversation messages:', err);
+      // Continue anyway - user can still send new messages
+    }
   }, []);
 
   // Send interrupt request
@@ -671,7 +809,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     stopStreaming,
     sendInterrupt,
     sessionId,
+    conversationId,
     resetSession,
+    newConversation,
+    resumeConversation,
     pendingApprovals, // Changed from pendingApproval to array
     approveTool,
     approveToolAlways,

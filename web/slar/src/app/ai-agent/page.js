@@ -9,6 +9,7 @@ import {
   ChatHeader,
   MessagesList,
   TodoList,
+  ConversationHistory,
   statusColor,
   severityColor,
   useAutoScroll,
@@ -23,6 +24,7 @@ function AIAgentContent() {
   const searchParams = useSearchParams();
   const incidentId = searchParams.get('incident');
   const [input, setInput] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   const endRef = useRef(null);
   const messageAreaRef = useRef(null);
 
@@ -53,14 +55,21 @@ function AIAgentContent() {
     sendMessage,
     stopStreaming,
     sessionId,
+    conversationId,
     resetSession,
+    newConversation,
+    resumeConversation,
     pendingApprovals,
     approveTool,
     approveToolAlways,
     denyTool,
     todos,
     connect: connectWebSocket,
-  } = useClaudeWebSocket(authToken, { autoConnect: false });
+  } = useClaudeWebSocket(authToken, {
+    autoConnect: false,
+    orgId: currentOrg?.id,
+    projectId: currentProject?.id
+  });
 
   // Handle chat submit
   const handleSubmit = useCallback(async (e) => {
@@ -85,6 +94,18 @@ function AIAgentContent() {
     console.log('Session reset. New session will be created on next message.');
   }, [resetSession]);
 
+  // Handle new conversation from history sidebar
+  const handleNewConversation = useCallback(() => {
+    newConversation();
+    console.log('Started new conversation');
+  }, [newConversation]);
+
+  // Handle resume conversation from history sidebar
+  const handleResumeConversation = useCallback((convId) => {
+    resumeConversation(convId);
+    console.log('Resuming conversation:', convId);
+  }, [resumeConversation]);
+
   // Handle input change
   const handleInputChange = useCallback((e) => {
     setInput(e.target.value);
@@ -106,13 +127,15 @@ function AIAgentContent() {
     }
   }, [authToken, syncBucket]);
 
-  // Connect WebSocket after successful sync
+  // Connect WebSocket after successful sync AND auth token is available
   useEffect(() => {
-    if (syncStatus === 'ready') {
-      console.log('Sync complete, connecting WebSocket...');
+    if (syncStatus === 'ready' && authToken) {
+      console.log('Sync complete and auth ready, connecting WebSocket...');
       connectWebSocket();
+    } else if (syncStatus === 'ready' && !authToken) {
+      console.log('Sync complete but waiting for auth token...');
     }
-  }, [syncStatus, connectWebSocket]);
+  }, [syncStatus, authToken, connectWebSocket]);
 
   // Handle regenerate message
   const handleRegenerate = useCallback((message) => {
@@ -140,6 +163,29 @@ function AIAgentContent() {
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-950">
+      {/* Conversation History Sidebar */}
+      <ConversationHistory
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        onNewConversation={handleNewConversation}
+        onResumeConversation={handleResumeConversation}
+        currentConversationId={conversationId}
+        authToken={authToken}
+      />
+
+      {/* History Toggle Button - Fixed Position Right */}
+      {(syncStatus === 'ready' || syncStatus === 'idle') && (
+        <button
+          onClick={() => setShowHistory(true)}
+          className="fixed top-20 right-4 z-40 p-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          title="Conversation History"
+        >
+          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+      )}
+
       {/* Loading State - Syncing Bucket */}
       {syncStatus === 'syncing' && (
         <div className="flex-1 flex items-center justify-center px-4">
@@ -214,9 +260,11 @@ function AIAgentContent() {
             onStop={stopStreaming}
             isSending={isSending}
             sessionId={sessionId}
-            onSessionReset={handleSessionReset}
+            onNewChat={handleNewConversation}
             syncStatus={syncStatus}
             todos={todos}
+            conversationId={conversationId}
+            hasMessages={messages.length > 0}
           />
         </>
       )}

@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { href: '/agent-config', label: 'Integrations' },
   { href: '/organizations', label: 'Organizations' },
   { href: '/projects', label: 'Projects' },
+  { href: '/audit', label: 'Audit Logs' },
 ];
 
 export default function MobileNav() {

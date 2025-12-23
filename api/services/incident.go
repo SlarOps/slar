@@ -273,6 +273,12 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 		argIndex++
 	}
 
+	if priority, ok := filters["priority"].(string); ok && priority != "" {
+		query += fmt.Sprintf(" AND i.priority = $%d", argIndex)
+		args = append(args, priority)
+		argIndex++
+	}
+
 	if assignedTo, ok := filters["assigned_to"].(string); ok && assignedTo != "" {
 		if assignedTo == "unassigned" {
 			query += " AND i.assigned_to IS NULL"

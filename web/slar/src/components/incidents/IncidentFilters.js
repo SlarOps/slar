@@ -157,7 +157,7 @@ export default function IncidentFilters({
           </div>
 
           {/* Dropdown Filters */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
             {/* Service Filter */}
             <div>
               <Select
@@ -203,6 +203,23 @@ export default function IncidentFilters({
                   { value: 'high', label: 'High' },
                   { value: 'normal', label: 'Normal' },
                   { value: 'low', label: 'Low' }
+                ]}
+              />
+            </div>
+
+            {/* Priority Filter */}
+            <div>
+              <Select
+                value={filters.priority || ''}
+                onChange={(value) => handleFilterChange('priority', value)}
+                placeholder="Priority"
+                options={[
+                  { value: '', label: 'All Priorities' },
+                  { value: 'P1', label: 'P1 - Critical' },
+                  { value: 'P2', label: 'P2 - High' },
+                  { value: 'P3', label: 'P3 - Medium' },
+                  { value: 'P4', label: 'P4 - Low' },
+                  { value: 'P5', label: 'P5 - Info' }
                 ]}
               />
             </div>

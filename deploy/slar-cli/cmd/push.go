@@ -14,23 +14,49 @@ import (
 var (
 	registry string
 	tag      string
+	services []string
 )
 
+// All available services
+var allServices = []string{"web", "api", "ai", "slack-worker"}
+
+// Service to target image name mapping
+var serviceImageMap = map[string]string{
+	"web":          "slar-web",
+	"api":          "slar-api",
+	"ai":           "slar-ai",
+	"slack-worker": "slar-slack-worker",
+}
+
 var pushCmd = &cobra.Command{
-	Use:   "push",
+	Use:   "push [services...]",
 	Short: "Build and push Docker images",
-	Long:  `Build Next.js app, build Docker images, and push to registry.`,
+	Long: `Build Next.js app, build Docker images, and push to registry.
+
+Examples:
+  slar push                    # Build and push all services
+  slar push ai                 # Build and push only AI service
+  slar push api ai             # Build and push API and AI services
+  slar push --registry=myregistry.io/myorg --tag=2.0.0 web api`,
 	Run: func(cmd *cobra.Command, args []string) {
-		runPush()
+		targetServices := getTargetServices(args)
+		runPush(targetServices)
 	},
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build",
+	Use:   "build [services...]",
 	Short: "Build Docker images only",
-	Long:  `Build Next.js app and Docker images without pushing.`,
+	Long: `Build Next.js app and Docker images without pushing.
+
+Examples:
+  slar build                   # Build all services
+  slar build ai                # Build only AI service
+  slar build api ai            # Build API and AI services
+  slar build --tag=2.0.0 web   # Build web service with custom tag`,
 	Run: func(cmd *cobra.Command, args []string) {
-		runBuildOnly()
+		targetServices := getTargetServices(args)
+		runBuildOnly(targetServices)
 	},
 }
 
@@ -45,23 +71,67 @@ func init() {
 	}
 }
 
-func runPush() {
-	log("Starting push process...")
-	checkEnv()
-	fixLineEndings()
-	buildNextJS()
-	buildImages(registry, tag)
-	tagImages(registry, tag)
-	pushImages(registry, tag)
+// getTargetServices returns the list of services to build/push
+// If no args provided, returns all services
+func getTargetServices(args []string) []string {
+	if len(args) == 0 {
+		return allServices
+	}
+
+	// Validate provided services
+	var validServices []string
+	for _, svc := range args {
+		svc = strings.ToLower(strings.TrimSpace(svc))
+		if _, ok := serviceImageMap[svc]; ok {
+			validServices = append(validServices, svc)
+		} else {
+			fmt.Printf("Warning: Unknown service '%s', skipping. Available: %v\n", svc, allServices)
+		}
+	}
+
+	if len(validServices) == 0 {
+		logError(fmt.Sprintf("No valid services specified. Available services: %v", allServices))
+	}
+
+	return validServices
 }
 
-func runBuildOnly() {
-	log("Starting build process...")
+func runPush(targetServices []string) {
+	log(fmt.Sprintf("Starting push process for services: %v", targetServices))
 	checkEnv()
 	fixLineEndings()
-	buildNextJS()
-	buildImages(registry, tag)
-	tagImages(registry, tag)
+
+	// Only build Next.js if web is in target services
+	if containsService(targetServices, "web") {
+		buildNextJS()
+	}
+
+	buildImages(registry, tag, targetServices)
+	tagImages(registry, tag, targetServices)
+	pushImages(registry, tag, targetServices)
+}
+
+func runBuildOnly(targetServices []string) {
+	log(fmt.Sprintf("Starting build process for services: %v", targetServices))
+	checkEnv()
+	fixLineEndings()
+
+	// Only build Next.js if web is in target services
+	if containsService(targetServices, "web") {
+		buildNextJS()
+	}
+
+	buildImages(registry, tag, targetServices)
+	tagImages(registry, tag, targetServices)
+}
+
+func containsService(services []string, target string) bool {
+	for _, s := range services {
+		if s == target {
+			return true
+		}
+	}
+	return false
 }
 
 // Helpers
@@ -127,10 +197,10 @@ func buildNextJS() {
 	log("Next.js build completed")
 }
 
-func buildImages(reg, t string) {
-	log("Building Docker images...")
-	
-	deployDir := "../docker" 
+func buildImages(reg, t string, targetServices []string) {
+	log(fmt.Sprintf("Building Docker images for: %v", targetServices))
+
+	deployDir := "../docker"
 	composeFile := filepath.Join(deployDir, "docker-compose.yaml")
 	tempComposeFile := filepath.Join(deployDir, "docker-compose.tmp.yaml")
 
@@ -140,49 +210,39 @@ func buildImages(reg, t string) {
 	}
 
 	// Just copy the file since we are handling tagging manually now
-	// (Replacing registry URL is not needed if compose doesn't use it, but harmless)
 	ioutil.WriteFile(tempComposeFile, content, 0644)
 
 	defer os.Remove(tempComposeFile)
 
+	// Build only specified services
 	// Use -p slar to ensure deterministic image names (slar-api, slar-web etc)
-	runCommand("docker", []string{"compose", "-p", "slar", "-f", "docker-compose.tmp.yaml", "build"}, deployDir)
+	args := []string{"compose", "-p", "slar", "-f", "docker-compose.tmp.yaml", "build"}
+	args = append(args, targetServices...)
+
+	runCommand("docker", args, deployDir)
 	log("Images built")
 }
 
-func tagImages(reg, t string) {
+func tagImages(reg, t string, targetServices []string) {
 	log("Tagging images...")
-	
-	// Map service name (as defined in docker-compose) to target image name suffix
-	// With -p slar, the source images will be named "slar-<service>"
-	services := map[string]string{
-		"web":          "slar-web",
-		"api":          "slar-api",
-		"ai":           "slar-ai",
-		"slack-worker": "slar-slack-worker",
-	}
 
-	for svc, targetName := range services {
+	for _, svc := range targetServices {
+		targetName := serviceImageMap[svc]
 		sourceImage := fmt.Sprintf("slar-%s", svc)
 		targetImage := fmt.Sprintf("%s/%s:%s", reg, targetName, t)
-		
+
 		log(fmt.Sprintf("  %s -> %s", sourceImage, targetImage))
 		runCommand("docker", []string{"tag", sourceImage, targetImage}, "")
 	}
 	log("Images tagged")
 }
 
-func pushImages(reg, t string) {
+func pushImages(reg, t string, targetServices []string) {
 	log(fmt.Sprintf("Pushing images to %s...", reg))
-	
-	images := []string{
-		fmt.Sprintf("%s/slar-web:%s", reg, t),
-		fmt.Sprintf("%s/slar-api:%s", reg, t),
-		fmt.Sprintf("%s/slar-ai:%s", reg, t),
-		fmt.Sprintf("%s/slar-slack-worker:%s", reg, t),
-	}
 
-	for _, img := range images {
+	for _, svc := range targetServices {
+		targetName := serviceImageMap[svc]
+		img := fmt.Sprintf("%s/%s:%s", reg, targetName, t)
 		log(fmt.Sprintf("Pushing %s...", img))
 		runCommand("docker", []string{"push", img}, "")
 	}

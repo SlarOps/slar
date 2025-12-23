@@ -2,6 +2,7 @@
 export { default as MessageComponent } from './MessageComponent';
 export { default as ChatHeader } from './ChatHeader';
 export { default as MessagesList } from './MessagesList';
+export { default as ConversationHistory } from './ConversationHistory';
 
 export { Badge } from './Badge';
 export { TodoList } from './TodoList';

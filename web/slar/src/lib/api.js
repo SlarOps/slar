@@ -1536,6 +1536,68 @@ class APIClient {
     return response.json();
   }
 
+  // ===========================
+  // CLAUDE CONVERSATIONS APIs
+  // ===========================
+
+  /**
+   * Get user's conversation history for resume functionality
+   * @param {object} options - { limit: 20, offset: 0, archived: false }
+   * @returns {Promise<object>} { success, conversations: [...], total }
+   */
+  async getConversations(options = {}) {
+    const params = new URLSearchParams();
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.offset) params.append('offset', options.offset.toString());
+    if (options.archived) params.append('archived', 'true');
+
+    const queryString = params.toString();
+    return this.request(`/api/conversations${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get a specific conversation by ID
+   * @param {string} conversationId - Claude conversation ID
+   * @returns {Promise<object>} { success, conversation }
+   */
+  async getConversation(conversationId) {
+    return this.request(`/api/conversations/${conversationId}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get messages for a conversation (for resume/history display)
+   * @param {string} conversationId - Claude conversation ID
+   * @param {number} limit - Max messages to return (default: 100)
+   * @returns {Promise<object>} { success, messages }
+   */
+  async getConversationMessages(conversationId, limit = 100) {
+    return this.request(`/api/conversations/${conversationId}/messages?limit=${limit}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Update conversation metadata (title, archive status)
+   * @param {string} conversationId - Claude conversation ID
+   * @param {object} data - { title?: string, is_archived?: boolean }
+   * @returns {Promise<object>} { success, message }
+   */
+  async updateConversation(conversationId, data) {
+    return this.request(`/api/conversations/${conversationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete a conversation
+   * @param {string} conversationId - Claude conversation ID
+   * @returns {Promise<object>} { success, message }
+   */
+  async deleteConversation(conversationId) {
+    return this.request(`/api/conversations/${conversationId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
   // AI Agent endpoints
   async addAllowedTool(toolName) {
     return this.request('/api/allowed-tools', {
@@ -1942,6 +2004,144 @@ class APIClient {
     return this.request(`/api/marketplace/${encodeURIComponent(marketplaceName)}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
+  }
+
+  // ========================================
+  // AI Agent Audit Logs
+  // ========================================
+
+  /**
+   * Get audit logs for AI Agent
+   * ReBAC: org_id is required for tenant isolation
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} [filters.project_id] - Project ID (optional)
+   * @param {string} [filters.event_category] - Filter by category (session, chat, tool, security)
+   * @param {string} [filters.event_type] - Filter by specific event type
+   * @param {string} [filters.status] - Filter by status (success, failure, pending)
+   * @param {string} [filters.user_id] - Filter by specific user
+   * @param {string} [filters.session_id] - Filter by session ID
+   * @param {string} [filters.start_date] - Start date (ISO string)
+   * @param {string} [filters.end_date] - End date (ISO string)
+   * @param {number} [filters.limit] - Max results (default 50)
+   * @param {number} [filters.offset] - Pagination offset
+   * @returns {Promise<object>} { success, logs, total }
+   */
+  async getAuditLogs(filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id MANDATORY, project_id OPTIONAL
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    // Audit-specific filters
+    if (filters.event_category) params.append('event_category', filters.event_category);
+    if (filters.event_type) params.append('event_type', filters.event_type);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.user_id) params.append('user_id', filters.user_id);
+    if (filters.session_id) params.append('session_id', filters.session_id);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+    if (filters.limit) params.append('limit', filters.limit.toString());
+    if (filters.offset) params.append('offset', filters.offset.toString());
+
+    const queryString = params.toString();
+    return this.request(`/api/audit-logs${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get audit log statistics/summary
+   * @param {object} filters - Query filters (same as getAuditLogs)
+   * @returns {Promise<object>} { success, stats }
+   */
+  async getAuditStats(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+
+    const queryString = params.toString();
+    return this.request(`/api/audit-logs/stats${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Export audit logs to CSV
+   * @param {object} filters - Query filters
+   * @returns {Promise<Blob>} CSV file blob
+   */
+  async exportAuditLogs(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.event_category) params.append('event_category', filters.event_category);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+
+    const queryString = params.toString();
+    const url = `${this.aiBaseURL}/api/audit-logs/export${queryString ? `?${queryString}` : ''}`;
+
+    const response = await fetch(url, {
+      headers: {
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  // ========================================
+  // Conversation Sharing
+  // ========================================
+
+  /**
+   * Create a share link for a conversation
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @param {object} options - Share options
+   * @param {string} [options.title] - Custom title for the share
+   * @param {string} [options.description] - Description/context
+   * @param {number} [options.expires_in] - Expiry in hours (default 168 = 7 days)
+   * @returns {Promise<{share: object, share_url: string}>}
+   */
+  async createConversationShare(conversationId, options = {}) {
+    return this.request(`/conversations/${conversationId}/share`, {
+      method: 'POST',
+      body: JSON.stringify(options)
+    });
+  }
+
+  /**
+   * Get shared conversation (public - no auth required)
+   * @param {string} shareToken - Share token from URL
+   * @returns {Promise<object>} Shared conversation with messages
+   */
+  async getSharedConversation(shareToken) {
+    return this.request(`/shared/${shareToken}`, {}, this.baseURL);
+  }
+
+  /**
+   * List all share links for a conversation
+   * @param {string} conversationId - Conversation ID
+   * @returns {Promise<{shares: object[]}>}
+   */
+  async listConversationShares(conversationId) {
+    return this.request(`/conversations/${conversationId}/shares`);
+  }
+
+  /**
+   * Revoke a share link
+   * @param {string} conversationId - Conversation ID
+   * @param {string} shareId - Share ID to revoke
+   * @returns {Promise<{success: boolean}>}
+   */
+  async revokeConversationShare(conversationId, shareId) {
+    return this.request(`/conversations/${conversationId}/shares/${shareId}`, {
+      method: 'DELETE'
+    });
   }
 }
 

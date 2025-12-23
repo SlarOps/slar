@@ -4,6 +4,7 @@ export { default as Modal, ModalFooter, ModalButton, ConfirmationModal, LoadingM
 export { default as MembersModal } from './MembersModal';
 export { default as SlideOver, SlideOverSection, SlideOverFooter } from './SlideOver';
 export { default as MarkdownRenderer } from './MarkdownRenderer';
+export { ShareModal } from './ShareModal';
 
 // Form Components
 export { default as Input } from './Input';

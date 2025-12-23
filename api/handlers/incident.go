@@ -69,6 +69,9 @@ func (h *IncidentHandler) ListIncidents(c *gin.Context) {
 	if severity := c.Query("severity"); severity != "" {
 		filters["severity"] = severity
 	}
+	if priority := c.Query("priority"); priority != "" {
+		filters["priority"] = priority
+	}
 	if assignedTo := c.Query("assigned_to"); assignedTo != "" {
 		filters["assigned_to"] = assignedTo
 	}

@@ -79,9 +79,9 @@ func (h *AgentHandler) GenerateDeviceCertificate(c *gin.Context) {
 		return
 	}
 
-	// Certificate validity: 24 hours
+	// Certificate validity: 7 days (increased from 24h for better UX)
 	now := time.Now()
-	expiresAt := now.Add(24 * time.Hour)
+	expiresAt := now.Add(7 * 24 * time.Hour)
 
 	// Build certificate payload (to be signed)
 	certPayload := map[string]interface{}{
