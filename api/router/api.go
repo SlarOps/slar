@@ -53,7 +53,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
 	serviceService := services.NewServiceService(pg)         // NEW: Service management
 	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
-	identityService, err := services.NewIdentityService(config.App.DataDir) // Initialize IdentityService
+	identityService, err := services.NewIdentityServiceWithDB(config.App.DataDir, pg, "") // Initialize IdentityService with DB for K8s persistence
 	if err != nil {
 		log.Printf("Warning: Failed to initialize identity service: %v", err)
 	}
