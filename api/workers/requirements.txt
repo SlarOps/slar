@@ -24,7 +24,7 @@ distro==1.9.0
 durationpy==0.10
 Events==0.5
 fastapi==0.116.2
-filelock==3.19.1
+filelock==3.20.1
 flatbuffers==25.2.10
 frozenlist==1.7.0
 fsspec==2025.9.0
