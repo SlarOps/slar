@@ -139,3 +139,4 @@ Icon
 .Trashes
 .config.*.yaml
 config.*.yaml
+*.config.yaml

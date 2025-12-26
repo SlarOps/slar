@@ -2,10 +2,12 @@ package services
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -61,29 +63,43 @@ func (s *SupabaseAuthService) ValidateSupabaseToken(tokenString string) (*Supaba
 		return nil, fmt.Errorf("failed to parse token: %v", err)
 	}
 
+	// Log token header for debugging
+	fmt.Printf("DEBUG: Token algorithm: %v\n", token.Header["alg"])
+	fmt.Printf("DEBUG: Token kid: %v\n", token.Header["kid"])
+	fmt.Printf("DEBUG: JWT Secret present: %v\n", s.JWTSecret != "")
+
 	// Get the key ID from token header
 	var keyID string
 	if kid, ok := token.Header["kid"].(string); ok {
 		keyID = kid
 	}
 
-	// Try to validate with JWT secret first (for service role tokens)
-	if s.JWTSecret != "" {
+	// Get the signing algorithm
+	alg, _ := token.Header["alg"].(string)
+
+	// Try to validate with JWT secret first (for HS256 tokens like service role)
+	if s.JWTSecret != "" && alg == "HS256" {
+		fmt.Println("DEBUG: Attempting HS256 validation with JWT secret")
 		if claims, err := s.validateWithSecret(tokenString); err == nil {
 			return claims, nil
+		} else {
+			fmt.Printf("DEBUG: HS256 validation failed: %v\n", err)
 		}
 	}
 
-	// If JWT secret validation fails, try JWKS validation (for user tokens)
+	// If JWT secret validation fails, try JWKS validation (for RS256 user tokens)
 	if keyID != "" {
+		fmt.Println("DEBUG: Attempting JWKS validation")
 		publicKey, err := s.getPublicKey(keyID)
 		if err != nil {
+			fmt.Printf("DEBUG: Failed to get public key: %v\n", err)
 			return nil, fmt.Errorf("failed to get public key: %v", err)
 		}
 
 		return s.validateWithPublicKey(tokenString, publicKey)
 	}
 
+	fmt.Println("DEBUG: No valid validation method found")
 	return nil, errors.New("invalid token: no valid validation method found")
 }
 
@@ -179,10 +195,29 @@ func (s *SupabaseAuthService) getPublicKey(keyID string) (*rsa.PublicKey, error)
 
 // parseRSAPublicKey creates RSA public key from JWK parameters
 func (s *SupabaseAuthService) parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
-	// This is a simplified implementation
-	// In production, you'd want to use a proper JWK library
-	// For now, we'll return an error and handle it gracefully
-	return nil, errors.New("RSA public key parsing not implemented - use JWT secret instead")
+	// Decode base64url-encoded modulus (n)
+	nBytes, err := base64.RawURLEncoding.DecodeString(nStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode modulus: %v", err)
+	}
+
+	// Decode base64url-encoded exponent (e)
+	eBytes, err := base64.RawURLEncoding.DecodeString(eStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode exponent: %v", err)
+	}
+
+	// Convert bytes to big integers
+	n := new(big.Int).SetBytes(nBytes)
+	e := new(big.Int).SetBytes(eBytes)
+
+	// Create RSA public key
+	publicKey := &rsa.PublicKey{
+		N: n,
+		E: int(e.Int64()),
+	}
+
+	return publicKey, nil
 }
 
 // ExtractTokenFromHeader extracts token from Authorization header
