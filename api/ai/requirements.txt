@@ -7,7 +7,7 @@ anyio==4.11.0
 attrs==25.4.0
 certifi==2025.10.5
 cffi==2.0.0
-claude-agent-sdk==0.1.6
+claude-agent-sdk==0.1.8
 click==8.3.0
 cryptography==46.0.3
 fastapi==0.120.4
