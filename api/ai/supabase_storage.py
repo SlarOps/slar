@@ -19,17 +19,13 @@ from typing import Dict, Optional, Any, List
 from supabase import create_client, Client
 import jwt
 from database_util import execute_query
+from config import config
 
 logger = logging.getLogger(__name__)
 
 MCP_FILE_NAME = ".mcp.json"
 CLAUDE_SKILLS_DIR = ".claude/skills"  # Skills location in both bucket and workspace
 CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in both bucket and workspace
-
-# Supabase configuration from environment
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 
 # Workspace configuration
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
@@ -47,13 +43,13 @@ def get_supabase_client() -> Client:
     Raises:
         ValueError: If environment variables are not set
     """
-    if not SUPABASE_URL:
+    if not config.supabase_url:
         raise ValueError("SUPABASE_URL environment variable not set")
 
-    if not SUPABASE_SERVICE_ROLE_KEY:
+    if not config.supabase_service_role_key:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY environment variable not set")
 
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    return create_client(config.supabase_url, config.supabase_service_role_key)
 
 
 def get_user_workspace_path(user_id: str) -> Path:
@@ -167,7 +163,7 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         logger.warning("⚠️ No auth token provided")
         return None
 
-    if not SUPABASE_JWT_SECRET:
+    if not config.supabase_jwt_secret:
         logger.error("🚨 SUPABASE_JWT_SECRET not set - cannot verify tokens!")
         return None
 
@@ -179,7 +175,7 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         # This prevents token forgery attacks
         decoded = jwt.decode(
             token,
-            SUPABASE_JWT_SECRET,
+            config.supabase_jwt_secret,
             algorithms=["HS256"],
             options={
                 "verify_signature": True,  # CRITICAL: Must verify signature

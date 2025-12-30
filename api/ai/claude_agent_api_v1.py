@@ -81,6 +81,7 @@ from routes_mcp import router as mcp_router
 from routes_tools import router as tools_router
 from routes_memory import router as memory_router
 from routes_marketplace import router as marketplace_router
+from incident_analytics import start_pgmq_consumer, stop_pgmq_consumer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -230,6 +231,10 @@ async def lifespan(app: FastAPI):
     await init_audit_service()
     logger.info("📝 Audit service initialized")
 
+    # Start PGMQ consumer for incident analytics
+    await start_pgmq_consumer()
+    logger.info("🤖 Incident analytics PGMQ consumer started")
+
     # No background workers needed anymore:
     # - heartbeat_task is per-connection (called in websocket endpoint)
     # - marketplace cleanup is now synchronous (no worker needed)
@@ -240,6 +245,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("🛑 Stopping application...")
+
+    # Stop PGMQ consumer
+    await stop_pgmq_consumer()
+    logger.info("🤖 Incident analytics PGMQ consumer stopped")
 
     # Shutdown audit service (flush remaining events)
     await shutdown_audit_service()

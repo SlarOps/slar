@@ -67,9 +67,11 @@ func LoadConfig(path string) error {
 	if path != "" {
 		v.SetConfigFile(path)
 	} else {
-		v.AddConfigPath(".")
-		v.AddConfigPath("./config")
-		v.SetConfigName("config")
+		// Try to find config file in multiple locations
+		v.AddConfigPath("./config")           // api/config/
+		v.AddConfigPath("./cmd/server")       // api/cmd/server/ (legacy)
+		v.AddConfigPath(".")                  // current directory
+		v.SetConfigName("dev.config")         // Look for dev.config.yaml
 		v.SetConfigType("yaml")
 	}
 

@@ -77,7 +77,13 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 	// Initialize handlers
 	alertHandler := handlers.NewAlertHandler(alertService)
-	incidentHandler := handlers.NewIncidentHandler(incidentService, serviceService, projectService, authzBackend) // NEW: Incident handler with ReBAC
+	// Initialize analytics service for AI-powered incident analysis
+	analyticsService := services.NewIncidentAnalyticsService(pg)
+	if err := analyticsService.CreateQueueIfNotExists(); err != nil {
+		log.Printf("⚠️  Warning: Failed to create analytics queue: %v", err)
+	}
+
+	incidentHandler := handlers.NewIncidentHandler(incidentService, serviceService, projectService, authzBackend, analyticsService) // NEW: Incident handler with ReBAC
 	userHandler := handlers.NewUserHandler(userService)
 	uptimeHandler := handlers.NewUptimeHandler(uptimeService)
 	alertManagerHandler := handlers.NewAlertManagerHandler(alertManagerService)

@@ -1,12 +1,10 @@
-import os
 import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
+from config import config
 
 logger = logging.getLogger(__name__)
-
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 @contextmanager
 def get_db_connection():
@@ -17,10 +15,10 @@ def get_db_connection():
     """
     conn = None
     try:
-        if not DATABASE_URL:
+        if not config.database_url:
             raise ValueError("DATABASE_URL environment variable is not set")
-            
-        conn = psycopg2.connect(DATABASE_URL)
+
+        conn = psycopg2.connect(config.database_url)
         yield conn
     except Exception as e:
         logger.error(f"❌ Database connection error: {e}")
