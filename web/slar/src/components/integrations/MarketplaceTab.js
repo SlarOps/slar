@@ -6,6 +6,7 @@ import { toast } from '../ui';
 import {
   MagnifyingGlassIcon,
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   CheckCircleIcon,
   PlusIcon,
   TrashIcon,
@@ -17,7 +18,8 @@ import apiClient from '../../lib/api';
 import {
   fetchPluginsFromMarketplace,
   parseGitHubUrl,
-  fetchMarketplaceMetadata
+  fetchMarketplaceMetadata,
+  updateMarketplace
 } from '../../lib/marketplaceGithub';
 import {
   getInstalledPluginsFromDB,
@@ -41,6 +43,9 @@ export default function MarketplaceTab() {
   const [newRepoUrl, setNewRepoUrl] = useState('');
   const [addingRepo, setAddingRepo] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
+
+  // Update marketplace state
+  const [updatingMarketplaces, setUpdatingMarketplaces] = useState(new Set());
 
   useEffect(() => {
     loadMarketplaces();
@@ -89,8 +94,8 @@ export default function MarketplaceTab() {
       setMarketplaces(userMarketplaces);
 
       // Load installed plugins from PostgreSQL (instant!)
-      if (session?.user?.id) {
-        const installedResult = await getInstalledPluginsFromDB(session.user.id);
+      if (session?.user?.id && session?.access_token) {
+        const installedResult = await getInstalledPluginsFromDB(session.user.id, session.access_token);
         if (installedResult.success) {
           // Convert plugins array to set of plugin IDs
           const pluginIds = new Set();
@@ -114,11 +119,11 @@ export default function MarketplaceTab() {
         console.log('[MarketplaceTab] 🔍 Processing marketplace:', marketplace);
 
         // Try loading from PostgreSQL first (instant, no lag!)
-        if (session?.user?.id && marketplace.name) {
+        if (session?.user?.id && session?.access_token && marketplace.name) {
           console.log(`[MarketplaceTab] 💾 Loading marketplace "${marketplace.name}" from PostgreSQL...`);
           console.log(`[MarketplaceTab]    User ID: ${session.user.id}`);
 
-          const dbResult = await loadMarketplaceFromDB(session.user.id, marketplace.name);
+          const dbResult = await loadMarketplaceFromDB(session.user.id, marketplace.name, session.access_token);
 
           console.log(`[MarketplaceTab] 📦 PostgreSQL result for "${marketplace.name}":`, dbResult);
 
@@ -365,6 +370,51 @@ export default function MarketplaceTab() {
     }
   };
 
+  const handleUpdateMarketplace = async (marketplaceUrl) => {
+    const marketplace = marketplaces.find(m => m.url === marketplaceUrl);
+    if (!marketplace || !marketplace.name) {
+      toast.error('Marketplace name not found. Cannot update.');
+      return;
+    }
+
+    const marketplaceName = marketplace.name;
+
+    // Add to updating set
+    setUpdatingMarketplaces(prev => new Set(prev).add(marketplaceUrl));
+
+    let toastId;
+    try {
+      toastId = toast.loading(`Updating "${marketplaceName}"...`);
+
+      const result = await updateMarketplace(marketplaceName, session?.access_token);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to update marketplace');
+      }
+
+      if (toastId) toast.dismiss(toastId);
+
+      if (result.hadChanges) {
+        toast.success(`Marketplace "${marketplaceName}" updated! (${result.oldCommitSha?.slice(0, 7)} → ${result.newCommitSha?.slice(0, 7)})`);
+        // Reload marketplace data to reflect changes
+        await loadMarketplaces();
+      } else {
+        toast.success(`Marketplace "${marketplaceName}" is already up to date.`);
+      }
+    } catch (error) {
+      console.error('[MarketplaceTab] Failed to update marketplace:', error);
+      if (toastId) toast.dismiss(toastId);
+      toast.error(`Failed to update marketplace: ${error.message}`);
+    } finally {
+      // Remove from updating set
+      setUpdatingMarketplaces(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(marketplaceUrl);
+        return newSet;
+      });
+    }
+  };
+
   const handleRefreshMarketplaces = async () => {
     await loadMarketplaces();
     toast.success('Marketplaces refreshed');
@@ -393,10 +443,10 @@ export default function MarketplaceTab() {
 
       toastId = toast.loading(`Installing ${plugin.name}...`);
 
-      // ZIP APPROACH (FAST & EFFICIENT):
-      // - Plugin files already exist in S3 (from marketplace ZIP)
+      // GIT APPROACH (FAST & EFFICIENT):
+      // - Plugin files already exist in workspace (from git clone)
       // - This only marks the plugin as installed in PostgreSQL (instant!)
-      // - When user opens AI agent, sync_bucket will unzip only installed plugins
+      // - No unzipping needed - files are ready to use
       // - Installing a plugin gives access to ALL skills inside it
 
       console.log('[MarketplaceTab] 📦 Installing plugin (instant DB update):', {
@@ -600,13 +650,23 @@ export default function MarketplaceTab() {
                       <span className="truncate">{marketplaceUrl.replace('https://github.com/', '')}</span>
                     </a>
                   </div>
-                  <button
-                    onClick={() => handleRemoveMarketplace(marketplaceUrl)}
-                    className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors flex-shrink-0"
-                    title="Remove marketplace"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => handleUpdateMarketplace(marketplaceUrl)}
+                      disabled={updatingMarketplaces.has(marketplaceUrl)}
+                      className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors disabled:opacity-50"
+                      title="Update marketplace (git fetch)"
+                    >
+                      <ArrowPathIcon className={`h-4 w-4 ${updatingMarketplaces.has(marketplaceUrl) ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveMarketplace(marketplaceUrl)}
+                      className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                      title="Remove marketplace"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 

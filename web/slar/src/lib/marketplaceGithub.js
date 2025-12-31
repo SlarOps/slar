@@ -386,25 +386,29 @@ export async function downloadSkillFromMarketplace(owner, repo, skillPath, branc
 }
 
 /**
- * Download entire repository and upload to Supabase storage
- * Backend handles: download ZIP → extract → upload to Supabase
+ * Clone entire repository using git clone
+ * Backend handles: git clone → workspace
+ *
+ * Git-based approach (v2):
+ * - Uses shallow git clone (--depth=1) for efficiency
+ * - Updates via git fetch (incremental, fast)
+ * - No ZIP files or S3 storage needed
  */
 export async function downloadEntireMarketplace(owner, repo, branch = 'main', authToken, marketplaceName, onProgress) {
   try {
-    console.log('[marketplaceGithub] Downloading repository and uploading to storage:', { owner, repo, branch, marketplaceName });
+    console.log('[marketplaceGithub] Cloning repository via git:', { owner, repo, branch, marketplaceName });
 
     if (onProgress) {
       onProgress({
         current: 0,
         total: 1,
-        skillName: 'Downloading repository...'
+        skillName: 'Cloning repository...'
       });
     }
 
-    // Call AI service endpoint to download and upload
-    // Backend handles: GitHub download → Supabase upload
+    // Call AI service endpoint to git clone
     const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
-    const response = await fetch(`${aiServiceUrl}/api/marketplace/download-repo-zip`, {
+    const response = await fetch(`${aiServiceUrl}/api/marketplace/clone`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -414,7 +418,7 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
         owner,
         repo,
         branch: branch || 'main',
-        marketplace_name: marketplaceName || repo,
+        marketplace_name: marketplaceName || `${owner}-${repo}`,
       }),
     });
 
@@ -426,10 +430,10 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
     const data = await response.json();
 
     if (!data.success) {
-      throw new Error(data.error || 'Failed to download and upload repository');
+      throw new Error(data.error || 'Failed to clone repository');
     }
 
-    console.log(`[marketplaceGithub] ✅ ${data.message}: ${data.uploaded_count} files uploaded, ${data.skipped_count} skipped`);
+    console.log(`[marketplaceGithub] ✅ ${data.message} (commit: ${data.commit_sha?.slice(0, 8)})`);
 
     if (onProgress) {
       onProgress({
@@ -439,56 +443,89 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
       });
     }
 
-    // Load marketplace.json from Supabase to get metadata
-    // We need to fetch it from storage since backend already uploaded it
-    const marketplaceJsonPath = `.claude/plugins/marketplaces/${data.marketplace_name}/.claude-plugin/marketplace.json`;
+    // Marketplace metadata is returned directly from backend (read from git clone)
+    const marketplace = data.marketplace || {
+      name: marketplaceName || `${owner}-${repo}`,
+      owner: owner,
+      plugins: []
+    };
 
-    try {
-      const { createClient } = await import('@supabase/supabase-js');
-      const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-      );
-
-      // Decode JWT token to get user_id (client-side decode, no verification needed)
-      const userId = getUserIdFromToken(authToken);
-
-      // Download marketplace.json from storage
-      const { data: fileData, error: downloadError } = await supabase.storage
-        .from(userId)
-        .download(marketplaceJsonPath);
-
-      if (downloadError) throw downloadError;
-
-      const text = await fileData.text();
-      const marketplace = JSON.parse(text);
-
-      console.log('[marketplaceGithub] ✅ Loaded marketplace.json:', marketplace.name);
-
-      return {
-        success: true,
-        marketplace,
-        marketplaceName: data.marketplace_name,
-        uploadedCount: data.uploaded_count,
-        skippedCount: data.skipped_count
-      };
-    } catch (marketplaceError) {
-      console.warn('[marketplaceGithub] ⚠️  Could not load marketplace.json:', marketplaceError);
-      // Return success anyway since files were uploaded
-      return {
-        success: true,
-        marketplace: {
-          name: data.marketplace_name,
-          owner: owner,
-          plugins: []
-        },
-        marketplaceName: data.marketplace_name,
-        uploadedCount: data.uploaded_count,
-        skippedCount: data.skipped_count
-      };
-    }
+    return {
+      success: true,
+      marketplace,
+      marketplaceName: marketplace.name,
+      commitSha: data.commit_sha,
+      // Legacy fields for backwards compatibility
+      uploadedCount: 1,
+      skippedCount: 0
+    };
   } catch (error) {
-    console.error('[marketplaceGithub] Error downloading/uploading repository:', error);
+    console.error('[marketplaceGithub] Error cloning repository:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Update marketplace repository using git fetch
+ * Performs incremental update - much faster than re-cloning
+ */
+export async function updateMarketplace(marketplaceName, authToken, onProgress) {
+  try {
+    console.log('[marketplaceGithub] Updating marketplace via git fetch:', { marketplaceName });
+
+    if (onProgress) {
+      onProgress({
+        current: 0,
+        total: 1,
+        skillName: 'Fetching updates...'
+      });
+    }
+
+    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const response = await fetch(`${aiServiceUrl}/api/marketplace/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        auth_token: authToken,
+        marketplace_name: marketplaceName,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Backend returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to update marketplace');
+    }
+
+    if (onProgress) {
+      onProgress({
+        current: 1,
+        total: 1,
+        skillName: data.had_changes ? 'Updated!' : 'Already up to date'
+      });
+    }
+
+    console.log(`[marketplaceGithub] ✅ ${data.message}`);
+
+    return {
+      success: true,
+      hadChanges: data.had_changes,
+      oldCommitSha: data.old_commit_sha,
+      newCommitSha: data.new_commit_sha,
+      message: data.message
+    };
+  } catch (error) {
+    console.error('[marketplaceGithub] Error updating marketplace:', error);
     return {
       success: false,
       error: error.message
@@ -628,10 +665,10 @@ export async function fetchMarketplaceMetadata(owner, repo, branch = 'main', aut
 /**
  * Install a plugin from marketplace (instant DB update!).
  *
- * ZIP APPROACH (FAST & EFFICIENT):
- * - Plugin files already exist in S3 (from marketplace ZIP)
+ * Git-based approach:
+ * - Plugin files already exist in workspace from git clone
  * - This only marks the plugin as installed in PostgreSQL (instant!)
- * - When user opens AI agent, sync_bucket will unzip only installed plugins
+ * - No file copying needed - plugins are loaded directly from git repo
  *
  * @param {string} marketplaceName - Marketplace name
  * @param {string} pluginName - Plugin name

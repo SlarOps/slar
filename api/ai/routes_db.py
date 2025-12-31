@@ -9,7 +9,7 @@ import json
 import logging
 from fastapi import APIRouter, Request
 
-from database_util import execute_query
+from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
 from supabase_storage import extract_user_id_from_token
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,14 @@ async def add_installed_plugin(request: Request):
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
+
+        # Ensure user exists in users table (required for foreign key)
+        user_info = extract_user_info_from_token(auth_token)
+        ensure_user_exists(
+            user_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        )
 
         plugin_id = str(uuid_module.uuid4())
 

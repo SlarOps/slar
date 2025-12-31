@@ -7,7 +7,7 @@ replicaCount: 1
 
 # Default image settings
 image:
-  repository: 192.168.100.137:5000/
+  repository: ghcr.io/slarops/
   pullPolicy: Always
   tag: "latest"
 
@@ -210,7 +210,7 @@ components:
         secret:
           secretName: slar-secrets
           items:
-            - key: config.dev.yaml
+            - key: config.yaml
               path: config.yaml
 
     # RBAC configuration for AI pod
@@ -249,7 +249,7 @@ components:
         secret:
           secretName: slar-secrets
           items:
-            - key: config.dev.yaml
+            - key: config.yaml
               path: config.yaml
       - name: api-data
         emptyDir: {}
@@ -285,7 +285,7 @@ components:
         secret:
           secretName: slar-secrets
           items:
-            - key: config.dev.yaml
+            - key: config.yaml
               path: config.yaml
 
   web:

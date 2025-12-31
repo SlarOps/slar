@@ -2,9 +2,12 @@
 Sync routes for AI Agent API.
 
 Handles:
-- /api/sync-bucket - Sync all files from bucket to workspace
+- /api/sync-workspace - Verify plugins and sync memory (git-based approach)
 - /api/sync-mcp-config - Sync MCP config after save
 - /api/sync-skills - Sync skills after upload
+- /api/sync-marketplaces - Sync all git-based marketplaces
+
+NOTE: Bucket sync removed - plugins now come from git clone, MCP from PostgreSQL.
 """
 
 import logging
@@ -13,9 +16,16 @@ from fastapi import APIRouter, Request
 from supabase_storage import (
     extract_user_id_from_token,
     get_user_mcp_servers,
-    sync_all_from_bucket,
+    get_user_workspace_path,
+    sync_memory_to_workspace,
     sync_user_skills,
     unzip_installed_plugins,
+)
+from database_util import execute_query
+from git_utils import (
+    fetch_and_reset,
+    get_marketplace_dir,
+    is_git_repository,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,13 +49,16 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 
 
 @router.post("/sync-bucket")
-async def sync_bucket(request: Request):
+@router.post("/sync-workspace")
+async def sync_workspace(request: Request):
     """
-    Sync all files (MCP config + skills) from bucket to workspace.
+    Sync workspace: verify plugins and sync memory from PostgreSQL.
 
-    Flow:
-    1. Sync all regular files from bucket (.mcp.json, .claude/skills/, etc.)
-    2. Unzip ONLY installed plugins from marketplace ZIPs
+    Git-based approach (v2):
+    - MCP servers: Loaded from PostgreSQL (no sync needed)
+    - Plugins: Come from git clone, just verify they exist
+    - Memory (CLAUDE.md): Synced from PostgreSQL to workspace
+    - Skills: Still synced from bucket (if using skills)
 
     This endpoint should be called by frontend when user opens AI agent page,
     BEFORE opening WebSocket connection.
@@ -55,10 +68,9 @@ async def sync_bucket(request: Request):
     Returns:
         {
             "success": bool,
-            "skipped": bool,
             "message": str,
-            "files_synced": int,
-            "plugins_unzipped": int
+            "plugins_verified": int,
+            "missing_plugins": list
         }
     """
     try:
@@ -66,73 +78,172 @@ async def sync_bucket(request: Request):
         auth_token = body.get("auth_token") or request.headers.get("authorization", "")
 
         if not auth_token:
-            logger.warning("No auth token provided for bucket sync")
+            logger.warning("No auth token provided for workspace sync")
             return {
                 "success": False,
-                "skipped": False,
                 "message": "No auth token provided",
             }
 
-        logger.info("Starting bucket sync...")
-
-        # Step 1: Sync all from bucket (MCP config + skills)
-        sync_result = await sync_all_from_bucket(auth_token)
-
-        if not sync_result["success"]:
-            return sync_result
-
-        # Log sync status
-        if sync_result.get("skipped"):
-            logger.info("Bucket sync skipped (unchanged)")
-        else:
-            logger.info(f"Bucket synced: {sync_result['message']}")
-
-        # Step 2: ALWAYS unzip installed plugins (even if sync skipped)
         user_id = extract_user_id_from_token(auth_token)
-        if user_id:
-            logger.info(f"Unzipping installed plugins for user: {user_id}")
-            unzip_result = await unzip_installed_plugins(user_id)
+        if not user_id:
+            return {"success": False, "message": "Invalid auth token"}
 
-            if unzip_result["success"]:
-                logger.info(f"Unzipped {unzip_result['unzipped_count']} plugins")
+        logger.info(f"Starting workspace sync for user: {user_id}")
 
-                if sync_result.get("skipped"):
-                    message = f"Sync skipped (unchanged), unzipped {unzip_result['unzipped_count']} plugins"
-                else:
-                    message = f"Synced {sync_result.get('files_synced', 0)} files, unzipped {unzip_result['unzipped_count']} plugins"
-
-                return {
-                    "success": True,
-                    "skipped": sync_result.get("skipped", False),
-                    "message": message,
-                    "files_synced": sync_result.get("files_synced", 0),
-                    "plugins_unzipped": unzip_result["unzipped_count"],
-                }
-            else:
-                logger.warning(f"Failed to unzip plugins: {unzip_result['message']}")
-
-                if sync_result.get("skipped"):
-                    error_message = f"Sync skipped (unchanged), but failed to unzip plugins: {unzip_result['message']}"
-                else:
-                    error_message = f"Synced {sync_result.get('files_synced', 0)} files, but failed to unzip plugins: {unzip_result['message']}"
-
-                return {
-                    "success": True,
-                    "skipped": sync_result.get("skipped", False),
-                    "message": error_message,
-                    "files_synced": sync_result.get("files_synced", 0),
-                    "plugins_unzipped": 0,
-                }
+        # Step 1: Sync memory (CLAUDE.md) from PostgreSQL to workspace
+        memory_result = await sync_memory_to_workspace(user_id)
+        if memory_result["success"]:
+            logger.info(f"Memory synced: {memory_result['message']}")
         else:
-            logger.warning("Could not extract user_id from token for plugin unzip")
+            logger.warning(f"Memory sync failed: {memory_result['message']}")
 
-        return sync_result
+        # Step 2: Verify installed plugins exist (git-based approach)
+        logger.info(f"Verifying installed plugins for user: {user_id}")
+        verify_result = await unzip_installed_plugins(user_id)
+
+        verified_count = verify_result.get("verified_count", 0)
+        missing_plugins = verify_result.get("missing_plugins", [])
+
+        if verify_result["success"]:
+            logger.info(f"Verified {verified_count} plugins")
+
+            message = f"Verified {verified_count} plugins"
+            if missing_plugins:
+                message += f" ({len(missing_plugins)} missing)"
+
+            return {
+                "success": True,
+                "message": message,
+                "plugins_verified": verified_count,
+                "missing_plugins": missing_plugins,
+                "memory_synced": memory_result["success"],
+            }
+        else:
+            logger.warning(f"Failed to verify plugins: {verify_result['message']}")
+            return {
+                "success": True,  # Still success, just plugin verification issue
+                "message": f"Memory synced, but failed to verify plugins: {verify_result['message']}",
+                "plugins_verified": 0,
+                "missing_plugins": [],
+                "memory_synced": memory_result["success"],
+            }
 
     except Exception as e:
         return {
             "success": False,
-            "skipped": False,
-            "message": sanitize_error_message(e, "syncing bucket"),
+            "message": sanitize_error_message(e, "syncing workspace"),
+        }
+
+
+@router.post("/sync-marketplaces")
+async def sync_marketplaces(request: Request):
+    """
+    Sync all git-based marketplaces using git fetch.
+
+    This performs incremental updates for all cloned marketplaces.
+    Much faster than re-downloading ZIPs.
+
+    Request body: {"auth_token": "Bearer ..."}
+
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "updated_count": int,
+            "results": [...]
+        }
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        user_id = extract_user_id_from_token(auth_token)
+        if not user_id:
+            return {"success": False, "error": "Invalid auth token"}
+
+        logger.info(f"User {user_id}: Syncing all marketplaces via git fetch")
+
+        # Get all marketplaces from PostgreSQL
+        marketplaces = execute_query(
+            "SELECT name, branch, git_commit_sha FROM marketplaces WHERE user_id = %s AND status = 'active'",
+            (user_id,),
+            fetch="all"
+        )
+
+        if not marketplaces:
+            return {
+                "success": True,
+                "message": "No marketplaces to sync",
+                "updated_count": 0,
+                "results": [],
+            }
+
+        workspace_path = get_user_workspace_path(user_id)
+        results = []
+
+        for mp in marketplaces:
+            mp_name = mp["name"]
+            mp_branch = mp.get("branch", "main")
+            mp_dir = get_marketplace_dir(workspace_path, mp_name)
+
+            # Check if it's a git repository
+            if not await is_git_repository(mp_dir):
+                results.append({
+                    "marketplace": mp_name,
+                    "success": False,
+                    "error": "Not a git repository - needs clone",
+                })
+                continue
+
+            # Fetch and reset
+            success, result, had_changes = await fetch_and_reset(mp_dir, mp_branch)
+
+            if success:
+                # Update commit SHA in database
+                execute_query(
+                    """
+                    UPDATE marketplaces SET
+                        git_commit_sha = %s,
+                        last_synced_at = NOW()
+                    WHERE user_id = %s AND name = %s
+                    """,
+                    (result, user_id, mp_name),
+                    fetch="none"
+                )
+
+                results.append({
+                    "marketplace": mp_name,
+                    "success": True,
+                    "had_changes": had_changes,
+                    "commit_sha": result,
+                })
+            else:
+                results.append({
+                    "marketplace": mp_name,
+                    "success": False,
+                    "error": result,
+                })
+
+        updated_count = sum(1 for r in results if r.get("success") and r.get("had_changes"))
+        total_success = sum(1 for r in results if r.get("success"))
+
+        logger.info(f"Marketplace sync complete: {updated_count} updated, {total_success}/{len(marketplaces)} successful")
+
+        return {
+            "success": True,
+            "message": f"Synced {total_success} marketplaces ({updated_count} had updates)",
+            "updated_count": updated_count,
+            "total_synced": total_success,
+            "results": results,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": sanitize_error_message(e, "syncing marketplaces"),
         }
 
 

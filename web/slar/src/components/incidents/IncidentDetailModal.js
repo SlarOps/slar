@@ -99,6 +99,7 @@ export default function IncidentDetailModal({
       isOpen={isOpen}
       onClose={onClose}
       size="3xl"
+      title={incident?.title}
     >
       <div className="space-y-6">
         <IncidentHeader
@@ -122,7 +123,7 @@ export default function IncidentDetailModal({
           <div className="space-y-6">
             {/* Alert Information */}
             <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 md:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3>
+              {/* <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Alert Information</h3> */}
 
               <div className="space-y-4">
                 {/* Alert Title and Description */}

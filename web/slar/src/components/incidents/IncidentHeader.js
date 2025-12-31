@@ -41,9 +41,9 @@ export default function IncidentHeader({
                     </div>
                 ) : incident ? (
                     <>
-                        <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                        {/* <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white mb-1">
                             {incident.title}
-                        </h1>
+                        </h1> */}
                         <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
                             Incident #{incident.id.slice(-8)}
                         </p>

@@ -14,18 +14,20 @@ import (
 )
 
 type IncidentHandler struct {
-	incidentService *services.IncidentService
-	serviceService  *services.ServiceService // For webhook routing_key lookup
-	projectService  *authz.ProjectService    // For ReBAC - get user's accessible projects
-	authorizer      authz.Authorizer         // For granular permission checks
+	incidentService  *services.IncidentService
+	serviceService   *services.ServiceService // For webhook routing_key lookup
+	projectService   *authz.ProjectService    // For ReBAC - get user's accessible projects
+	authorizer       authz.Authorizer         // For granular permission checks
+	analyticsService *services.IncidentAnalyticsService // For AI-powered incident analysis
 }
 
-func NewIncidentHandler(incidentService *services.IncidentService, serviceService *services.ServiceService, projectService *authz.ProjectService, authorizer authz.Authorizer) *IncidentHandler {
+func NewIncidentHandler(incidentService *services.IncidentService, serviceService *services.ServiceService, projectService *authz.ProjectService, authorizer authz.Authorizer, analyticsService *services.IncidentAnalyticsService) *IncidentHandler {
 	return &IncidentHandler{
-		incidentService: incidentService,
-		serviceService:  serviceService,
-		projectService:  projectService,
-		authorizer:      authorizer,
+		incidentService:  incidentService,
+		serviceService:   serviceService,
+		projectService:   projectService,
+		authorizer:       authorizer,
+		analyticsService: analyticsService,
 	}
 }
 
@@ -260,6 +262,11 @@ func (h *IncidentHandler) CreateIncident(c *gin.Context) {
 			"details": err.Error(),
 		})
 		return
+	}
+
+	// Queue for AI analysis (non-blocking)
+	if h.analyticsService != nil {
+		h.analyticsService.QueueIncidentForAnalysisAsync(createdIncident)
 	}
 
 	c.JSON(http.StatusCreated, createdIncident)
@@ -760,6 +767,11 @@ func (h *IncidentHandler) WebhookCreateIncident(c *gin.Context) {
 				Message: "Failed to create incident",
 			})
 			return
+		}
+
+		// Queue for AI analysis (non-blocking)
+		if h.analyticsService != nil {
+			h.analyticsService.QueueIncidentForAnalysisAsync(createdIncident)
 		}
 
 		c.JSON(http.StatusCreated, db.WebhookIncidentResponse{

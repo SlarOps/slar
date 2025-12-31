@@ -1237,27 +1237,85 @@ class APIClient {
   }
 
   /**
-   * Download marketplace repository (ZIP + metadata)
+   * Clone marketplace repository (git clone)
    *
-   * Downloads entire marketplace from GitHub and saves to:
+   * Clones marketplace from GitHub using git clone:
    * - Metadata → PostgreSQL (instant reads)
-   * - Files → S3 Storage (ZIP file)
+   * - Files → Local workspace via git clone
    *
    * @param {object} data - {owner, repo, branch, marketplace_name}
-   * @returns {Promise<{success: boolean, marketplace: object}>}
+   * @returns {Promise<{success: boolean, marketplace: object, commit_sha: string}>}
    */
-  async downloadMarketplace(data) {
-    return this.request('/api/marketplace/download-repo-zip', {
+  async cloneMarketplace(data) {
+    return this.request('/api/marketplace/clone', {
       method: 'POST',
       body: JSON.stringify(data)
     }, this.aiBaseURL);
   }
 
   /**
+   * Update marketplace repository (git fetch)
+   *
+   * Performs incremental update using git fetch + reset.
+   * Much faster than re-cloning.
+   *
+   * @param {string} marketplaceName - Marketplace name to update
+   * @returns {Promise<{success: boolean, had_changes: boolean, commit_sha: string}>}
+   */
+  async updateMarketplace(marketplaceName) {
+    return this.request('/api/marketplace/update', {
+      method: 'POST',
+      body: JSON.stringify({
+        marketplace_name: marketplaceName
+      })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Update all marketplaces (git fetch all)
+   *
+   * Updates all user's marketplaces using git fetch.
+   *
+   * @returns {Promise<{success: boolean, updated_count: number, results: Array}>}
+   */
+  async updateAllMarketplaces() {
+    return this.request('/api/marketplace/update-all', {
+      method: 'POST',
+      body: JSON.stringify({})
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Sync all marketplaces via git fetch
+   *
+   * Called during sync to update all git-based marketplaces.
+   *
+   * @returns {Promise<{success: boolean, updated_count: number, results: Array}>}
+   */
+  async syncMarketplaces() {
+    return this.request('/api/sync-marketplaces', {
+      method: 'POST',
+      body: JSON.stringify({})
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * [DEPRECATED] Download marketplace repository (ZIP + metadata)
+   * Use cloneMarketplace() instead for git-based approach.
+   *
+   * @param {object} data - {owner, repo, branch, marketplace_name}
+   * @returns {Promise<{success: boolean, marketplace: object}>}
+   */
+  async downloadMarketplace(data) {
+    // Redirect to clone endpoint
+    return this.cloneMarketplace(data);
+  }
+
+  /**
    * Install plugin from marketplace
    *
-   * Marks plugin as installed in PostgreSQL. When user opens AI agent,
-   * sync_bucket will unzip only installed plugins from marketplace ZIP.
+   * Marks plugin as installed in PostgreSQL. Plugin files are already
+   * in workspace from git clone.
    *
    * @param {string} marketplaceName - Marketplace name
    * @param {string} pluginName - Plugin name to install
