@@ -14,7 +14,9 @@
 
 SLAR is an open-source on-call management platform with AI-powered incident response. It helps teams manage on-call rotations, route alerts, and respond to incidents with AI-powered assistance.
 
+<p align="center">
 <img src="./images/mobile.png" alt="SLAR Mobile" width="200"> <img src="./images/web.png" alt="SLAR Web" width="600">
+</p>
 
 ---
 
@@ -82,10 +84,10 @@ mkdir slar-project
 cp -r slar/deploy/helm slar-project/
 
 # Copy config
-cp slar-project/helm/volumes/config/cfg.ex.yaml slar-project/helm/volumes/config/dev.config.yaml
+cp slar-project/helm/slar/cfg.ex.yaml slar-project/helm/slar/dev.config.yaml
 
 # Switch to your project directory
-cd slar-project/helm
+cd slar-project/helm/slar
 helm install slar . -f values.yaml
 ```
 
