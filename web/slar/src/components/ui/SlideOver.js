@@ -53,7 +53,7 @@ export default function SlideOver({
         <div className="fixed inset-0 z-50 overflow-hidden">
             {/* Backdrop */}
             <div
-                className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300"
+                className="absolute inset-0 transition-opacity duration-300"
                 onClick={onClose}
             />
 
@@ -67,9 +67,9 @@ export default function SlideOver({
                 >
                     <div className="flex h-full flex-col bg-white dark:bg-gray-900 shadow-2xl">
                         {/* Header */}
-                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-4 sm:px-6 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 sm:px-6 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
                             {title && (
-                                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                                <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">
                                     {title}
                                 </h2>
                             )}
