@@ -2,17 +2,25 @@
  * Workspace Manager
  * Manages Claude Code compatible workspace structure:
  *
+ * Storage Strategy:
+ * - MCP Servers: PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
+ *   Use: getMCPServersFromDB(), saveMCPServerToDB(), deleteMCPServerFromDB()
+ * - Installed Plugins: PostgreSQL (installed_plugins table) - PRIMARY SOURCE
+ *   Use: getInstalledPluginsFromDB(), addInstalledPluginToDB(), removeInstalledPluginFromDB()
+ * - Marketplaces: PostgreSQL (marketplaces table) + Git clone in workspace
+ *   Use: loadMarketplaceFromDB(), loadAllMarketplacesFromDB()
+ * - Skills: Supabase Storage bucket (still uses object storage)
+ *
+ * Workspace Structure (Supabase Storage bucket):
  * user_id/
- * - .mcp.json                      # MCP server configurations
+ * - .mcp.json                      # Local sync of MCP config (backup only)
  * - .claude/
- *     - skills/                    # Skills directory
+ *     - skills/                    # Skills directory (bucket storage)
  *         - skill1.skill
  *         - skill2.skill
- *     - plugins/                   # Plugins directory
- *         - installed_plugins.json # Installed plugins metadata
- *         - marketplaces/          # Downloaded plugin contents
- *             - plugin1/
- *             - plugin2/
+ *     - plugins/                   # Git-cloned marketplaces
+ *         - marketplaces/
+ *             - marketplace-name/  # Git repo clone
  */
 
 import { initSupabase } from './supabase';
@@ -198,26 +206,6 @@ export async function getMCPConfig(userId) {
     }
 
     return { success: true, config: JSON.parse(result.content) };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Update MCP configuration (LEGACY - uses S3 JSON file with lag)
- * @deprecated Use saveMCPServerToDB() instead
- */
-export async function updateMCPConfig(userId, mcpServers) {
-  try {
-    const config = {
-      mcpServers,
-      metadata: {
-        version: "1.0.0",
-        updatedAt: new Date().toISOString()
-      }
-    };
-
-    return await createFile(userId, WORKSPACE_PATHS.MCP_CONFIG, config);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -465,11 +453,17 @@ export async function deleteSkill(userId, skillName) {
 /**
  * Get installed plugins from PostgreSQL database (NEW - instant!)
  * @param {string} userId - User ID
+ * @param {string} authToken - Auth token for API authentication
  * @returns {Promise<{success: boolean, plugins: Array}>}
  */
-export async function getInstalledPluginsFromDB(userId) {
+export async function getInstalledPluginsFromDB(userId, authToken) {
   try {
     console.log('[workspaceManager] 📂 Loading installed plugins from AI API:', userId);
+
+    // Set auth token before API call
+    if (authToken) {
+      apiClient.setToken(authToken);
+    }
 
     // Use AI API endpoint instead of direct Supabase call
     const result = await apiClient.getInstalledPlugins();
@@ -492,10 +486,16 @@ export async function getInstalledPluginsFromDB(userId) {
  * Add plugin to PostgreSQL database (NEW - instant!)
  * @param {string} userId - User ID
  * @param {object} plugin - Plugin data
+ * @param {string} authToken - Auth token for API authentication
  */
-export async function addInstalledPluginToDB(userId, plugin) {
+export async function addInstalledPluginToDB(userId, plugin, authToken) {
   try {
     console.log('[workspaceManager] 💾 Adding plugin via AI API:', { userId, plugin });
+
+    // Set auth token before API call
+    if (authToken) {
+      apiClient.setToken(authToken);
+    }
 
     // Use AI API endpoint instead of direct Supabase call
     const result = await apiClient.addInstalledPlugin({
@@ -529,10 +529,16 @@ export async function addInstalledPluginToDB(userId, plugin) {
  * Remove plugin from PostgreSQL database (NEW - instant!)
  * @param {string} userId - User ID
  * @param {string} pluginId - Plugin UUID
+ * @param {string} authToken - Auth token for API authentication
  */
-export async function removeInstalledPluginFromDB(userId, pluginId) {
+export async function removeInstalledPluginFromDB(userId, pluginId, authToken) {
   try {
     console.log('[workspaceManager] 🗑️ Removing plugin via AI API:', { userId, pluginId });
+
+    // Set auth token before API call
+    if (authToken) {
+      apiClient.setToken(authToken);
+    }
 
     // Use AI API endpoint instead of direct Supabase call
     const result = await apiClient.removeInstalledPlugin(pluginId);
@@ -551,377 +557,19 @@ export async function removeInstalledPluginFromDB(userId, pluginId) {
 }
 
 /**
- * Get installed plugins metadata (LEGACY - uses S3 JSON file with lag)
- * @deprecated Use getInstalledPluginsFromDB() instead
- * Returns plugins as object with keys like "pluginName@marketplaceName"
- */
-export async function getInstalledPlugins(userId) {
-  try {
-    console.log('[workspaceManager] getInstalledPlugins called for userId (LEGACY):', userId);
-    const result = await readFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS);
-    console.log('[workspaceManager] Read result:', { success: result.success, contentLength: result.content?.length });
-
-    if (!result.success) {
-      // Initialize if doesn't exist
-      console.log('[workspaceManager] File does not exist, initializing...');
-      const initResult = await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, {
-        version: 1,
-        plugins: {}
-      });
-      console.log('[workspaceManager] Init result:', initResult);
-      return { success: true, plugins: {} };
-    }
-
-    // Check if content is empty
-    if (!result.content || result.content.trim() === '') {
-      console.log('[workspaceManager] File is empty, reinitializing...');
-      await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, {
-        version: 1,
-        plugins: {}
-      });
-      return { success: true, plugins: {} };
-    }
-
-    const data = JSON.parse(result.content);
-    console.log('[workspaceManager] Parsed data:', data);
-
-    // Ensure plugins is an object, not an array
-    let plugins = data.plugins || {};
-    if (Array.isArray(plugins)) {
-      console.warn('[workspaceManager] plugins is an array, converting to object');
-      plugins = {};
-    }
-
-    return { success: true, plugins };
-  } catch (error) {
-    console.error('[workspaceManager] Error in getInstalledPlugins:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Add plugin to installed list
- * @param {string} userId - User ID
- * @param {object} plugin - Plugin data with: name, marketplaceName, version, installPath, etc.
- * Format: { name, marketplaceName, version, installPath, gitCommitSha?, isLocal }
- */
-export async function addInstalledPlugin(userId, plugin) {
-  try {
-    console.log('[workspaceManager] addInstalledPlugin called:', { userId, plugin });
-
-    const result = await getInstalledPlugins(userId);
-    console.log('[workspaceManager] Current installed plugins:', result);
-    console.log('[workspaceManager] Type check - plugins is:', typeof result.plugins, 'isArray:', Array.isArray(result.plugins));
-
-    if (!result.success) throw new Error(result.error);
-
-    // Ensure plugins is an object
-    let plugins = result.plugins;
-    if (Array.isArray(plugins)) {
-      console.warn('[workspaceManager] Converting array to object');
-      plugins = {};
-    } else if (typeof plugins !== 'object' || plugins === null) {
-      console.warn('[workspaceManager] Invalid plugins type, resetting to empty object');
-      plugins = {};
-    }
-
-    console.log('[workspaceManager] Using plugins object:', plugins);
-
-    // Create key: pluginName@marketplaceName
-    const pluginKey = `${plugin.name}@${plugin.marketplaceName}`;
-    console.log('[workspaceManager] Plugin key:', pluginKey);
-
-    const now = new Date().toISOString();
-
-    // Check if already installed
-    if (plugins[pluginKey]) {
-      console.log('[workspaceManager] Updating existing plugin');
-      // Update existing
-      plugins[pluginKey] = {
-        ...plugins[pluginKey],
-        version: plugin.version || plugins[pluginKey].version,
-        lastUpdated: now,
-        installPath: plugin.installPath || plugins[pluginKey].installPath,
-        gitCommitSha: plugin.gitCommitSha || plugins[pluginKey].gitCommitSha,
-        isLocal: plugin.isLocal !== undefined ? plugin.isLocal : plugins[pluginKey].isLocal
-      };
-    } else {
-      console.log('[workspaceManager] Adding new plugin');
-      // Add new
-      plugins[pluginKey] = {
-        version: plugin.version || 'unknown',
-        installedAt: now,
-        lastUpdated: now,
-        installPath: plugin.installPath || `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${plugin.marketplaceName}/${plugin.name}`,
-        ...(plugin.gitCommitSha && { gitCommitSha: plugin.gitCommitSha }),
-        isLocal: plugin.isLocal !== undefined ? plugin.isLocal : false
-      };
-    }
-
-    const data = {
-      version: 1,
-      plugins
-    };
-
-    console.log('[workspaceManager] Writing data to file:', data);
-    const writeResult = await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, data);
-    console.log('[workspaceManager] Write result:', writeResult);
-
-    return writeResult;
-  } catch (error) {
-    console.error('[workspaceManager] Error in addInstalledPlugin:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Remove plugin from installed list
- * @param {string} userId - User ID
- * @param {string} pluginKey - Plugin key in format "pluginName@marketplaceName"
- */
-export async function removeInstalledPlugin(userId, pluginKey) {
-  try {
-    const result = await getInstalledPlugins(userId);
-
-    if (!result.success) throw new Error(result.error);
-
-    const plugins = { ...result.plugins };
-    delete plugins[pluginKey];
-
-    const data = {
-      version: 1,
-      plugins
-    };
-
-    return await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, data);
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Update plugin metadata
- * @param {string} userId - User ID
- * @param {string} pluginKey - Plugin key in format "pluginName@marketplaceName"
- * @param {object} updates - Fields to update
- */
-export async function updatePluginMetadata(userId, pluginKey, updates) {
-  try {
-    const result = await getInstalledPlugins(userId);
-
-    if (!result.success) throw new Error(result.error);
-
-    const plugins = { ...result.plugins };
-
-    if (!plugins[pluginKey]) {
-      throw new Error(`Plugin ${pluginKey} not found`);
-    }
-
-    plugins[pluginKey] = {
-      ...plugins[pluginKey],
-      ...updates,
-      lastUpdated: new Date().toISOString()
-    };
-
-    const data = {
-      version: 1,
-      plugins
-    };
-
-    return await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, data);
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * ============================================================
- * PLUGIN MARKETPLACE FILES
- * ============================================================
- */
-
-/**
- * Save plugin files to marketplace directory
- */
-export async function savePluginFiles(userId, pluginId, files) {
-  try {
-    console.log('[workspaceManager] savePluginFiles called:', { userId, pluginId, fileCount: Object.keys(files).length });
-
-    const supabase = await initSupabase();
-    const pluginDir = `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${pluginId}`;
-
-    // Save each file
-    for (const [fileName, content] of Object.entries(files)) {
-      const filePath = `${pluginDir}/${fileName}`;
-      console.log('[workspaceManager] Saving file:', filePath);
-
-      const blob = new Blob([content], {
-        type: fileName.endsWith('.json') ? 'application/json' : 'text/plain'
-      });
-
-      const { error } = await supabase.storage
-        .from(userId)
-        .upload(filePath, blob, {
-          contentType: blob.type,
-          upsert: true
-        });
-
-      if (error) {
-        console.error(`[workspaceManager] Failed to save ${fileName}:`, error);
-      } else {
-        console.log(`[workspaceManager] Successfully saved ${fileName}`);
-      }
-    }
-
-    console.log('[workspaceManager] All files saved, returning path:', pluginDir);
-    return { success: true, path: pluginDir };
-  } catch (error) {
-    console.error('[workspaceManager] Failed to save plugin files:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * List plugin files
- */
-export async function listPluginFiles(userId, pluginId) {
-  const pluginDir = `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${pluginId}`;
-  return await listFiles(userId, pluginDir);
-}
-
-/**
- * Delete plugin files
- */
-export async function deletePluginFiles(userId, pluginId) {
-  try {
-    const result = await listPluginFiles(userId, pluginId);
-
-    if (!result.success) return result;
-
-    const supabase = await initSupabase();
-    const pluginDir = `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${pluginId}`;
-
-    // Delete all files in plugin directory
-    const filePaths = result.files.map(file => `${pluginDir}/${file.name}`);
-
-    const { error } = await supabase.storage
-      .from(userId)
-      .remove(filePaths);
-
-    if (error) throw error;
-
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Reset installed_plugins.json to correct format
- */
-export async function resetInstalledPlugins(userId) {
-  try {
-    console.log('[workspaceManager] Resetting installed_plugins.json to correct format');
-
-    const data = {
-      version: 1,
-      plugins: {}
-    };
-
-    const result = await createFile(userId, WORKSPACE_PATHS.INSTALLED_PLUGINS, data);
-    console.log('[workspaceManager] Reset result:', result);
-
-    return result;
-  } catch (error) {
-    console.error('[workspaceManager] Failed to reset installed plugins:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Save entire marketplace to storage
+ * Load marketplace from PostgreSQL database (instant, no lag!)
  * @param {string} userId - User ID
  * @param {string} marketplaceName - Marketplace name
- * @param {object} marketplaceJson - marketplace.json content
- * @param {object} skills - Object with skill paths as keys and files as values
- * Example: { "plugin1/skill1": { "SKILL.md": "...", "file.py": "..." } }
+ * @param {string} authToken - Auth token for API authentication
  */
-export async function saveMarketplace(userId, marketplaceName, allFiles) {
-  try {
-    console.log('[workspaceManager] Saving entire marketplace (clone):', {
-      userId,
-      marketplaceName,
-      fileCount: Object.keys(allFiles).length
-    });
-
-    const supabase = await initSupabase();
-    const marketplaceDir = `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${marketplaceName}`;
-
-    let savedCount = 0;
-    let failedCount = 0;
-
-    // Save all files with their original paths from repo
-    for (const [filePath, content] of Object.entries(allFiles)) {
-      try {
-        // Full path in bucket: .claude/plugins/marketplaces/{marketplaceName}/{original-repo-path}
-        const fullPath = `${marketplaceDir}/${filePath}`;
-        console.log(`[workspaceManager] Saving: ${fullPath}`);
-
-        // Determine content type from file extension
-        let contentType = 'text/plain';
-        if (filePath.endsWith('.json')) {
-          contentType = 'application/json';
-        } else if (filePath.endsWith('.md')) {
-          contentType = 'text/markdown';
-        } else if (filePath.endsWith('.js')) {
-          contentType = 'application/javascript';
-        } else if (filePath.endsWith('.py')) {
-          contentType = 'text/x-python';
-        }
-
-        const blob = new Blob([content], { type: contentType });
-
-        const { error } = await supabase.storage
-          .from(userId)
-          .upload(fullPath, blob, {
-            contentType,
-            upsert: true
-          });
-
-        if (error) {
-          console.error(`[workspaceManager] Failed to save ${fullPath}:`, error);
-          failedCount++;
-        } else {
-          savedCount++;
-        }
-      } catch (error) {
-        console.error(`[workspaceManager] Error saving file ${filePath}:`, error);
-        failedCount++;
-      }
-    }
-
-    console.log(`[workspaceManager] Marketplace saved: ${savedCount}/${Object.keys(allFiles).length} files`);
-
-    return {
-      success: failedCount === 0,
-      savedCount,
-      failedCount,
-      path: marketplaceDir
-    };
-  } catch (error) {
-    console.error('[workspaceManager] Failed to save marketplace:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Load marketplace from PostgreSQL database (NEW - instant, no lag!)
- * @param {string} userId - User ID
- * @param {string} marketplaceName - Marketplace name
- */
-export async function loadMarketplaceFromDB(userId, marketplaceName) {
+export async function loadMarketplaceFromDB(userId, marketplaceName, authToken) {
   try {
     console.log('[workspaceManager] 📂 Loading marketplace from AI API:', { userId, marketplaceName });
+
+    // Set auth token before API call
+    if (authToken) {
+      apiClient.setToken(authToken);
+    }
 
     // Use AI API endpoint instead of direct Supabase call
     const result = await apiClient.getMarketplaceByName(marketplaceName);
@@ -949,10 +597,16 @@ export async function loadMarketplaceFromDB(userId, marketplaceName) {
 /**
  * Load ALL marketplaces from PostgreSQL database (NEW - instant, no lag!)
  * @param {string} userId - User ID
+ * @param {string} authToken - Auth token for API authentication
  */
-export async function loadAllMarketplacesFromDB(userId) {
+export async function loadAllMarketplacesFromDB(userId, authToken) {
   try {
     console.log('[workspaceManager] 📂 Loading all marketplaces from AI API:', { userId });
+
+    // Set auth token before API call
+    if (authToken) {
+      apiClient.setToken(authToken);
+    }
 
     // Use AI API endpoint instead of direct Supabase call
     const result = await apiClient.getAllMarketplaces();
@@ -967,51 +621,6 @@ export async function loadAllMarketplacesFromDB(userId) {
     return { success: true, marketplaces: result.marketplaces || [] };
   } catch (error) {
     console.error('[workspaceManager] ❌ Failed to load marketplaces from API:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Load marketplace.json from bucket (LEGACY - has 10-15s lag!)
- * @deprecated Use loadMarketplaceFromDB() instead
- * @param {string} userId - User ID
- * @param {string} marketplaceName - Marketplace name
- */
-export async function loadMarketplaceFromBucket(userId, marketplaceName) {
-  try {
-    console.log('[workspaceManager] 📂 Loading marketplace from bucket (LEGACY):', { userId, marketplaceName });
-
-    const marketplaceJsonPath = `${WORKSPACE_PATHS.MARKETPLACES_DIR}/${marketplaceName}/.claude-plugin/marketplace.json`;
-    console.log('[workspaceManager]    Path:', marketplaceJsonPath);
-
-    const result = await readFile(userId, marketplaceJsonPath);
-    console.log('[workspaceManager]    readFile result:', { success: result.success, error: result.error });
-
-    if (!result.success) {
-      console.log('[workspaceManager] ❌ Marketplace not found in bucket');
-      console.log('[workspaceManager]    Error:', result.error);
-      return { success: false, error: `Marketplace not found in bucket: ${result.error}` };
-    }
-
-    if (!result.content || result.content.trim() === '') {
-      console.log('[workspaceManager] ❌ Marketplace file is empty');
-      return { success: false, error: 'Marketplace file is empty' };
-    }
-
-    let marketplaceJson;
-    try {
-      marketplaceJson = JSON.parse(result.content);
-    } catch (parseError) {
-      console.error('[workspaceManager] ❌ Failed to parse marketplace JSON:', parseError);
-      return { success: false, error: `Invalid JSON in marketplace file: ${parseError.message}` };
-    }
-
-    console.log('[workspaceManager] ✅ Loaded marketplace from bucket:', marketplaceJson.name);
-    console.log('[workspaceManager]    Plugins:', marketplaceJson.plugins?.length || 0);
-
-    return { success: true, marketplace: marketplaceJson };
-  } catch (error) {
-    console.error('[workspaceManager] ❌ Failed to load marketplace from bucket:', error);
     return { success: false, error: error.message };
   }
 }

@@ -20,15 +20,14 @@ type SupabaseAuthMiddleware struct {
 func NewSupabaseAuthMiddleware(userService *services.UserService) *SupabaseAuthMiddleware {
 	// Get Supabase configuration from environment variables
 	supabaseURL := os.Getenv("SUPABASE_URL")
-	anonKey := os.Getenv("SUPABASE_ANON_KEY")
-	jwtSecret := os.Getenv("SUPABASE_JWT_SECRET")
+	jwtSecret := os.Getenv("SUPABASE_JWT_SECRET") // Legacy: only needed for HS256
 
-	// Set defaults if not provided
-	if supabaseURL == "" || anonKey == "" || jwtSecret == "" {
-		log.Fatal("Missing Supabase configuration")
+	if supabaseURL == "" {
+		log.Fatal("Missing SUPABASE_URL configuration")
 	}
 
-	supabaseAuth := services.NewSupabaseAuthService(supabaseURL, anonKey, jwtSecret)
+	// Note: jwtSecret is optional - ES256/RS256 tokens use JWKS public key verification
+	supabaseAuth := services.NewSupabaseAuthService(supabaseURL, jwtSecret)
 
 	return &SupabaseAuthMiddleware{
 		SupabaseAuth: supabaseAuth,

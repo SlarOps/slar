@@ -111,10 +111,12 @@ func (w *NotificationWorker) sendNotificationMessage(queueName string, msg *Noti
 func (w *NotificationWorker) getUserIDFromSlackID(slackUserID string) (string, error) {
 	var userID string
 	query := `
-		SELECT u.id 
+		SELECT u.id
 		FROM users u
 		JOIN user_notification_configs unc ON u.id = unc.user_id
 		WHERE unc.slack_user_id = $1
+		   OR unc.slack_user_id = '@' || $1
+		   OR unc.slack_user_id = LTRIM($1, '@')
 	`
 
 	err := w.PG.QueryRow(query, slackUserID).Scan(&userID)
@@ -251,8 +253,8 @@ func (w *NotificationWorker) GetQueueStats() (map[string]interface{}, error) {
 // processIncidentActionsQueue processes incident action messages (acknowledge, resolve, etc.)
 func (w *NotificationWorker) processIncidentActionsQueue(queueName string) {
 	// Read messages from PGMQ (visibility timeout of 30 seconds)
-	// Correct usage returns a rowset with columns: msg_id, read_ct, enqueued_at, vt, message
-	query := `SELECT * FROM pgmq.read($1, 30, $2)`
+	// pgmq.read returns: msg_id, read_ct, enqueued_at, vt, message, headers (6 columns in newer PGMQ)
+	query := `SELECT msg_id, read_ct, enqueued_at, vt, message FROM pgmq.read($1, 30, $2)`
 	batchSize := 5 // Process fewer actions at a time
 
 	rows, err := w.PG.Query(query, queueName, batchSize)

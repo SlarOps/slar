@@ -11,8 +11,7 @@ import {
 import {
   getInstalledPluginsFromDB,
   removeInstalledPluginFromDB,
-  addInstalledPluginToDB,
-  deletePluginFiles
+  addInstalledPluginToDB
 } from '../../lib/workspaceManager';
 
 export default function InstalledPluginsTab() {
@@ -26,12 +25,12 @@ export default function InstalledPluginsTab() {
   }, [session]);
 
   const loadPlugins = async () => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !session?.access_token) return;
 
     setLoading(true);
     try {
       // NEW: Load from PostgreSQL (instant, no lag!)
-      const result = await getInstalledPluginsFromDB(session.user.id);
+      const result = await getInstalledPluginsFromDB(session.user.id, session.access_token);
       if (result.success) {
         // PostgreSQL returns array directly with proper format
         // Map DB fields to component format
@@ -60,7 +59,7 @@ export default function InstalledPluginsTab() {
   };
 
   const handleTogglePlugin = async (pluginId) => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !session?.access_token) return;
 
     try {
       const plugin = plugins.find(p => p.id === pluginId);
@@ -77,7 +76,7 @@ export default function InstalledPluginsTab() {
         status: newStatus,
         isLocal: plugin.isLocal,
         gitCommitSha: plugin.gitCommitSha
-      });
+      }, session.access_token);
 
       if (result.success) {
         setPlugins(plugins.map(p =>
@@ -94,7 +93,7 @@ export default function InstalledPluginsTab() {
   };
 
   const handleDeletePlugin = async (pluginId) => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !session?.access_token) return;
     if (!confirm('Are you sure you want to uninstall this plugin?')) return;
 
     try {
@@ -102,15 +101,10 @@ export default function InstalledPluginsTab() {
       if (!plugin) return;
 
       // Remove from PostgreSQL database (instant!)
-      const removeResult = await removeInstalledPluginFromDB(session.user.id, pluginId);
+      // Note: Plugin files remain in git repo until marketplace is deleted
+      const removeResult = await removeInstalledPluginFromDB(session.user.id, pluginId, session.access_token);
 
       if (removeResult.success) {
-        // Delete plugin files from S3 storage
-        if (plugin.marketplace) {
-          const pluginDir = `${plugin.marketplace}/${plugin.name}`;
-          await deletePluginFiles(session.user.id, pluginDir);
-        }
-
         setPlugins(plugins.filter(p => p.id !== pluginId));
         toast.success('Plugin uninstalled successfully');
       } else {

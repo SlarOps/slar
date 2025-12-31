@@ -49,8 +49,6 @@ from supabase_storage import (
     get_user_mcp_servers,
     get_user_workspace_path,
     load_user_plugins,
-    sync_all_from_bucket,
-    sync_marketplace_zip_to_local,
     sync_mcp_config_to_local,
     sync_memory_to_workspace,
     sync_user_skills,

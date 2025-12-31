@@ -1,40 +1,19 @@
 # version: "3.9"
 
 services:
-  # Database migration service - runs first to apply schema changes
-  migration:
-    container_name: slar-migration
-    build:
-      context: ../..
-      dockerfile: deploy/migration/Dockerfile
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-    restart: "no"
-    profiles: ["migration"]
-
   ai:
     container_name: slar-ai
-    build:
-      context: ../../api/ai
+    platform: linux/amd64
+    image: ghcr.io/slarops/slar-ai:latest
     expose:
       - "8002"
     ports:
       - "8002:8002"
     volumes:
       - claude_data:/root/.claude
+      - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
-      - PORT=8002
-      - HOST=0.0.0.0
-      - API_BASE_URL=http://api:8080
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
-      - AI_RATE_LIMIT=${AI_RATE_LIMIT:-60}
-      - SLAR_API_URL=${SLAR_API_URL:-http://api:8080}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SLAR_CONFIG_PATH=/app/config.yaml
     restart: unless-stopped
     networks:
       - slar-network
@@ -47,23 +26,16 @@ services:
 
   api:
     container_name: slar-api
-    build:
-      context: ../../
-      dockerfile: api/Dockerfile
+    platform: linux/amd64
+    image: ghcr.io/slarops/slar-api:latest
     expose:
       - "8080"
     ports:
       - "8080:8080"
+    volumes:
+      - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
-      - PORT=8080
-      - DATABASE_URL=${DATABASE_URL}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
-      - SLAR_ENV=production
-      - SLAR_CLOUD_URL=${SLAR_CLOUD_URL} 
-      - SLAR_CLOUD_TOKEN=${SLAR_CLOUD_TOKEN}
-      - SLAR_INSTANCE_ID=${SLAR_INSTANCE_ID}
+      - SLAR_CONFIG_PATH=/app/config.yaml
     restart: unless-stopped
     networks:
       - slar-network
@@ -76,38 +48,22 @@ services:
 
   slack-worker:
     container_name: slar-slack-worker
-    build:
-      context: ../../api/workers
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
-      - API_BASE_URL=http://api:8080
-      - POLL_INTERVAL=1
-      - BATCH_SIZE=10
-      - MAX_RETRIES=3
-      - LOG_LEVEL=DEBUG
-      - LOG_FILE=/app/slack_worker.log
+    platform: linux/amd64
+    image: ghcr.io/slarops/slar-slack-worker:latest
+    volumes:
+      - ./volumes/config/dev.config.yaml:/app/config.yaml
     restart: unless-stopped
     networks:
       - slar-network
 
   web:
     container_name: slar-web
-    build:
-      context: ../../web/slar
-      dockerfile: Dockerfile
+    platform: linux/amd64
+    image: ghcr.io/slarops/slar-web:latest
     expose:
       - "3000"
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - NEXT_TELEMETRY_DISABLED=1
-      - PORT=3000
-      - HOSTNAME=0.0.0.0
-    depends_on:
-      - api
     restart: unless-stopped
     networks:
       - slar-network
@@ -120,28 +76,19 @@ services:
 
   kong:
     container_name: kong
+    platform: linux/amd64
     image: kong:2.8.1
     ports:
       - "8000:8000/tcp"
-      - "8443:8443/tcp"
-      # Admin API (optional - kong admin)
-      - "8001:8001/tcp"
     volumes:
       - ./volumes/api/kong.yaml:/home/kong/temp.yml:ro,z
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
-      # https://github.com/supabase/cli/issues/14
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
-      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-admin}
-    depends_on:
-      - api
-      - ai
-      - web
     restart: unless-stopped
     networks:
       - slar-network

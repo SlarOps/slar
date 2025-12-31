@@ -18,24 +18,13 @@ import json
 import time
 import logging
 import re
+import yaml
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from slack_bolt import App
-import requests
-from dotenv import load_dotenv
 import ast
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Load config from YAML (unifies config with Go API)
-try:
-    import config_loader
-    config_loader.load_config()
-except ImportError:
-    pass # config_loader might not exist in all environments yet, or during refactor
 
 # Configure logging
 logging.basicConfig(
@@ -53,7 +42,13 @@ class SlackMessage:
         self.incident_data = incident_data
     
     def get_title(self) -> str:
-        return self.incident_data.get('labels', {}).get('alert_title', 'No title')
+        # Priority: labels.alert_title > incident.title > 'No title'
+        labels = self.incident_data.get('labels') or {}
+        alert_title = labels.get('alert_title')
+        if alert_title:
+            return alert_title
+        # Fall back to incident's main title field
+        return self.incident_data.get('title') or 'No title'
     
     def get_description(self) -> str:
         return self.incident_data.get('description', 'No description')
@@ -74,7 +69,8 @@ class SlackMessage:
         return f"#{self.get_id()[-8:]}"
 
     def get_incident_alert_status(self) -> str:
-        return self.incident_data.get('labels', {}).get('alert_status', 'unknown')
+        # Use 'or {}' to handle both missing key AND null value
+        return (self.incident_data.get('labels') or {}).get('alert_status', 'unknown')
     
 
 class SlackWorker:
@@ -87,22 +83,71 @@ class SlackWorker:
         self.setup_slack()
         
     def setup_config(self):
-        """Load configuration from environment variables"""
+        """Load configuration from YAML file or environment variables.
+
+        Priority:
+        1. SLAR_CONFIG_PATH env var
+        2. /app/config/config.yaml (production)
+        3. ../config.dev.yaml (local development relative to workers dir)
+        4. Environment variables (fallback)
+        """
+        # Try to load from YAML config file first
+        yaml_config = self._load_yaml_config()
+
+        # Build config with YAML values taking priority over env vars
         self.config = {
-            'database_url': os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/slar'),
-            'slack_bot_token': os.getenv('SLACK_BOT_TOKEN'),
-            'slack_app_token': os.getenv('SLACK_APP_TOKEN'),
-            'api_base_url': os.getenv('API_BASE_URL', 'http://localhost:8080'),
-            'poll_interval': int(os.getenv('POLL_INTERVAL', '1')),  # seconds
-            'batch_size': int(os.getenv('BATCH_SIZE', '10')),
-            'max_retries': int(os.getenv('MAX_RETRIES', '3')),
+            'database_url': yaml_config.get('database_url') or os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/slar'),
+            'slack_bot_token': yaml_config.get('slack_bot_token') or os.getenv('SLACK_BOT_TOKEN'),
+            'slack_app_token': yaml_config.get('slack_app_token') or os.getenv('SLACK_APP_TOKEN'),
+            'api_base_url': yaml_config.get('api_base_url') or yaml_config.get('slar_api_url') or os.getenv('API_BASE_URL', 'http://localhost:8080'),
+            'poll_interval': int(yaml_config.get('poll_interval') or os.getenv('POLL_INTERVAL', '1')),  # seconds
+            'batch_size': int(yaml_config.get('batch_size') or os.getenv('BATCH_SIZE', '10')),
+            'max_retries': int(yaml_config.get('max_retries') or os.getenv('MAX_RETRIES', '3')),
         }
-        
+
         # Validate required config
         required_config = ['slack_bot_token', 'slack_app_token']
         missing_config = [key for key in required_config if not self.config[key]]
         if missing_config:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing_config)}")
+            raise ValueError(f"Missing required configuration: {', '.join(missing_config)}")
+
+    def _load_yaml_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file.
+
+        Returns:
+            Dict with config values, or empty dict if no config file found
+        """
+        config_path = os.getenv("SLAR_CONFIG_PATH")
+
+        if not config_path:
+            # Check default locations
+            default_paths = [
+                "/app/config/config.yaml",  # Production (Docker)
+                os.path.join(os.path.dirname(__file__), "..", "config.dev.yaml"),  # Local dev (api/config.dev.yaml)
+            ]
+            for path in default_paths:
+                if os.path.exists(path):
+                    config_path = path
+                    break
+
+        if not config_path or not os.path.exists(config_path):
+            logger.info("ℹ️  No config file found, using environment variables")
+            return {}
+
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+
+            if not config:
+                logger.warning(f"⚠️  Config file {config_path} is empty")
+                return {}
+
+            logger.info(f"✅ Loaded config from {config_path}")
+            return config
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load config file: {e}")
+            return {}
             
     def setup_database(self):
         """Setup database connection"""
@@ -1528,46 +1573,6 @@ class SlackWorker:
     def update_message_after_acknowledgment(self, body: dict, incident_id: str, user_name: str):
         """Update Slack message to show final acknowledgment status (called by worker)"""
         self.update_message_optimistically(body, incident_id, user_name, "acknowledged")
-    
-    def send_acknowledgment_pending_message(self, response_url: str):
-        """Send pending acknowledgment message to Slack"""
-        try:
-            if not response_url:
-                return
-                
-            payload = {
-                "text": "⏳ Processing acknowledgment...",
-                "response_type": "ephemeral"  # Only visible to the user who clicked
-            }
-            
-            response = requests.post(response_url, json=payload)
-            if response.status_code == 200:
-                logger.info("✅ Sent pending acknowledgment message to Slack")
-            else:
-                logger.error(f"❌ Failed to send pending message: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error sending pending message: {e}")
-
-    def send_error_message(self, response_url: str, error_message: str):
-        """Send error message to Slack"""
-        try:
-            if not response_url:
-                return
-                
-            payload = {
-                "text": f"❌ {error_message}",
-                "response_type": "ephemeral"  # Only visible to the user who clicked
-            }
-            
-            response = requests.post(response_url, json=payload)
-            if response.status_code == 200:
-                logger.info("✅ Sent error message to Slack")
-            else:
-                logger.error(f"❌ Failed to send error message: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error sending error message: {e}")
 
     def cleanup(self):
         """Cleanup resources"""

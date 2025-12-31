@@ -12,9 +12,11 @@ import (
 )
 
 var (
-	registry string
-	tag      string
-	services []string
+	registry  string
+	tag       string
+	services  []string
+	platforms string
+	noCache   bool
 )
 
 // All available services
@@ -68,6 +70,8 @@ func init() {
 	for _, c := range []*cobra.Command{pushCmd, buildCmd} {
 		c.Flags().StringVar(&registry, "registry", "ghcr.io/slarops", "Docker registry")
 		c.Flags().StringVar(&tag, "tag", "1.0.1", "Image tag")
+		c.Flags().StringVar(&platforms, "platforms", "", "Target platforms (comma-separated, e.g., linux/amd64,linux/arm64)")
+		c.Flags().BoolVar(&noCache, "no-cache", false, "Build without using cache")
 	}
 }
 
@@ -106,7 +110,7 @@ func runPush(targetServices []string) {
 		buildNextJS()
 	}
 
-	buildImages(registry, tag, targetServices)
+	buildImages(registry, tag, platforms, targetServices)
 	tagImages(registry, tag, targetServices)
 	pushImages(registry, tag, targetServices)
 }
@@ -121,7 +125,7 @@ func runBuildOnly(targetServices []string) {
 		buildNextJS()
 	}
 
-	buildImages(registry, tag, targetServices)
+	buildImages(registry, tag, platforms, targetServices)
 	tagImages(registry, tag, targetServices)
 }
 
@@ -164,7 +168,7 @@ func getProjectRoot() string {
 }
 
 func checkEnv() {
-	root := "../../" 
+	root := "../../"
 	if _, err := os.Stat(filepath.Join(root, ".env")); os.IsNotExist(err) {
 		fmt.Println("Warning: .env file not found at repository root (checked ../../.env)")
 	}
@@ -197,39 +201,139 @@ func buildNextJS() {
 	log("Next.js build completed")
 }
 
-func buildImages(reg, t string, targetServices []string) {
+// Service to Dockerfile and context mapping (relative to deploy/slar-cli)
+// Note: Most Dockerfiles expect project root as context
+var serviceDockerfiles = map[string]struct {
+	context    string
+	dockerfile string
+}{
+	"web": {
+		context:    "../../web/slar",
+		dockerfile: "../../web/slar/Dockerfile",
+	},
+	"api": {
+		context:    "../..", // Project root (Dockerfile expects api/ and worker/ dirs)
+		dockerfile: "../../api/Dockerfile",
+	},
+	"ai": {
+		context:    "../../api/ai",
+		dockerfile: "../../api/ai/Dockerfile",
+	},
+	"slack-worker": {
+		context:    "../../api/workers",
+		dockerfile: "../../api/workers/Dockerfile",
+	},
+}
+
+func buildImages(reg, t, plat string, targetServices []string) {
 	log(fmt.Sprintf("Building Docker images for: %v", targetServices))
 
-	deployDir := "../docker"
-	composeFile := filepath.Join(deployDir, "docker-compose.yaml")
-	tempComposeFile := filepath.Join(deployDir, "docker-compose.tmp.yaml")
+	// Always use direct Dockerfile builds (docker-compose.yaml doesn't have build contexts)
+	buildImagesDirectly(reg, t, plat, targetServices)
+}
 
-	content, err := ioutil.ReadFile(composeFile)
-	if err != nil {
-		logError(fmt.Sprintf("Failed to read docker-compose.yaml: %v", err))
+// buildImagesDirectly builds images using docker build command directly
+func buildImagesDirectly(reg, t, plat string, targetServices []string) {
+	for _, svc := range targetServices {
+		dockerInfo, ok := serviceDockerfiles[svc]
+		if !ok {
+			logError(fmt.Sprintf("Unknown service: %s", svc))
+		}
+
+		// Image name matches service map (slar-web, slar-api, etc.)
+		imageName := serviceImageMap[svc]
+		localTag := fmt.Sprintf("%s:latest", imageName)
+
+		log(fmt.Sprintf("Building %s...", svc))
+
+		args := []string{"build", "-t", localTag}
+
+		// Add --no-cache if specified
+		if noCache {
+			args = append(args, "--no-cache")
+		}
+
+		// Add platform if specified
+		if plat != "" {
+			args = append(args, "--platform", plat)
+		}
+
+		// Add dockerfile and context
+		args = append(args, "-f", dockerInfo.dockerfile, dockerInfo.context)
+
+		runCommand("docker", args, "")
 	}
 
-	// Just copy the file since we are handling tagging manually now
-	ioutil.WriteFile(tempComposeFile, content, 0644)
-
-	defer os.Remove(tempComposeFile)
-
-	// Build only specified services
-	// Use -p slar to ensure deterministic image names (slar-api, slar-web etc)
-	args := []string{"compose", "-p", "slar", "-f", "docker-compose.tmp.yaml", "build"}
-	args = append(args, targetServices...)
-
-	runCommand("docker", args, deployDir)
 	log("Images built")
+}
+
+func buildImagesWithBuildx(reg, t, plat string, targetServices []string, deployDir string) {
+
+	// Ensure buildx builder exists
+	log("Checking buildx builder...")
+	checkBuildxBuilder()
+
+	for _, svc := range targetServices {
+		dockerInfo, ok := serviceDockerfiles[svc]
+		if !ok {
+			logError(fmt.Sprintf("Unknown service: %s", svc))
+		}
+
+		targetName := serviceImageMap[svc]
+		imageTag := fmt.Sprintf("%s/%s:%s", reg, targetName, t)
+
+		log(fmt.Sprintf("Building %s for platforms: %s", svc, plat))
+
+		// Build using buildx
+		args := []string{
+			"buildx", "build",
+			"--platform", plat,
+			"-t", imageTag,
+			"-f", dockerInfo.dockerfile,
+		}
+
+		// Add --no-cache if specified
+		if noCache {
+			args = append(args, "--no-cache")
+		}
+
+		// Add context
+		args = append(args, dockerInfo.context)
+
+		// For multi-platform builds, we need to either push or use --load (but --load only works for single platform)
+		platformCount := len(strings.Split(plat, ","))
+		if platformCount > 1 {
+			// Multi-platform: must push directly
+			log("Multi-platform build detected, will push to registry")
+			args = append(args, "--push")
+		} else {
+			// Single platform: load into local docker
+			args = append(args, "--load")
+		}
+
+		runCommand("docker", args, "")
+	}
+
+	log("Multi-platform images built")
+}
+
+func checkBuildxBuilder() {
+	// Check if default buildx builder supports multi-platform
+	cmd := exec.Command("docker", "buildx", "inspect")
+	err := cmd.Run()
+	if err != nil {
+		log("Creating buildx builder for multi-platform support...")
+		runCommand("docker", []string{"buildx", "create", "--use", "--name", "slar-builder", "--driver", "docker-container"}, "")
+	}
 }
 
 func tagImages(reg, t string, targetServices []string) {
 	log("Tagging images...")
 
 	for _, svc := range targetServices {
-		targetName := serviceImageMap[svc]
-		sourceImage := fmt.Sprintf("slar-%s", svc)
-		targetImage := fmt.Sprintf("%s/%s:%s", reg, targetName, t)
+		imageName := serviceImageMap[svc]
+		sourceImage := fmt.Sprintf("%s:latest", imageName)
+		targetImage := fmt.Sprintf("%s/%s:%s", reg, imageName, t)
 
 		log(fmt.Sprintf("  %s -> %s", sourceImage, targetImage))
 		runCommand("docker", []string{"tag", sourceImage, targetImage}, "")

@@ -5,18 +5,21 @@ Handles:
 - POST /api/marketplace/install-plugin - Install plugin from marketplace
 - POST /api/plugins/install - Install plugin (legacy)
 - POST /api/marketplace/fetch-metadata - Fetch marketplace metadata from GitHub
-- POST /api/marketplace/download-repo-zip - Download marketplace ZIP
+- POST /api/marketplace/clone - Clone marketplace repository (git clone)
+- POST /api/marketplace/update - Update marketplace repository (git fetch)
 - DELETE /api/marketplace/{marketplace_name} - Delete marketplace
+
+Git-based approach (v2):
+- Clone repository once, fetch to update
+- No ZIP files, no S3 storage for marketplace files
+- Faster updates (incremental via git)
 """
 
 import asyncio
 import base64
-import io
 import json
 import logging
-import os
 import shutil
-import zipfile
 from asyncio import Lock
 from datetime import datetime
 
@@ -27,10 +30,17 @@ from supabase_storage import (
     extract_user_id_from_token,
     get_supabase_client,
     get_user_workspace_path,
-    sync_marketplace_zip_to_local,
-    unzip_installed_plugins,
 )
-from database_util import execute_query
+from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
+from git_utils import (
+    build_github_url,
+    clone_repository,
+    fetch_and_reset,
+    get_current_commit,
+    get_marketplace_dir,
+    is_git_repository,
+    remove_repository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +59,11 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 @router.post("/marketplace/install-plugin")
 async def install_plugin_from_marketplace(request: Request):
     """
-    Mark a plugin as installed (files already in S3 from marketplace ZIP).
+    Mark a plugin as installed from a git-cloned marketplace.
 
-    This endpoint ONLY updates the database to mark a plugin as installed.
-    The actual plugin files are already in S3 (uploaded when marketplace was added).
-    When user opens AI agent, sync_bucket will unzip only installed plugins.
+    In the git-based approach, plugin files are already in the workspace
+    from the initial git clone. This endpoint only records the installation
+    in PostgreSQL so load_user_plugins() knows which plugins to load.
 
     Request body:
         {
@@ -89,9 +99,15 @@ async def install_plugin_from_marketplace(request: Request):
         user_id = extract_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Installing plugin {plugin_name} from {marketplace_name}")
 
-        # Get plugin source path from PostgreSQL marketplace metadata
-        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{plugin_name}"
+        # Ensure user exists in users table (required for foreign key)
+        user_info = extract_user_info_from_token(auth_token)
+        ensure_user_exists(
+            user_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        )
 
+        # Get marketplace metadata from PostgreSQL
         def get_marketplace_metadata_sync():
             try:
                 result = execute_query(
@@ -111,17 +127,23 @@ async def install_plugin_from_marketplace(request: Request):
         if not marketplace_record:
             return {
                 "success": False,
-                "error": f"Marketplace '{marketplace_name}' not found in database",
+                "error": f"Marketplace '{marketplace_name}' not found. Please clone it first.",
             }
 
-        if not marketplace_record.get("zip_path"):
-            logger.warning(f"No ZIP file for marketplace '{marketplace_name}'")
+        # Verify git repository exists
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+
+        if not await is_git_repository(marketplace_dir):
             return {
                 "success": False,
-                "error": "Marketplace ZIP not found. Please re-add the marketplace.",
+                "error": f"Marketplace '{marketplace_name}' not cloned. Please clone it first.",
             }
 
-        if marketplace_record and marketplace_record.get("plugins"):
+        # Calculate install path from marketplace metadata
+        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{plugin_name}"
+
+        if marketplace_record.get("plugins"):
             for plugin_def in marketplace_record["plugins"]:
                 if plugin_def.get("name") == plugin_name:
                     source_path = plugin_def.get("source", "./")
@@ -138,10 +160,18 @@ async def install_plugin_from_marketplace(request: Request):
                     break
             else:
                 logger.warning(f"Plugin '{plugin_name}' not found in marketplace metadata")
-        else:
-            logger.warning(f"No marketplace metadata found for '{marketplace_name}'")
 
+        # Verify plugin directory exists in git repo
+        plugin_full_path = workspace_path / install_path
+        if not plugin_full_path.exists():
+            logger.warning(f"Plugin directory not found: {plugin_full_path}")
+            # Don't fail - plugin might use different structure
+
+        # Record installation in PostgreSQL
         def add_to_db_sync():
+            # Get current git commit for version tracking
+            commit_sha = marketplace_record.get("git_commit_sha", "unknown")
+
             plugin_record = {
                 "user_id": user_id,
                 "plugin_name": plugin_name,
@@ -150,6 +180,7 @@ async def install_plugin_from_marketplace(request: Request):
                 "install_path": install_path,
                 "status": "active",
                 "is_local": False,
+                "git_commit_sha": commit_sha,
             }
 
             execute_query(
@@ -173,14 +204,6 @@ async def install_plugin_from_marketplace(request: Request):
             None, add_to_db_sync
         )
         logger.info("Plugin marked as installed in PostgreSQL")
-
-        logger.info(f"Unzipping plugin to local workspace for user {user_id}...")
-        unzip_result = await unzip_installed_plugins(user_id)
-
-        if unzip_result["success"]:
-            logger.info(f"Plugin unzipped to local: {unzip_result['message']}")
-        else:
-            logger.warning(f"Failed to unzip plugin: {unzip_result['message']}")
 
         return {
             "success": True,
@@ -356,6 +379,14 @@ async def fetch_marketplace_metadata(request: Request):
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
+        # Ensure user exists in users table (required for foreign key)
+        user_info = extract_user_info_from_token(auth_token)
+        ensure_user_exists(
+            user_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        )
+
         marketplace_json_url = f"https://api.github.com/repos/{owner}/{repo}/contents/.claude-plugin/marketplace.json?ref={branch}"
         repository_url = f"https://github.com/{owner}/{repo}"
 
@@ -398,15 +429,13 @@ async def fetch_marketplace_metadata(request: Request):
                 "description": marketplace_metadata.get("description"),
                 "version": marketplace_metadata.get("version", "1.0.0"),
                 "plugins": marketplace_metadata.get("plugins", []),
-                "zip_path": None,
-                "zip_size": 0,
                 "status": "active",
             }
 
             execute_query(
                 """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     repository_url = EXCLUDED.repository_url,
                     branch = EXCLUDED.branch,
@@ -414,8 +443,6 @@ async def fetch_marketplace_metadata(request: Request):
                     description = EXCLUDED.description,
                     version = EXCLUDED.version,
                     plugins = EXCLUDED.plugins,
-                    zip_path = EXCLUDED.zip_path,
-                    zip_size = EXCLUDED.zip_size,
                     status = EXCLUDED.status,
                     last_synced_at = NOW(),
                     updated_at = NOW()
@@ -424,7 +451,7 @@ async def fetch_marketplace_metadata(request: Request):
                     user_id, marketplace_name, repository_url, branch,
                     marketplace_record["display_name"], marketplace_record["description"],
                     marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    None, 0, "active"
+                    "active"
                 ),
                 fetch="none"
             )
@@ -449,10 +476,16 @@ async def fetch_marketplace_metadata(request: Request):
         }
 
 
-@router.post("/marketplace/download-repo-zip")
-async def download_repo_zip(request: Request):
+@router.post("/marketplace/clone")
+async def clone_marketplace(request: Request):
     """
-    Download GitHub repository and save metadata to PostgreSQL + ZIP to S3.
+    Clone a GitHub repository as a marketplace using git clone.
+
+    This replaces the old ZIP-based download approach with git clone.
+    Benefits:
+    - Incremental updates via git fetch (much faster)
+    - No need to store ZIP files in S3
+    - Native git tooling for versioning
 
     Request body:
         {
@@ -472,7 +505,7 @@ async def download_repo_zip(request: Request):
         owner = body.get("owner")
         repo = body.get("repo")
         branch = body.get("branch", "main")
-        marketplace_name = body.get("marketplace_name") or repo
+        marketplace_name = body.get("marketplace_name") or f"{owner}-{repo}"
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -482,71 +515,64 @@ async def download_repo_zip(request: Request):
 
         try:
             user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"User {user_id}: Downloading {owner}/{repo}@{branch}")
+            logger.info(f"User {user_id}: Cloning {owner}/{repo}@{branch}")
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
-        zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+        # Ensure user exists in users table (required for foreign key)
+        user_info = extract_user_info_from_token(auth_token)
+        if not ensure_user_exists(
+            user_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        ):
+            logger.warning(f"Failed to ensure user exists: {user_id}")
+            # Continue anyway - the user might already exist
+
+        # Build paths
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+        repo_url = build_github_url(owner, repo)
         repository_url = f"https://github.com/{owner}/{repo}"
 
-        logger.info(f"Downloading from {zip_url}...")
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(zip_url, follow_redirects=True)
+        logger.info(f"Cloning {repo_url} -> {marketplace_dir}")
 
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Failed to download ZIP: HTTP {response.status_code}",
-                }
+        # Clone the repository
+        success, result = await clone_repository(
+            repo_url=repo_url,
+            target_dir=marketplace_dir,
+            branch=branch,
+            depth=1  # Shallow clone for efficiency
+        )
 
-            zip_data = response.content
+        if not success:
+            return {
+                "success": False,
+                "error": f"Failed to clone repository: {result}",
+            }
 
-        zip_size = len(zip_data)
-        logger.info(f"Downloaded {zip_size} bytes ({zip_size / 1024 / 1024:.2f} MB)")
+        commit_sha = result
+        logger.info(f"Repository cloned successfully (commit: {commit_sha[:8]})")
 
+        # Read marketplace.json from cloned repo
+        marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
         marketplace_metadata = None
-        try:
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
-                marketplace_json_path = None
-                for file_info in zip_ref.filelist:
-                    if file_info.filename.endswith(".claude-plugin/marketplace.json"):
-                        marketplace_json_path = file_info.filename
-                        break
 
-                if marketplace_json_path:
-                    marketplace_json_content = zip_ref.read(marketplace_json_path)
-                    marketplace_metadata = json.loads(marketplace_json_content)
-                    logger.info("Parsed marketplace.json from ZIP")
-                else:
-                    logger.warning("No marketplace.json found in ZIP")
-                    marketplace_metadata = {
-                        "name": marketplace_name,
-                        "version": "unknown",
-                        "plugins": [],
-                    }
-        except Exception as e:
-            logger.error(f"Failed to parse marketplace.json from ZIP: {e}")
+        if marketplace_json_path.exists():
+            try:
+                marketplace_metadata = json.loads(marketplace_json_path.read_text())
+                logger.info(f"Parsed marketplace.json: {marketplace_metadata.get('name')}")
+            except Exception as e:
+                logger.warning(f"Failed to parse marketplace.json: {e}")
+
+        if not marketplace_metadata:
             marketplace_metadata = {
                 "name": marketplace_name,
                 "version": "unknown",
                 "plugins": [],
             }
 
-        supabase = get_supabase_client()
-        storage_path = f".claude/plugins/marketplaces/{marketplace_name}/{repo}-{branch}.zip"
-
-        logger.info(f"Uploading ZIP to storage: {storage_path}")
-
-        def upload_zip_sync():
-            supabase.storage.from_(user_id).upload(
-                path=storage_path,
-                file=zip_data,
-                file_options={"content-type": "application/zip", "upsert": "true"},
-            )
-
-        await asyncio.get_event_loop().run_in_executor(None, upload_zip_sync)
-        logger.info("ZIP uploaded to storage")
-
+        # Save to PostgreSQL
         logger.info("Saving marketplace metadata to PostgreSQL...")
 
         def save_to_db_sync():
@@ -559,15 +585,14 @@ async def download_repo_zip(request: Request):
                 "description": marketplace_metadata.get("description"),
                 "version": marketplace_metadata.get("version", "unknown"),
                 "plugins": marketplace_metadata.get("plugins", []),
-                "zip_path": storage_path,
-                "zip_size": zip_size,
+                "git_commit_sha": commit_sha,
                 "status": "active",
             }
 
             execute_query(
                 """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, zip_path, zip_size, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, git_commit_sha, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     repository_url = EXCLUDED.repository_url,
                     branch = EXCLUDED.branch,
@@ -575,8 +600,7 @@ async def download_repo_zip(request: Request):
                     description = EXCLUDED.description,
                     version = EXCLUDED.version,
                     plugins = EXCLUDED.plugins,
-                    zip_path = EXCLUDED.zip_path,
-                    zip_size = EXCLUDED.zip_size,
+                    git_commit_sha = EXCLUDED.git_commit_sha,
                     status = EXCLUDED.status,
                     last_synced_at = NOW(),
                     updated_at = NOW()
@@ -585,7 +609,7 @@ async def download_repo_zip(request: Request):
                     user_id, marketplace_name, repository_url, branch,
                     marketplace_record["display_name"], marketplace_record["description"],
                     marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    storage_path, zip_size, "active"
+                    commit_sha, "active"
                 ),
                 fetch="none"
             )
@@ -597,24 +621,266 @@ async def download_repo_zip(request: Request):
         )
         logger.info("Marketplace metadata saved to PostgreSQL")
 
-        logger.info(f"Downloading marketplace ZIP to local workspace...")
-        sync_result = await sync_marketplace_zip_to_local(user_id, marketplace_name, storage_path)
-
-        if sync_result["success"]:
-            logger.info(f"Marketplace ZIP synced to local: {sync_result['message']}")
-        else:
-            logger.warning(f"Failed to sync marketplace ZIP: {sync_result['message']}")
-
         return {
             "success": True,
-            "message": f"Marketplace '{marketplace_name}' downloaded and saved to database",
+            "message": f"Marketplace '{marketplace_name}' cloned successfully",
             "marketplace": db_record,
+            "commit_sha": commit_sha,
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": sanitize_error_message(e, "downloading repository")
+            "error": sanitize_error_message(e, "cloning repository")
+        }
+
+
+@router.post("/marketplace/update")
+async def update_marketplace(request: Request):
+    """
+    Update a marketplace repository using git fetch + reset.
+
+    This performs an incremental update - only downloads changed files.
+    Much faster than re-downloading the entire ZIP.
+
+    Request body:
+        {
+            "auth_token": "Bearer ...",
+            "marketplace_name": "anthropic-agent-skills"
+        }
+
+    Returns:
+        {"success": bool, "message": str, "had_changes": bool, "commit_sha": str}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+        marketplace_name = body.get("marketplace_name")
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        if not marketplace_name:
+            return {"success": False, "error": "Missing required field: marketplace_name"}
+
+        user_id = extract_user_id_from_token(auth_token)
+        logger.info(f"User {user_id}: Updating marketplace '{marketplace_name}'")
+
+        # Get marketplace metadata from PostgreSQL
+        def get_marketplace_sync():
+            return execute_query(
+                "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+                (user_id, marketplace_name),
+                fetch="one"
+            )
+
+        marketplace = await asyncio.get_event_loop().run_in_executor(
+            None, get_marketplace_sync
+        )
+
+        if not marketplace:
+            return {
+                "success": False,
+                "error": f"Marketplace '{marketplace_name}' not found",
+            }
+
+        branch = marketplace.get("branch", "main")
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+
+        # Verify it's a git repository
+        if not await is_git_repository(marketplace_dir):
+            return {
+                "success": False,
+                "error": f"Marketplace '{marketplace_name}' is not a git repository. Please re-clone it.",
+            }
+
+        # Fetch and reset
+        logger.info(f"Fetching updates for {marketplace_name}...")
+        success, result, had_changes = await fetch_and_reset(marketplace_dir, branch)
+
+        if not success:
+            return {
+                "success": False,
+                "error": f"Failed to update: {result}",
+            }
+
+        new_commit_sha = result
+        old_commit_sha = marketplace.get("git_commit_sha", "unknown")
+
+        # Re-read marketplace.json if changed
+        marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
+        marketplace_metadata = None
+
+        if had_changes and marketplace_json_path.exists():
+            try:
+                marketplace_metadata = json.loads(marketplace_json_path.read_text())
+                logger.info(f"Updated marketplace.json: {marketplace_metadata.get('name')}")
+            except Exception as e:
+                logger.warning(f"Failed to parse marketplace.json: {e}")
+
+        # Update PostgreSQL
+        def update_db_sync():
+            if marketplace_metadata:
+                execute_query(
+                    """
+                    UPDATE marketplaces SET
+                        display_name = %s,
+                        description = %s,
+                        version = %s,
+                        plugins = %s,
+                        git_commit_sha = %s,
+                        last_synced_at = NOW(),
+                        updated_at = NOW()
+                    WHERE user_id = %s AND name = %s
+                    """,
+                    (
+                        marketplace_metadata.get("name", marketplace_name),
+                        marketplace_metadata.get("description"),
+                        marketplace_metadata.get("version", "unknown"),
+                        json.dumps(marketplace_metadata.get("plugins", [])),
+                        new_commit_sha,
+                        user_id, marketplace_name
+                    ),
+                    fetch="none"
+                )
+            else:
+                execute_query(
+                    """
+                    UPDATE marketplaces SET
+                        git_commit_sha = %s,
+                        last_synced_at = NOW(),
+                        updated_at = NOW()
+                    WHERE user_id = %s AND name = %s
+                    """,
+                    (new_commit_sha, user_id, marketplace_name),
+                    fetch="none"
+                )
+
+        await asyncio.get_event_loop().run_in_executor(None, update_db_sync)
+
+        if had_changes:
+            logger.info(f"Marketplace updated: {old_commit_sha[:8]} -> {new_commit_sha[:8]}")
+        else:
+            logger.info(f"Marketplace already up to date: {new_commit_sha[:8]}")
+
+        return {
+            "success": True,
+            "message": f"Marketplace '{marketplace_name}' updated" if had_changes else f"Marketplace '{marketplace_name}' already up to date",
+            "had_changes": had_changes,
+            "old_commit_sha": old_commit_sha,
+            "new_commit_sha": new_commit_sha,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "updating marketplace")
+        }
+
+
+@router.post("/marketplace/update-all")
+async def update_all_marketplaces(request: Request):
+    """
+    Update all user's marketplaces using git fetch.
+
+    Request body:
+        {
+            "auth_token": "Bearer ..."
+        }
+
+    Returns:
+        {"success": bool, "results": [...]}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        user_id = extract_user_id_from_token(auth_token)
+        logger.info(f"User {user_id}: Updating all marketplaces")
+
+        # Get all marketplaces
+        def get_all_marketplaces_sync():
+            return execute_query(
+                "SELECT name, branch FROM marketplaces WHERE user_id = %s AND status = 'active'",
+                (user_id,),
+                fetch="all"
+            )
+
+        marketplaces = await asyncio.get_event_loop().run_in_executor(
+            None, get_all_marketplaces_sync
+        )
+
+        if not marketplaces:
+            return {
+                "success": True,
+                "message": "No marketplaces to update",
+                "results": [],
+            }
+
+        workspace_path = get_user_workspace_path(user_id)
+        results = []
+
+        for mp in marketplaces:
+            mp_name = mp["name"]
+            mp_branch = mp.get("branch", "main")
+            mp_dir = get_marketplace_dir(workspace_path, mp_name)
+
+            if not await is_git_repository(mp_dir):
+                results.append({
+                    "marketplace": mp_name,
+                    "success": False,
+                    "error": "Not a git repository",
+                })
+                continue
+
+            success, result, had_changes = await fetch_and_reset(mp_dir, mp_branch)
+
+            if success:
+                # Update commit SHA in DB
+                def update_commit_sync():
+                    execute_query(
+                        """
+                        UPDATE marketplaces SET
+                            git_commit_sha = %s,
+                            last_synced_at = NOW()
+                        WHERE user_id = %s AND name = %s
+                        """,
+                        (result, user_id, mp_name),
+                        fetch="none"
+                    )
+
+                await asyncio.get_event_loop().run_in_executor(None, update_commit_sync)
+
+                results.append({
+                    "marketplace": mp_name,
+                    "success": True,
+                    "had_changes": had_changes,
+                    "commit_sha": result,
+                })
+            else:
+                results.append({
+                    "marketplace": mp_name,
+                    "success": False,
+                    "error": result,
+                })
+
+        updated_count = sum(1 for r in results if r.get("success") and r.get("had_changes"))
+        logger.info(f"Updated {updated_count}/{len(marketplaces)} marketplaces")
+
+        return {
+            "success": True,
+            "message": f"Updated {updated_count} marketplaces",
+            "results": results,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "updating all marketplaces")
         }
 
 
@@ -658,8 +924,7 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         cleanup_result = await cleanup_marketplace_task(
             user_id=user_id,
             marketplace_name=marketplace_name,
-            marketplace_id=marketplace["id"],
-            zip_path=marketplace.get("zip_path")
+            marketplace_id=marketplace["id"]
         )
 
         if cleanup_result["success"]:
@@ -684,72 +949,51 @@ async def delete_marketplace(marketplace_name: str, request: Request):
 
 
 async def cleanup_marketplace_task(
-    user_id: str, marketplace_name: str, marketplace_id: str, zip_path: str = None
+    user_id: str, marketplace_name: str, marketplace_id: str
 ):
     """
     Cleanup marketplace files and metadata.
 
-    This function cleans up:
-    1. User workspace directories
-    2. S3 storage (ZIP files)
-    3. Installed plugins (cascade delete)
-    4. Marketplace metadata (PostgreSQL)
+    Git-based cleanup:
+    1. Remove git repository directory from workspace
+    2. Delete installed plugins from PostgreSQL
+    3. Delete marketplace metadata from PostgreSQL
     """
     logger.info(f"Starting cleanup for marketplace '{marketplace_name}' (user: {user_id})")
 
+    cleaned_items = []
+
     try:
-        supabase = get_supabase_client()
-        cleaned_items = []
+        # Step 1: Remove git repository from workspace
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
-        # Step 1: Cleanup workspace directory
-        try:
-            workspace_path = get_user_workspace_path(user_id)
-            marketplace_dir = workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
+        if await remove_repository(marketplace_dir):
+            cleaned_items.append(f"git_repo:{marketplace_dir}")
+            logger.info(f"Removed git repository: {marketplace_dir}")
+        else:
+            logger.warning(f"Git repository not found or failed to remove: {marketplace_dir}")
 
-            if marketplace_dir.exists():
-                shutil.rmtree(marketplace_dir)
-                cleaned_items.append(f"workspace:{marketplace_dir}")
-                logger.info(f"Deleted workspace directory: {marketplace_dir}")
-            else:
-                logger.info(f"Workspace directory not found: {marketplace_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup workspace: {e}")
-
-        # Step 2: Cleanup S3 storage
-        try:
-            marketplace_folder = f".claude/plugins/marketplaces/{marketplace_name}"
-            file_list = supabase.storage.from_(user_id).list(marketplace_folder)
-
-            if file_list:
-                files_to_delete = [f"{marketplace_folder}/{file['name']}" for file in file_list]
-                supabase.storage.from_(user_id).remove(files_to_delete)
-                cleaned_items.append(f"s3:{marketplace_folder} ({len(files_to_delete)} files)")
-                logger.info(f"Deleted {len(files_to_delete)} files from S3: {marketplace_folder}")
-            else:
-                logger.info(f"No files found in S3: {marketplace_folder}")
-        except Exception as e:
-            logger.warning(f"Failed to delete files from S3: {e}")
-
-        # Step 3: Delete installed plugins
+        # Step 2: Delete installed plugins from PostgreSQL
         try:
             execute_query(
                 "DELETE FROM installed_plugins WHERE user_id = %s AND marketplace_name = %s",
                 (user_id, marketplace_name),
                 fetch="none"
             )
-            cleaned_items.append(f"plugins:deleted")
+            cleaned_items.append("plugins:deleted")
             logger.info("Deleted installed plugins for marketplace")
         except Exception as e:
             logger.warning(f"Failed to delete installed plugins: {e}")
 
-        # Step 4: Delete marketplace record
+        # Step 3: Delete marketplace record from PostgreSQL
         try:
             execute_query(
                 "DELETE FROM marketplaces WHERE id = %s",
                 (marketplace_id,),
                 fetch="none"
             )
-            cleaned_items.append(f"metadata:marketplace")
+            cleaned_items.append("metadata:marketplace")
             logger.info("Deleted marketplace metadata from PostgreSQL")
         except Exception as e:
             logger.error(f"Failed to delete marketplace metadata: {e}")
@@ -768,5 +1012,5 @@ async def cleanup_marketplace_task(
         return {
             "success": False,
             "message": f"Cleanup failed: {sanitize_error_message(e, 'cleaning up marketplace')}",
-            "cleaned_items": cleaned_items if 'cleaned_items' in locals() else [],
+            "cleaned_items": cleaned_items,
         }

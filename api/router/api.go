@@ -50,9 +50,9 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	escalationService := services.NewEscalationService(pg, redis, groupService, fcmService)
 	onCallService := services.NewOnCallService(pg)
 	rotationService := services.NewRotationService(pg)
-	schedulerService := services.NewSchedulerService(pg)     // NEW: Service scheduling
-	serviceService := services.NewServiceService(pg)         // NEW: Service management
-	integrationService := services.NewIntegrationService(pg) // NEW: Integration management
+	schedulerService := services.NewSchedulerService(pg)                                  // NEW: Service scheduling
+	serviceService := services.NewServiceService(pg)                                      // NEW: Service management
+	integrationService := services.NewIntegrationService(pg)                              // NEW: Integration management
 	identityService, err := services.NewIdentityServiceWithDB(config.App.DataDir, pg, "") // Initialize IdentityService with DB for K8s persistence
 	if err != nil {
 		log.Printf("Warning: Failed to initialize identity service: %v", err)
@@ -99,13 +99,12 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	integrationHandler := handlers.NewIntegrationHandler(integrationService)                                        // NEW: Integration handler
 	webhookHandler := handlers.NewWebhookHandler(integrationService, alertService, incidentService, serviceService) // NEW: Webhook handler
 	notificationHandler := handlers.NewNotificationHandler(slackService)                                            // NEW: Notification handler
-	debugHandler := handlers.NewDebugHandler(pg)
-	mobileHandler := handlers.NewMobileHandler(pg, identityService) // Inject IdentityService
-	identityHandler := handlers.NewIdentityHandler(identityService) // Initialize IdentityHandler
-	agentHandler := handlers.NewAgentHandler(pg, identityService)   // Initialize AgentHandler for Zero-Trust
-	orgHandler := handlers.NewOrgHandler(orgService)                       // Organization management
-	projectHandler := handlers.NewProjectHandler(projectService)         // Project management
-	conversationShareHandler := handlers.NewConversationShareHandler(pg) // Conversation sharing
+	mobileHandler := handlers.NewMobileHandler(pg, identityService)                                                 // Inject IdentityService
+	identityHandler := handlers.NewIdentityHandler(identityService)                                                 // Initialize IdentityHandler
+	agentHandler := handlers.NewAgentHandler(pg, identityService)                                                   // Initialize AgentHandler for Zero-Trust
+	orgHandler := handlers.NewOrgHandler(orgService)                                                                // Organization management
+	projectHandler := handlers.NewProjectHandler(projectService)                                                    // Project management
+	conversationShareHandler := handlers.NewConversationShareHandler(pg)                                            // Conversation sharing
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -127,20 +126,14 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		c.Header("x-slar-env", env)
 
 		// Get Supabase config to send to frontend
-		supabaseURL := os.Getenv("SUPABASE_URL")
-		supabaseAnonKey := os.Getenv("SUPABASE_ANON_KEY")
+		supabaseURL := config.App.SupabaseURL
+		supabaseAnonKey := config.App.SupabaseAnonKey
 
 		c.JSON(200, gin.H{
-			"status":            "healthy",
-			"message":           "SLAR API is running",
-			"env":               env,
 			"supabase_url":      supabaseURL,
 			"supabase_anon_key": supabaseAnonKey,
 		})
 	})
-
-	// Debug endpoints (temporary for troubleshooting)
-	r.GET("/debug/rotation-tables", debugHandler.CheckRotationTables)
 
 	// PUBLIC IDENTITY ENDPOINT - public key is public!
 	// AI Agent needs this to verify device certificates without authentication
@@ -174,8 +167,8 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		orgRoutes := protected.Group("/orgs")
 		{
 			// Routes WITHOUT resource ID - check in handler
-			orgRoutes.POST("", orgHandler.CreateOrg)   // Anyone authenticated can create
-			orgRoutes.GET("", orgHandler.ListOrgs)     // Returns only user's orgs
+			orgRoutes.POST("", orgHandler.CreateOrg) // Anyone authenticated can create
+			orgRoutes.GET("", orgHandler.ListOrgs)   // Returns only user's orgs
 
 			// Routes WITH resource ID - use middleware for coarse-grained check
 			orgDetailRoutes := orgRoutes.Group("/:id")

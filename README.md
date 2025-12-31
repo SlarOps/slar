@@ -15,10 +15,6 @@
 
 ---
 
-## Deployment Guide
-
-This guide focuses on deploying SLAR in your environment. For development instructions, please refer to [CLAUDE.md](CLAUDE.md).
-
 ### Prerequisites
 
 1.  **Supabase Account**: You need a [Supabase](https://supabase.com) project for Database and Authentication.
@@ -29,98 +25,13 @@ This guide focuses on deploying SLAR in your environment. For development instru
 
 ---
 
-### 1. Environment Configuration
-
-Regardless of your deployment method, you need to configure the following environment variables.
-
-**Required Variables:**
-
-| Variable | Description | Source |
-|----------|-------------|--------|
-| `DATABASE_URL` | PostgreSQL connection string | Supabase Settings → Database |
-| `SUPABASE_URL` | Your Supabase project URL | Supabase Settings → API |
-| `SUPABASE_ANON_KEY` | Public API key | Supabase Settings → API |
-| `SUPABASE_SERVICE_ROLE_KEY` | Private Service Role key | Supabase Settings → API |
-| `SUPABASE_JWT_SECRET` | JWT Secret for auth verification | Supabase Settings → API → JWT Settings |
-| `ANTHROPIC_API_KEY` | Claude API Key | Anthropic Console |
-
-**Optional Integration Variables:**
-
-| Variable | Description |
-|----------|-------------|
-| `SLACK_BOT_TOKEN` | Slack Bot Token (xoxb-...) |
-| `SLACK_APP_TOKEN` | Slack App Token (xapp-...) |
-| `SLAR_CLOUD_URL` | URL for SLAR Cloud sync |
-| `SLAR_CLOUD_TOKEN` | Token for SLAR Cloud sync |
-
-> **Important**: If your `DATABASE_URL` password contains special characters like `?`, `&`, `@`, you must URL-encode them (e.g., `?` → `%3F`).
-
-### 2. Configuration via Config File (Advanced)
+### Configuration via Config File
 
 For more granular control, especially in production or when managing multiple services, you can use a `config.yaml` file instead of (or alongside) environment variables.
 
-1.  Create a file named `config.yaml` (you can use `api/config.dev.yaml` as a template).
-2.  Mount it to `/app/config/config.yaml` in your container.
-3.  Set the `SLAR_CONFIG_PATH=/app/config/config.yaml` environment variable.
-
-**Example `config.yaml` Structure:**
-
-```yaml
-# =============================================================================
-# DATABASE & SERVER
-# =============================================================================
-database_url: "postgresql://user:pass@host:5432/db"
-port: "8080"
-redis_url: ""
-
-# =============================================================================
-# URL CONFIGURATION
-# =============================================================================
-# slar_api_url: internal API URL for AI agent tools
-slar_api_url: "http://slar-api:8080"
-
-# slar_web_url: internal frontend URL
-slar_web_url: "http://slar-web:3000"
-
-# public_url: external URL for mobile/clients
-public_url: "https://api.your-domain.com"
-
-# agent_url: AI Agent service URL
-agent_url: "https://agent.your-domain.com"
-
-# backend_url: Zero-Trust verifier URL
-backend_url: "http://slar-api:8080"
-
-data_dir: "./data"
-
-# =============================================================================
-# SUPABASE & AUTH
-# =============================================================================
-supabase_url: "https://your-project.supabase.co"
-supabase_anon_key: "eyJ..."
-supabase_service_role_key: "eyJ..."
-supabase_jwt_secret: "your-secret..."
-
-# =============================================================================
-# NOTIFICATION GATEWAY (Cloudflare Worker)
-# Optional: Only required for Mobile Push Notifications
-# =============================================================================
-notification_gateway:
-  url: "https://your-worker.workers.dev"
-  instance_id: "inst_..."
-  api_token: "slar_tok_..."
-
-# =============================================================================
-# EXTERNAL INTEGRATIONS
-# =============================================================================
-anthropic_api_key: "sk-ant-..."
-slack_bot_token: "xoxb-..."
-slack_app_token: "xapp-..."
-```
-
 ---
 
-### 2. Docker Compose (Local / Staging)
+### Docker Compose (Local / Staging)
 
 The easiest way to get started. Migrations are applied automatically.
 

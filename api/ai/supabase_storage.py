@@ -1,11 +1,15 @@
 """
-Supabase Storage Utility for downloading .mcp.json configuration
+Supabase Storage & Database Utility
 
 This module handles:
-1. Downloading .mcp.json from user's Supabase Storage bucket
-2. Parsing the configuration
-3. Converting to format needed by ClaudeAgentOptions
+1. MCP servers from PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
+2. Skills sync from Supabase Storage bucket
+3. Plugins sync from Supabase Storage bucket
 4. Hash-based sync to avoid unnecessary downloads
+5. User workspace management
+
+NOTE: MCP servers are now stored in PostgreSQL, NOT object storage.
+Use get_user_mcp_servers() to load MCP servers from database.
 """
 
 import os
@@ -50,6 +54,53 @@ def get_supabase_client() -> Client:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY environment variable not set")
 
     return create_client(config.supabase_url, config.supabase_service_role_key)
+
+
+def ensure_user_bucket_exists(user_id: str) -> bool:
+    """
+    Ensure user's storage bucket exists in Supabase Storage.
+    Creates the bucket if it doesn't exist.
+
+    Args:
+        user_id: User's UUID (used as bucket name)
+
+    Returns:
+        True if bucket exists or was created successfully
+    """
+    if not user_id:
+        logger.warning("No user_id provided for bucket check")
+        return False
+
+    try:
+        supabase = get_supabase_client()
+
+        # Try to list buckets and check if user's bucket exists
+        buckets = supabase.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+
+        if user_id in bucket_names:
+            logger.debug(f"✅ Bucket already exists: {user_id}")
+            return True
+
+        # Create bucket for user
+        logger.info(f"📦 Creating storage bucket for user: {user_id}")
+        supabase.storage.create_bucket(
+            user_id,
+            options={
+                "public": False,
+                "file_size_limit": 52428800,  # 50MB
+            }
+        )
+        logger.info(f"✅ Created storage bucket: {user_id}")
+        return True
+
+    except Exception as e:
+        # Bucket might already exist (race condition) - that's OK
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            logger.debug(f"Bucket already exists: {user_id}")
+            return True
+        logger.error(f"❌ Failed to ensure bucket exists for {user_id}: {e}")
+        return False
 
 
 def get_user_workspace_path(user_id: str) -> Path:
@@ -147,8 +198,9 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
     """
     Extract and VERIFY user ID from Supabase JWT token.
 
-    SECURITY: This function now properly verifies JWT signature to prevent
-    token forgery attacks. Tokens must be signed with SUPABASE_JWT_SECRET.
+    SECURITY: This function verifies JWT signature using either:
+    - ES256/RS256: JWKS public key from Supabase (new default)
+    - HS256: JWT secret (legacy fallback)
 
     Args:
         auth_token: JWT token from Supabase Auth
@@ -163,27 +215,36 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         logger.warning("⚠️ No auth token provided")
         return None
 
-    if not config.supabase_jwt_secret:
-        logger.error("🚨 SUPABASE_JWT_SECRET not set - cannot verify tokens!")
-        return None
-
     try:
         # Remove 'Bearer ' prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # SECURITY: Verify JWT signature with Supabase JWT secret
-        # This prevents token forgery attacks
-        decoded = jwt.decode(
-            token,
-            config.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={
-                "verify_signature": True,  # CRITICAL: Must verify signature
-                "verify_exp": True,        # Verify expiration
-                "verify_iat": True,        # Verify issued at
-                "verify_aud": False,       # Disable audience verification
-            }
-        )
+        # Decode header to check algorithm
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
+        kid = header.get("kid")
+
+        logger.debug(f"Token algorithm: {alg}, kid: {kid}")
+
+        # For ES256/RS256 (asymmetric), use JWKS public key verification
+        if alg in ["ES256", "RS256"] and kid and config.supabase_url:
+            decoded = _verify_with_jwks(token, alg, kid)
+        # For HS256 (symmetric), use JWT secret
+        elif alg == "HS256" and config.supabase_jwt_secret:
+            decoded = jwt.decode(
+                token,
+                config.supabase_jwt_secret,
+                algorithms=["HS256"],
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_aud": False,
+                }
+            )
+        else:
+            logger.warning(f"⚠️ Cannot verify token: alg={alg}, has_secret={bool(config.supabase_jwt_secret)}, has_url={bool(config.supabase_url)}")
+            return None
 
         # Extract user ID from 'sub' claim
         user_id = decoded.get("sub")
@@ -205,72 +266,87 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         logger.warning(f"⚠️ Failed to decode JWT token: {type(e).__name__}")
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}")
+        logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}: {e}")
         return None
 
 
-async def download_mcp_config(user_id: str) -> Optional[Dict[str, Any]]:
+# Cache for JWKS keys (10 min TTL per Supabase docs)
+_jwks_cache: Dict[str, Any] = {}
+_jwks_cache_time: float = 0
+JWKS_CACHE_TTL = 600  # 10 minutes
+
+
+def _verify_with_jwks(token: str, alg: str, kid: str) -> Dict[str, Any]:
     """
-    Download .mcp.json configuration from user's Supabase Storage bucket.
+    Verify JWT using JWKS public key from Supabase.
 
     Args:
-        user_id: User's UUID (bucket name)
+        token: JWT token string
+        alg: Algorithm (ES256 or RS256)
+        kid: Key ID from token header
 
     Returns:
-        Parsed MCP configuration dictionary or None if download fails
+        Decoded token payload
 
-    Example return:
-        {
-            "mcpServers": {
-                "context7": {
-                    "command": "npx",
-                    "args": ["-y", "@uptudev/mcp-context7"],
-                    "env": {}
-                },
-                "slar-incident-tools": {
-                    "command": "python",
-                    "args": ["/path/to/script.py"],
-                    "env": {
-                        "OPENAI_API_KEY": "${API_KEY:-default}",
-                        "PORT": "8002"
-                    }
-                }
-            },
-            "metadata": {...}
-        }
+    Raises:
+        jwt.InvalidSignatureError: If signature verification fails
     """
-    if not user_id:
-        logger.warning("No user_id provided for MCP config download")
-        return None
+    import httpx
+    import time
+    from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
-    try:
-        logger.info(f"📥 Downloading MCP config for user: {user_id}")
+    global _jwks_cache, _jwks_cache_time
 
-        # Create Supabase client
-        supabase = get_supabase_client()
+    # Check cache
+    current_time = time.time()
+    if current_time - _jwks_cache_time > JWKS_CACHE_TTL:
+        _jwks_cache = {}
+        _jwks_cache_time = current_time
 
-        # Download file from storage
-        # Bucket name is the user_id
-        response = supabase.storage.from_(user_id).download(MCP_FILE_NAME)
+    # Get public key from cache or fetch from JWKS
+    cache_key = f"{alg}:{kid}"
+    if cache_key not in _jwks_cache:
+        # Fetch JWKS from Supabase
+        jwks_url = f"{config.supabase_url}/auth/v1/.well-known/jwks.json"
+        logger.debug(f"Fetching JWKS from: {jwks_url}")
 
-        if not response:
-            logger.warning(f"⚠️  No MCP config found for user: {user_id}")
-            return None
+        response = httpx.get(jwks_url, timeout=10)
+        response.raise_for_status()
+        jwks = response.json()
 
-        # Parse JSON
-        config = json.loads(response)
+        # Find key by kid
+        key_data = None
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                key_data = key
+                break
 
-        logger.info(f"✅ Successfully downloaded MCP config for user: {user_id}")
-        logger.debug(f"Config keys: {list(config.keys())}")
+        if not key_data:
+            raise jwt.InvalidSignatureError(f"Key ID {kid} not found in JWKS")
 
-        # Save to file in user's workspace
-        save_config_to_file(user_id, config)
+        # Convert JWK to public key
+        if alg == "ES256" and key_data.get("kty") == "EC":
+            public_key = ECAlgorithm.from_jwk(key_data)
+        elif alg == "RS256" and key_data.get("kty") == "RSA":
+            public_key = RSAAlgorithm.from_jwk(key_data)
+        else:
+            raise jwt.InvalidSignatureError(f"Unsupported key type: {key_data.get('kty')} for algorithm {alg}")
 
-        return config
+        _jwks_cache[cache_key] = public_key
+        logger.debug(f"Cached public key for {cache_key}")
 
-    except Exception as e:
-        logger.error(f"❌ Failed to download MCP config for user {user_id}: {e}")
-        return None
+    # Verify token with public key
+    return jwt.decode(
+        token,
+        _jwks_cache[cache_key],
+        algorithms=[alg],
+        options={
+            "verify_signature": True,
+            "verify_exp": True,
+            "verify_iat": True,
+            "verify_aud": False,
+        }
+    )
 
 
 def parse_mcp_servers(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -580,55 +656,6 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"❌ Failed to load plugins for user {user_id}: {e}")
         return []
-
-
-async def sync_marketplace_zip_to_local(user_id: str, marketplace_name: str, zip_path: str) -> Dict[str, Any]:
-    """
-    Download marketplace ZIP from S3 to local workspace.
-    
-    This ensures marketplace ZIPs are available locally for plugin unzipping.
-    Should be called after uploading marketplace ZIP to S3.
-    
-    Args:
-        user_id: User's UUID
-        marketplace_name: Name of marketplace
-        zip_path: Path to ZIP in S3 (e.g., ".claude/plugins/marketplaces/...")
-        
-    Returns:
-        {"success": bool, "message": str, "local_path": str}
-    """
-    try:
-        logger.info(f"📦 Syncing marketplace ZIP to local for user {user_id}: {marketplace_name}")
-        
-        # Get workspace path
-        workspace_path = get_user_workspace_path(user_id)
-        
-        # Build local ZIP path
-        local_zip_path = workspace_path / zip_path
-        local_zip_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Download ZIP from S3
-        supabase = get_supabase_client()
-        zip_data = supabase.storage.from_(user_id).download(zip_path)
-        
-        # Write to local file
-        local_zip_path.write_bytes(zip_data)
-        
-        logger.info(f"✅ Marketplace ZIP synced to local: {local_zip_path} ({len(zip_data)} bytes)")
-        
-        return {
-            "success": True,
-            "message": f"Marketplace ZIP downloaded to {local_zip_path}",
-            "local_path": str(local_zip_path)
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to sync marketplace ZIP to local: {e}")
-        return {
-            "success": False,
-            "message": f"Sync failed: {str(e)}",
-            "local_path": ""
-        }
 
 
 # ============================================================
@@ -1009,582 +1036,25 @@ async def sync_user_skills(auth_token: str) -> Dict[str, Any]:
     }
 
 
-async def sync_user_plugins(auth_token: str) -> Dict[str, Any]:
-    """
-    Sync all plugin files from Supabase Storage (.claude/plugins/) to user's workspace.
-
-    This syncs the entire plugins directory tree including:
-    - .claude/plugins/installed_plugins.json
-    - .claude/plugins/marketplaces/{marketplace-name}/.claude-plugin/marketplace.json
-    - .claude/plugins/marketplaces/{marketplace-name}/{plugin-name}/* (all plugin files)
-
-    Args:
-        auth_token: Supabase JWT token
-
-    Returns:
-        Dictionary with sync results:
-        {
-            "success": True/False,
-            "synced_count": 50,
-            "failed_count": 0,
-            "files": [...],
-            "errors": []
-        }
-
-    Example usage:
-        result = await sync_user_plugins(auth_token)
-        if result["success"]:
-            logger.info(f"Synced {result['synced_count']} plugin files")
-    """
-    # Extract user ID from token
-    user_id = extract_user_id_from_token(auth_token)
-
-    if not user_id:
-        logger.warning("Could not extract user_id from auth token for plugin sync")
-        return {
-            "success": False,
-            "synced_count": 0,
-            "failed_count": 0,
-            "files": [],
-            "errors": ["Invalid auth token"]
-        }
-
-    logger.info(f"🔄 Starting plugin sync for user: {user_id}")
-
-    # Get user's workspace path
-    workspace_path = get_user_workspace_path(user_id)
-    plugins_dir = workspace_path / CLAUDE_PLUGINS_DIR
-
-    # Ensure .claude/plugins directory exists
-    plugins_dir.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"📁 Ensured plugins directory exists: {plugins_dir}")
-
-    try:
-        # Get Supabase client
-        supabase = get_supabase_client()
-
-        # List ALL plugin files (optimized with prefix listing)
-        plugin_files = await list_all_files_optimized(supabase, user_id, CLAUDE_PLUGINS_DIR)
-
-        if not plugin_files:
-            logger.info(f"ℹ️  No plugin files found for user: {user_id}")
-            return {
-                "success": True,
-                "synced_count": 0,
-                "failed_count": 0,
-                "files": [],
-                "errors": []
-            }
-
-        logger.info(f"📋 Found {len(plugin_files)} plugin files to sync")
-
-        # Download each file and recreate directory structure
-        synced_count = 0
-        failed_count = 0
-        synced_files = []
-        errors = []
-
-        for file_info in plugin_files:
-            # Get full path from file metadata
-            file_path = file_info.get("name", "")
-            if not file_path:
-                continue
-
-            try:
-                # Download file from bucket
-                response = supabase.storage.from_(user_id).download(file_path)
-
-                if not response:
-                    failed_count += 1
-                    errors.append(f"Failed to download: {file_path}")
-                    continue
-
-                # Create local file path (remove .claude/plugins/ prefix to get relative path)
-                # file_path: ".claude/plugins/installed_plugins.json"
-                # relative_path: "installed_plugins.json"
-                relative_path = file_path.replace(f"{CLAUDE_PLUGINS_DIR}/", "")
-
-                local_file = plugins_dir / relative_path
-
-                # Ensure parent directory exists
-                local_file.parent.mkdir(parents=True, exist_ok=True)
-
-                # Write file to local workspace
-                local_file.write_bytes(response)
-
-                synced_count += 1
-                synced_files.append(file_path)
-                logger.debug(f"✅ Synced: {file_path}")
-
-            except Exception as e:
-                failed_count += 1
-                error_msg = f"Error syncing {file_path}: {str(e)}"
-                errors.append(error_msg)
-                logger.error(f"❌ {error_msg}")
-
-        logger.info(
-            f"🏁 Plugin sync completed for user {user_id}: "
-            f"{synced_count} synced, {failed_count} failed"
-        )
-
-        return {
-            "success": failed_count == 0,
-            "synced_count": synced_count,
-            "failed_count": failed_count,
-            "files": synced_files,
-            "errors": errors
-        }
-
-    except Exception as e:
-        error_msg = f"Plugin sync failed: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        return {
-            "success": False,
-            "synced_count": 0,
-            "failed_count": 0,
-            "files": [],
-            "errors": [error_msg]
-        }
-
-
 # ============================================================
-# HASH-BASED SYNC FUNCTIONS
+# PLUGIN VERIFICATION (Git-based approach)
 # ============================================================
-
-
-def calculate_directory_hash(directory: Path) -> str:
-    """
-    Calculate hash of all files in a directory recursively.
-
-    Args:
-        directory: Path to directory
-
-    Returns:
-        SHA256 hash of all file contents and names
-
-    Example:
-        hash = calculate_directory_hash(Path("/workspace/user/.claude"))
-    """
-    hasher = hashlib.sha256()
-
-    if not directory.exists():
-        return ""
-
-    # Sort files for consistent hash
-    files = sorted(directory.rglob("*"))
-
-    for file_path in files:
-        if file_path.is_file() and not file_path.name.startswith("_temp"):
-            # Hash file path (relative to directory)
-            rel_path = file_path.relative_to(directory)
-            hasher.update(str(rel_path).encode())
-
-            # Hash file content
-            try:
-                hasher.update(file_path.read_bytes())
-            except Exception as e:
-                logger.warning(f"⚠️  Could not read file {file_path}: {e}")
-
-    return hasher.hexdigest()
-
-
-async def list_all_files_optimized(supabase: Client, bucket_id: str, prefix: str = "") -> List[Dict[str, Any]]:
-    """
-    OPTIMIZED: List all files with a prefix using search API (1 API call instead of N calls).
-
-    This is the BEST PRACTICE for object storage - uses prefix matching instead of recursive traversal.
-    Object storage is flat key-value, not hierarchical filesystem.
-
-    Args:
-        supabase: Supabase client
-        bucket_id: Bucket ID (user_id)
-        prefix: Prefix to filter (e.g., ".claude/plugins")
-
-    Returns:
-        List of all file metadata with full paths (single API call)
-
-    Performance:
-        - Old approach: N API calls (one per directory level)
-        - New approach: 1 API call (uses prefix search)
-        - 10x-100x faster for nested structures
-
-    Example:
-        # Get ALL files under .claude/plugins in ONE call
-        files = await list_all_files_optimized(supabase, user_id, ".claude/plugins")
-    """
-    try:
-        # Try using search API if available (Supabase Storage >= v0.40.0)
-        # This gets ALL files matching prefix in single API call
-        try:
-            response = supabase.storage.from_(bucket_id).list(prefix, {
-                "limit": 1000,
-                "search": "",  # Empty search with prefix gets all files
-                "sortBy": {"column": "name", "order": "asc"}
-            })
-
-            if response:
-                # Normalize paths: list() returns paths relative to prefix
-                # Need to prepend prefix to get full path for download()
-                normalized_files = []
-                for item in response:
-                    item_name = item.get("name", "")
-                    if not item_name or not item.get("id"):  # Skip if no name or is directory
-                        continue
-
-                    # Build full path: prefix + "/" + relative_name
-                    # e.g., ".claude/plugins" + "/" + "installed_plugins.json"
-                    full_path = f"{prefix}/{item_name}" if prefix else item_name
-
-                    # Update item with full path
-                    item["name"] = full_path
-                    normalized_files.append(item)
-
-                logger.debug(f"✅ Got {len(normalized_files)} files with prefix '{prefix}' (optimized)")
-                return normalized_files
-        except Exception as e:
-            logger.debug(f"Search API not available, falling back to recursive: {e}")
-            # Fallback to recursive if search not supported
-            pass
-
-        # Fallback: Use recursive approach
-        return await list_directory_recursive(supabase, bucket_id, prefix)
-
-    except Exception as e:
-        logger.error(f"❌ Failed to list files with prefix '{prefix}': {e}")
-        return []
-
-
-async def list_all_files_in_bucket(supabase: Client, bucket_id: str) -> List[Dict[str, Any]]:
-    """
-    List ALL files in bucket (entire bucket, no prefix filter).
-
-    Simple approach: Recursively list from root to get everything.
-
-    Args:
-        supabase: Supabase client
-        bucket_id: Bucket ID (user_id)
-
-    Returns:
-        List of all file metadata with full paths
-    """
-    return await list_directory_recursive(supabase, bucket_id, "")
-
-
-async def list_directory_recursive(supabase: Client, bucket_id: str, path: str = "") -> List[Dict[str, Any]]:
-    """
-    FALLBACK: Recursive directory listing (N API calls - slower but works everywhere).
-
-    ⚠️  WARNING: This approach has performance issues:
-    - Makes N+1 API calls (one per directory level)
-    - Slow with deep nested structures
-    - Risk of rate limiting
-    - NOT recommended for production with many files
-
-    Use list_all_files_optimized() instead when possible.
-
-    Args:
-        supabase: Supabase client
-        bucket_id: Bucket ID (user_id)
-        path: Directory path to list
-
-    Returns:
-        List of file metadata with full paths
-    """
-    all_files = []
-
-    try:
-        items = supabase.storage.from_(bucket_id).list(path, {"limit": 1000})
-
-        if not items:
-            return all_files
-
-        for item in items:
-            item_name = item.get("name", "")
-            item_type = item.get("id")  # If id exists, it's a file
-
-            # Build full path
-            full_path = f"{path}/{item_name}" if path else item_name
-
-            if item.get("id"):  # It's a file
-                # Add full path to metadata
-                item["name"] = full_path
-                all_files.append(item)
-            else:  # It's a directory, recurse into it
-                logger.debug(f"📁 Recursing into directory: {full_path}")
-                subdirectory_files = await list_directory_recursive(supabase, bucket_id, full_path)
-                all_files.extend(subdirectory_files)
-
-    except Exception as e:
-        logger.debug(f"⚠️  Could not list directory {path}: {e}")
-
-    return all_files
-
-
-async def get_bucket_files_metadata(user_id: str) -> List[Dict[str, Any]]:
-    """
-    Get metadata of all files in user's bucket (.mcp.json + .claude/).
-
-    Lists all files in:
-    - .mcp.json (root)
-    - .claude/skills/* (all files, including nested)
-    - .claude/plugins/* (all files recursively, including marketplaces)
-
-    PERFORMANCE: Uses optimized prefix listing (1 API call per directory tree) instead of
-    recursive traversal (N API calls). Automatically falls back to recursive if needed.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        List of file metadata with name, size, updated_at
-
-    Example:
-        [
-            {"name": ".mcp.json", "size": 1024, "updated_at": "2025-11-03..."},
-            {"name": ".claude/skills/my-skill.skill", "size": 2048, "updated_at": "..."},
-            {"name": ".claude/plugins/installed_plugins.json", "size": 512, ...},
-            {"name": ".claude/plugins/marketplaces/anthropic-agent-skills/.claude-plugin/marketplace.json", ...}
-        ]
-    """
-    if not user_id:
-        return []
-
-    try:
-        supabase = get_supabase_client()
-        all_files = []
-
-        # Get .mcp.json from root
-        try:
-            root_files = supabase.storage.from_(user_id).list("", {"limit": 100})
-            if root_files:
-                mcp_file = [f for f in root_files if f.get("name") == ".mcp.json"]
-                all_files.extend(mcp_file)
-        except Exception as e:
-            logger.debug(f"No .mcp.json file: {e}")
-
-        # Get all files from .claude/skills/ (OPTIMIZED: 1 API call instead of N)
-        try:
-            skill_files = await list_all_files_optimized(supabase, user_id, CLAUDE_SKILLS_DIR)
-            all_files.extend(skill_files)
-            logger.debug(f"Found {len(skill_files)} files in .claude/skills/")
-        except Exception as e:
-            logger.debug(f"No skill files in .claude/skills/: {e}")
-
-        # Get all files from .claude/plugins/ (OPTIMIZED: 1 API call instead of N)
-        # This includes all nested marketplace files like:
-        # - .claude/plugins/installed_plugins.json
-        # - .claude/plugins/marketplaces/anthropic-agent-skills/.claude-plugin/marketplace.json
-        # - .claude/plugins/marketplaces/anthropic-agent-skills/plugin-1/...
-        try:
-            plugin_files = await list_all_files_optimized(supabase, user_id, CLAUDE_PLUGINS_DIR)
-            all_files.extend(plugin_files)
-            logger.debug(f"Found {len(plugin_files)} files in .claude/plugins/")
-        except Exception as e:
-            logger.debug(f"No plugin files in .claude/plugins/: {e}")
-
-        logger.info(f"📊 Total files in bucket: {len(all_files)}")
-        return all_files
-
-    except Exception as e:
-        logger.error(f"❌ Failed to get bucket metadata for user {user_id}: {e}")
-        return []
-
-
-def calculate_bucket_hash(files_metadata: List[Dict[str, Any]]) -> str:
-    """
-    Calculate hash from bucket files metadata.
-
-    Args:
-        files_metadata: List of file metadata from bucket
-
-    Returns:
-        SHA256 hash of all file names, sizes, and timestamps
-
-    Example:
-        files = await get_bucket_files_metadata(user_id)
-        hash = calculate_bucket_hash(files)
-    """
-    hasher = hashlib.sha256()
-
-    # Sort by name for consistent hash
-    sorted_files = sorted(files_metadata, key=lambda f: f.get("name", ""))
-
-    for file_info in sorted_files:
-        # Hash file name
-        name = file_info.get("name", "")
-        hasher.update(name.encode())
-
-        # Hash file size
-        size = file_info.get("size", 0)
-        hasher.update(str(size).encode())
-
-        # Hash updated_at timestamp
-        updated_at = file_info.get("updated_at", "")
-        hasher.update(str(updated_at).encode())
-
-    return hasher.hexdigest()
-
-
-async def get_local_workspace_hash(user_id: str) -> str:
-    """
-    Calculate hash of user's local workspace (.claude directory).
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        SHA256 hash of local workspace
-
-    Example:
-        local_hash = await get_local_workspace_hash(user_id)
-    """
-    workspace_path = get_user_workspace_path(user_id)
-    claude_dir = workspace_path / ".claude"
-
-    if not claude_dir.exists():
-        logger.debug(f"📁 No .claude directory for user {user_id}")
-        return ""
-
-    return calculate_directory_hash(claude_dir)
-
-
-async def get_bucket_hash(user_id: str) -> str:
-    """
-    Calculate hash of user's bucket contents.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        SHA256 hash of bucket contents
-
-    Example:
-        bucket_hash = await get_bucket_hash(user_id)
-    """
-    files_metadata = await get_bucket_files_metadata(user_id)
-    return calculate_bucket_hash(files_metadata)
-
-
-def save_sync_state(user_id: str, bucket_hash: str, local_hash: str) -> None:
-    """
-    Save sync state to .claude/.sync_state file.
-
-    Args:
-        user_id: User's UUID
-        bucket_hash: Hash of bucket contents
-        local_hash: Hash of local workspace
-
-    Example:
-        save_sync_state(user_id, bucket_hash, local_hash)
-    """
-    try:
-        workspace_path = get_user_workspace_path(user_id)
-        claude_dir = workspace_path / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-
-        sync_state_file = claude_dir / ".sync_state"
-        sync_state = {
-            "bucket_hash": bucket_hash,
-            "local_hash": local_hash,
-            "last_sync": json.dumps({"timestamp": "now"})  # Could use datetime
-        }
-
-        with open(sync_state_file, 'w') as f:
-            json.dump(sync_state, f, indent=2)
-
-        logger.debug(f"💾 Saved sync state for user {user_id}")
-
-    except Exception as e:
-        logger.error(f"❌ Failed to save sync state for user {user_id}: {e}")
-
-
-def load_sync_state(user_id: str) -> Optional[Dict[str, str]]:
-    """
-    Load sync state from .claude/.sync_state file.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        Sync state dictionary or None if not found
-
-    Example:
-        state = load_sync_state(user_id)
-        if state:
-            last_bucket_hash = state["bucket_hash"]
-    """
-    try:
-        workspace_path = get_user_workspace_path(user_id)
-        sync_state_file = workspace_path / ".claude" / ".sync_state"
-
-        if not sync_state_file.exists():
-            return None
-
-        with open(sync_state_file, 'r') as f:
-            return json.load(f)
-
-    except Exception as e:
-        logger.debug(f"No sync state found for user {user_id}: {e}")
-        return None
-
-
-async def should_sync_bucket(user_id: str) -> bool:
-    """
-    Check if bucket needs to be synced based on hash comparison.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        True if sync needed, False otherwise
-
-    Example:
-        if await should_sync_bucket(user_id):
-            await sync_all_from_bucket(user_id)
-    """
-    try:
-        # Get current bucket hash
-        bucket_hash = await get_bucket_hash(user_id)
-
-        if not bucket_hash:
-            logger.debug(f"📭 Empty bucket for user {user_id}")
-            return False
-
-        # Load saved sync state
-        sync_state = load_sync_state(user_id)
-
-        if not sync_state:
-            logger.info(f"🆕 No sync state, need initial sync for user {user_id}")
-            return True
-
-        # Compare bucket hash
-        saved_bucket_hash = sync_state.get("bucket_hash", "")
-
-        if bucket_hash != saved_bucket_hash:
-            logger.info(f"🔄 Bucket changed, need sync for user {user_id}")
-            logger.debug(f"   Old hash: {saved_bucket_hash[:8]}...")
-            logger.debug(f"   New hash: {bucket_hash[:8]}...")
-            return True
-
-        logger.debug(f"✅ Bucket unchanged for user {user_id}")
-        return False
-
-    except Exception as e:
-        logger.error(f"❌ Error checking sync status for user {user_id}: {e}")
-        return True  # Sync on error to be safe
+# NOTE: Plugins are now cloned via git, not synced from bucket.
+# Use unzip_installed_plugins() to verify plugins exist in workspace.
 
 
 async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
     """
-    Unzip ONLY installed plugins from marketplace ZIP files.
+    Verify installed plugins exist in workspace, auto-cloning marketplaces if missing.
 
-    This is the key optimization: Instead of unzipping entire marketplace (20 plugins),
-    only unzip the 2-3 plugins user actually installed.
+    Git-based approach (v2):
+    - Plugin files are already in workspace from git clone
+    - If marketplace not cloned, automatically clone it from repository_url
+    - Re-verify plugin after cloning
 
-    Flow:
-    1. Get list of installed plugins from PostgreSQL
-    2. Find corresponding marketplace ZIP files in S3
-    3. Unzip ONLY the installed plugin directories
+    Legacy ZIP support:
+    - Falls back to ZIP extraction if marketplace has zip_path
+    - For backwards compatibility with old installations
 
     Args:
         user_id: User's UUID
@@ -1592,17 +1062,17 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
     Returns:
         {
             "success": bool,
-            "unzipped_count": int,
+            "verified_count": int,
+            "cloned_count": int,
             "message": str
         }
     """
+    from git_utils import ensure_repository, get_marketplace_dir
+
     try:
-        logger.info(f"📦 Unzipping installed plugins for user: {user_id}")
+        logger.info(f"📦 Verifying installed plugins for user: {user_id}")
 
-        # Get Supabase client (for storage operations only)
-        supabase = get_supabase_client()
-
-        # Get installed plugins from PostgreSQL using raw SQL
+        # Get installed plugins from PostgreSQL
         installed_plugins = execute_query(
             "SELECT * FROM installed_plugins WHERE user_id = %s AND status = 'active'",
             (user_id,),
@@ -1611,143 +1081,128 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
 
         if not installed_plugins:
             logger.info(f"ℹ️  No installed plugins found for user: {user_id}")
-            logger.info(f"   💡 To unzip plugins, you need to install them first via the frontend")
-            logger.info(f"   💡 Go to Integrations → Marketplace → Expand plugin → Install")
             return {
                 "success": True,
-                "unzipped_count": 0,
-                "message": "No plugins to unzip (install plugins first via frontend)"
+                "verified_count": 0,
+                "cloned_count": 0,
+                "message": "No plugins installed"
             }
 
         logger.info(f"📋 Found {len(installed_plugins)} installed plugins")
-        for plugin in installed_plugins:
-            logger.info(f"   - {plugin['plugin_name']} from {plugin['marketplace_name']}")
 
         # Get user workspace
         workspace_path = get_user_workspace_path(user_id)
+        verified_count = 0
+        cloned_count = 0
+        missing_plugins = []
 
-        # Group plugins by marketplace
-        plugins_by_marketplace = {}
+        # Cache for marketplace info (avoid repeated DB queries)
+        marketplace_cache: Dict[str, Optional[Dict]] = {}
+
         for plugin in installed_plugins:
+            plugin_name = plugin["plugin_name"]
             marketplace_name = plugin["marketplace_name"]
-            if marketplace_name not in plugins_by_marketplace:
-                plugins_by_marketplace[marketplace_name] = []
-            plugins_by_marketplace[marketplace_name].append(plugin)
+            marketplace_id = plugin.get("marketplace_id")
+            install_path = plugin.get("install_path", "")
 
-        unzipped_count = 0
+            # Build full path to plugin
+            if install_path:
+                plugin_path = workspace_path / install_path
+            else:
+                plugin_path = workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name / plugin_name
 
-        # Unzip plugins for each marketplace
-        for marketplace_name, plugins in plugins_by_marketplace.items():
-            # Get marketplace metadata from PostgreSQL using raw SQL
-            logger.info(f"🔍 Looking for marketplace: {marketplace_name}")
-            marketplace_data = execute_query(
-                "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
-                (user_id, marketplace_name),
-                fetch="one"
-            )
-
-            if not marketplace_data:
-                logger.warning(f"⚠️  Marketplace '{marketplace_name}' not found in database")
-                logger.info(f"   💡 Available marketplaces:")
-                all_marketplaces = execute_query(
-                    "SELECT name, zip_path FROM marketplaces WHERE user_id = %s",
-                    (user_id,),
-                    fetch="all"
-                )
-                for mp in (all_marketplaces or []):
-                    logger.info(f"      - {mp.get('name')} (ZIP: {mp.get('zip_path')})")
+            # Check if plugin exists (from git clone)
+            if plugin_path.exists():
+                logger.info(f"   ✅ {plugin_name} - exists at {plugin_path}")
+                verified_count += 1
                 continue
 
-            # Get zip_path from database, or search in workspace
-            zip_path = marketplace_data.get("zip_path")
+            # Plugin not found - check if marketplace directory exists (git repo)
+            marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+            git_dir = marketplace_dir / ".git"
 
-            if not zip_path:
-                logger.info(f"ℹ️  No ZIP path in database for marketplace: {marketplace_name}")
-                logger.info(f"   Searching for local ZIP files in workspace...")
-
-                # Search for ZIP files in marketplace directory
-                marketplace_dir = workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
-                if marketplace_dir.exists():
-                    zip_files = list(marketplace_dir.glob("*.zip"))
-                    if zip_files:
-                        # Use first ZIP found
-                        zip_path = str(zip_files[0].relative_to(workspace_path))
-                        logger.info(f"✅ Found local ZIP: {zip_path}")
-                    else:
-                        logger.warning(f"⚠️  No ZIP file found in: {marketplace_dir}")
-                        continue
-                else:
-                    logger.warning(f"⚠️  Marketplace directory not found: {marketplace_dir}")
-                    continue
-
-            logger.info(f"📦 Processing marketplace: {marketplace_name}")
-            logger.info(f"   ZIP path: {zip_path}")
-            logger.info(f"   Plugins to unzip: {[p['plugin_name'] for p in plugins]}")
-
-            try:
-                # Check if ZIP exists locally in workspace first
-                local_zip_path = workspace_path / zip_path
-
-                if local_zip_path.exists():
-                    logger.info(f"✅ Using local ZIP file: {local_zip_path}")
-                    zip_data = local_zip_path.read_bytes()
-                else:
-                    logger.info(f"⬇️  Downloading ZIP from S3: {zip_path}")
-                    zip_data = supabase.storage.from_(user_id).download(zip_path)
-
-                # Simply unzip entire marketplace ZIP
-                import io
-                with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
-                    # Get ZIP root folder name (e.g., "skills-main/")
-                    zip_files = zip_ref.namelist()
-                    if not zip_files:
-                        continue
-
-                    # Detect root folder
-                    root_folder = zip_files[0].split('/')[0] + '/'
-                    logger.info(f"📦 Unzipping marketplace: {marketplace_name}")
-                    logger.info(f"   Root folder: {root_folder}")
-                    logger.info(f"   Total files: {len(zip_files)}")
-
-                    # Extract all files
-                    marketplace_target = workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
-                    marketplace_target.mkdir(parents=True, exist_ok=True)
-
-                    for file_path in zip_files:
-                        # Remove root folder from path (e.g., "skills-main/" -> "")
-                        relative_path = file_path[len(root_folder):]
-                        target_path = marketplace_target / relative_path
-
-                        # Skip directories
-                        if file_path.endswith('/'):
-                            target_path.mkdir(parents=True, exist_ok=True)
-                            continue
-
-                        # Extract file
-                        target_path.parent.mkdir(parents=True, exist_ok=True)
-                        with zip_ref.open(file_path) as source:
-                            target_path.write_bytes(source.read())
-
-                    logger.info(f"✅ Unzipped all files to: {marketplace_target}")
-                    unzipped_count += 1
-
-            except Exception as e:
-                logger.error(f"❌ Error unzipping marketplace {marketplace_name}: {e}")
+            if git_dir.exists():
+                # Git repo exists but plugin path doesn't - might be wrong install_path
+                logger.warning(f"   ⚠️  {plugin_name} - not found at {plugin_path}")
+                logger.info(f"      Git repo exists at {marketplace_dir}")
+                missing_plugins.append(plugin_name)
                 continue
 
-        logger.info(f"✅ Unzipped {unzipped_count} plugins for user: {user_id}")
+            # No git repo - need to clone the marketplace
+            logger.info(f"   🔄 {plugin_name} - marketplace not cloned, attempting to clone: {marketplace_name}")
+
+            # Get marketplace info from cache or database
+            if marketplace_name not in marketplace_cache:
+                marketplace_info = None
+                if marketplace_id:
+                    marketplace_info = execute_query(
+                        "SELECT repository_url, branch FROM marketplaces WHERE id = %s",
+                        (marketplace_id,),
+                        fetch="one"
+                    )
+                if not marketplace_info:
+                    # Fallback: query by user_id and name
+                    marketplace_info = execute_query(
+                        "SELECT repository_url, branch FROM marketplaces WHERE user_id = %s AND name = %s",
+                        (user_id, marketplace_name),
+                        fetch="one"
+                    )
+                marketplace_cache[marketplace_name] = marketplace_info
+
+            marketplace_info = marketplace_cache[marketplace_name]
+
+            if not marketplace_info or not marketplace_info.get("repository_url"):
+                logger.warning(f"   ❌ {plugin_name} - no repository_url found for marketplace: {marketplace_name}")
+                missing_plugins.append(plugin_name)
+                continue
+
+            # Clone the marketplace repository
+            repo_url = marketplace_info["repository_url"]
+            branch = marketplace_info.get("branch", "main")
+
+            logger.info(f"   📥 Cloning marketplace: {repo_url} (branch: {branch})")
+            success, result, was_cloned = await ensure_repository(repo_url, marketplace_dir, branch)
+
+            if not success:
+                logger.error(f"   ❌ Failed to clone marketplace {marketplace_name}: {result}")
+                missing_plugins.append(plugin_name)
+                continue
+
+            if was_cloned:
+                cloned_count += 1
+                logger.info(f"   ✅ Cloned marketplace: {marketplace_name} (commit: {result[:8] if result else 'unknown'})")
+
+            # Re-check if plugin exists after cloning
+            if plugin_path.exists():
+                logger.info(f"   ✅ {plugin_name} - now exists at {plugin_path}")
+                verified_count += 1
+            else:
+                logger.warning(f"   ⚠️  {plugin_name} - still not found after cloning marketplace")
+                missing_plugins.append(plugin_name)
+
+        # Log summary
+        if missing_plugins:
+            logger.warning(f"⚠️  {len(missing_plugins)} plugins not found: {missing_plugins}")
+
+        if cloned_count > 0:
+            logger.info(f"📥 Auto-cloned {cloned_count} marketplaces")
+
+        logger.info(f"✅ Verified {verified_count}/{len(installed_plugins)} plugins for user: {user_id}")
 
         return {
             "success": True,
-            "unzipped_count": unzipped_count,
-            "message": f"Unzipped {unzipped_count} installed plugins"
+            "verified_count": verified_count,
+            "cloned_count": cloned_count,
+            "missing_plugins": missing_plugins,
+            "message": f"Verified {verified_count} plugins, cloned {cloned_count} marketplaces"
         }
 
     except Exception as e:
-        logger.error(f"❌ Error unzipping plugins: {e}", exc_info=True)
+        logger.error(f"❌ Error verifying plugins: {e}", exc_info=True)
         return {
             "success": False,
-            "unzipped_count": 0,
+            "verified_count": 0,
+            "cloned_count": 0,
             "message": f"Error: {str(e)}"
         }
 
@@ -1823,244 +1278,6 @@ async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[s
             "content_length": 0,
             "message": error_msg
         }
-
-
-async def sync_all_from_bucket(auth_token: str) -> Dict[str, Any]:
-    """
-    Sync ALL files from bucket to local workspace (simple bucket mirror).
-
-    Downloads entire bucket and recreates exact directory structure locally.
-    No complex filtering - just mirror everything from bucket to workspace.
-
-    Args:
-        auth_token: Supabase JWT token
-
-    Returns:
-        Dictionary with sync results:
-        {
-            "success": True,
-            "skipped": False,
-            "files_synced": 150,
-            "files_failed": 0,
-            "errors": [],
-            "message": "Synced 150 files from bucket"
-        }
-
-    Example usage (in WebSocket handler):
-        result = await sync_all_from_bucket(auth_token)
-        if result["success"]:
-            logger.info(f"Workspace synced: {result['message']}")
-    """
-    # Extract user ID
-    user_id = extract_user_id_from_token(auth_token)
-
-    if not user_id:
-        return {
-            "success": False,
-            "skipped": False,
-            "message": "Invalid auth token"
-        }
-
-    logger.info(f"🔍 Checking sync status for user: {user_id}")
-
-    # Check if sync needed
-    if not await should_sync_bucket(user_id):
-        logger.info(f"⏭️  Skipping bucket sync, unchanged for user: {user_id}")
-
-        # Still sync CLAUDE.md from PostgreSQL (might have been updated)
-        memory_result = await sync_memory_to_workspace(user_id)
-        if memory_result["success"]:
-            logger.info(f"✅ {memory_result['message']}")
-        else:
-            logger.warning(f"⚠️  Memory sync failed: {memory_result['message']}")
-
-        return {
-            "success": True,
-            "skipped": True,
-            "message": "Bucket unchanged (skipped), but synced CLAUDE.md from database"
-        }
-
-    logger.info(f"🔄 Starting full bucket sync for user: {user_id}")
-
-    # Get bucket hash before sync
-    bucket_hash = await get_bucket_hash(user_id)
-
-    # Get workspace path
-    workspace_path = get_user_workspace_path(user_id)
-    workspace_path.mkdir(parents=True, exist_ok=True)
-
-    try:
-        # Get Supabase client
-        supabase = get_supabase_client()
-
-        # List ALL files in bucket (simple - no prefix filtering)
-        all_files = await list_all_files_in_bucket(supabase, user_id)
-
-        if not all_files:
-            logger.info(f"ℹ️  No files found in bucket for user: {user_id}")
-            return {
-                "success": True,
-                "skipped": False,
-                "files_synced": 0,
-                "message": "No files to sync"
-            }
-
-        logger.info(f"📋 Found {len(all_files)} files to sync from bucket")
-
-        # Download each file and recreate exact directory structure
-        synced_count = 0
-        failed_count = 0
-        errors = []
-
-        for file_info in all_files:
-            file_path = file_info.get("name", "")
-            if not file_path:
-                continue
-
-            try:
-                # Download file from bucket
-                response = supabase.storage.from_(user_id).download(file_path)
-
-                if not response:
-                    failed_count += 1
-                    errors.append(f"Failed to download: {file_path}")
-                    continue
-
-                # Create local file (mirror bucket structure exactly)
-                local_file = workspace_path / file_path
-
-                # Ensure parent directory exists
-                local_file.parent.mkdir(parents=True, exist_ok=True)
-
-                # Write file to local workspace
-                local_file.write_bytes(response)
-
-                synced_count += 1
-                logger.debug(f"✅ Synced: {file_path}")
-
-            except Exception as e:
-                failed_count += 1
-                error_msg = f"Error syncing {file_path}: {str(e)}"
-                errors.append(error_msg)
-                logger.error(f"❌ {error_msg}")
-
-        # Calculate new local hash
-        local_hash = await get_local_workspace_hash(user_id)
-
-        # Save sync state
-        save_sync_state(user_id, bucket_hash, local_hash)
-
-        # Sync CLAUDE.md from PostgreSQL to workspace
-        memory_result = await sync_memory_to_workspace(user_id)
-        if memory_result["success"]:
-            logger.info(f"✅ {memory_result['message']}")
-        else:
-            logger.warning(f"⚠️  Memory sync failed: {memory_result['message']}")
-
-        logger.info(
-            f"🏁 Full sync completed for user {user_id}: "
-            f"{synced_count} synced, {failed_count} failed"
-        )
-
-        return {
-            "success": failed_count == 0,
-            "skipped": False,
-            "files_synced": synced_count,
-            "files_failed": failed_count,
-            "errors": errors,
-            "message": f"Synced {synced_count} files from bucket + CLAUDE.md from database"
-        }
-
-    except Exception as e:
-        error_msg = f"Bucket sync failed: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        return {
-            "success": False,
-            "skipped": False,
-            "files_synced": 0,
-            "message": error_msg
-        }
-
-
-async def handle_bucket_sync_on_connect(auth_token: str, websocket) -> bool:
-    """
-    Handle bucket sync on WebSocket connect and send status to client.
-
-    This is a convenience function that wraps sync_all_from_bucket()
-    and handles WebSocket messaging for you.
-
-    Args:
-        auth_token: Supabase JWT token
-        websocket: FastAPI WebSocket instance
-
-    Returns:
-        True if sync succeeded or skipped, False if failed
-
-    Example usage (in WebSocket handler):
-        if auth_token and not sync_checked:
-            sync_checked = True
-            await handle_bucket_sync_on_connect(auth_token, websocket)
-    """
-    logger.info("🔍 Checking bucket sync status...")
-
-    try:
-        sync_result = await sync_all_from_bucket(auth_token)
-
-        # Helper function to safely send to WebSocket
-        async def safe_send(data: dict) -> bool:
-            """Send data to WebSocket only if connection is still open."""
-            try:
-                # Check if WebSocket is still connected
-                if hasattr(websocket, 'client_state'):
-                    from starlette.websockets import WebSocketState
-                    if websocket.client_state != WebSocketState.CONNECTED:
-                        logger.debug("⚠️ WebSocket closed, skipping sync status send")
-                        return False
-
-                await websocket.send_json(data)
-                return True
-            except Exception as e:
-                logger.debug(f"⚠️ Failed to send sync status (connection closed): {e}")
-                return False
-
-        if sync_result["success"]:
-            if sync_result.get("skipped"):
-                logger.info("⏭️  Bucket sync skipped (unchanged)")
-                await safe_send({
-                    "type": "sync_status",
-                    "status": "skipped",
-                    "message": sync_result["message"]
-                })
-            else:
-                logger.info(f"✅ Bucket synced: {sync_result['message']}")
-                await safe_send({
-                    "type": "sync_status",
-                    "status": "synced",
-                    "message": sync_result["message"],
-                    "files_synced": sync_result.get("files_synced", 0),
-                    "files_failed": sync_result.get("files_failed", 0)
-                })
-            return True
-        else:
-            logger.warning(f"⚠️  Bucket sync failed: {sync_result.get('message')}")
-            await safe_send({
-                "type": "sync_status",
-                "status": "failed",
-                "message": sync_result.get("message", "Sync failed")
-            })
-            return False
-
-    except Exception as sync_error:
-        logger.error(f"❌ Error during bucket sync: {sync_error}", exc_info=True)
-        try:
-            await safe_send({
-                "type": "sync_status",
-                "status": "error",
-                "message": f"Sync error: {str(sync_error)}"
-            })
-        except:
-            pass  # Already logged, connection likely closed
-        return False
 
 
 async def get_user_allowed_tools(user_id: str) -> List[str]:

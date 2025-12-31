@@ -1,0 +1,78 @@
+# =============================================================================
+# DATABASE & SERVER
+# =============================================================================
+database_url: "postgresql://postgres.<tenant>:<password>@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
+port: "8080"
+redis_url: ""
+
+# =============================================================================
+# URL CONFIGURATION
+# =============================================================================
+# slar_api_url: internal API URL for AI agent tools
+slar_api_url: "http://slar-api:8080"
+
+# slar_web_url: internal frontend URL
+slar_web_url: "http://slar-web:3000"
+
+# public_url: external URL for mobile/clients
+public_url: "https://api.your-domain.com"
+
+# agent_url: AI Agent service URL
+agent_url: "https://agent.your-domain.com"
+
+# backend_url: Zero-Trust verifier URL
+backend_url: "http://slar-api:8080"
+
+data_dir: "./data"
+
+# =============================================================================
+# SUPABASE & AUTH
+# =============================================================================
+supabase_url: "https://<project>.supabase.co"
+
+# Public key for frontend Supabase client (required)
+supabase_anon_key: "sb_publishable_..."
+
+# Service role key for backend operations (required)
+supabase_service_role_key: "eyJ..."
+
+# JWT secret (optional) - only needed for legacy HS256 tokens
+# New projects use ES256/RS256 with JWKS public key verification
+supabase_jwt_secret: ""
+
+# =============================================================================
+# NOTIFICATION GATEWAY (Cloudflare Worker)
+# Optional: Only required for Mobile Push Notifications
+# =============================================================================
+notification_gateway:
+  url: "https://your-worker.workers.dev"
+  instance_id: "inst_..."
+  api_token: "slar_tok_..."
+
+# =============================================================================
+# EXTERNAL INTEGRATIONS
+# =============================================================================
+anthropic_api_key: "sk-ant-..."
+slack_bot_token: "xoxb-..."
+slack_app_token: "xapp-..."
+
+# =============================================================================
+# AI INCIDENT ANALYTICS
+# =============================================================================
+ai_incident_analytics:
+  enabled: true
+  model: "sonnet"
+  permission_mode: "default"
+  setting_sources:
+    - "project"
+    - "user"
+  allowed_tools:
+    - "Bash(docker ps:*)"
+    - "Bash(docker top:*)"
+    - "Bash(docker stats:*)"
+    - "Bash(docker logs:*)"
+    - "Bash(docker inspect:*)"
+    - "Bash(docker exec:*)"
+    - "Read"
+    - "Grep"
+    - "Glob"
