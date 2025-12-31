@@ -312,13 +312,28 @@ def build_github_url(owner: str, repo: str) -> str:
 
 def get_marketplace_dir(workspace_path: Path, marketplace_name: str) -> Path:
     """
-    Get the directory path for a marketplace.
+    Get the directory path for a marketplace with robust path validation.
 
     Args:
         workspace_path: User's workspace path
         marketplace_name: Name of the marketplace
 
     Returns:
-        Path to marketplace directory
+        Path to marketplace directory (validated and resolved)
+
+    Raises:
+        GitError: If the marketplace name attempts directory traversal
     """
-    return workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name
+    # Define and resolve the base directory for all marketplaces
+    marketplaces_root = (workspace_path / ".claude" / "plugins" / "marketplaces").resolve()
+    
+    # Compute and resolve the candidate directory
+    candidate_dir = (marketplaces_root / marketplace_name).resolve()
+    
+    # Ensure the resolved candidate is within the resolved marketplaces root
+    # Using is_relative_to (Python 3.9+)
+    if not candidate_dir.is_relative_to(marketplaces_root):
+        logger.error(f"🚨 Path traversal attempt detected: {marketplace_name}")
+        raise GitError(f"Invalid marketplace name: {marketplace_name}")
+        
+    return candidate_dir

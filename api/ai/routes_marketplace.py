@@ -19,6 +19,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import shutil
 from asyncio import Lock
 from datetime import datetime
@@ -48,6 +49,20 @@ router = APIRouter(prefix="/api", tags=["marketplace"])
 
 # Per-user locks to prevent race conditions when installing plugins
 user_plugin_locks = {}
+
+_MARKETPLACE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _is_valid_marketplace_name(name: str) -> bool:
+    """
+    Validate a marketplace name to prevent path traversal and invalid characters.
+
+    Allows only letters, digits, underscore, dash, and dot, and disallows
+    path separators or empty strings.
+    """
+    if not name:
+        return False
+    return bool(_MARKETPLACE_NAME_PATTERN.fullmatch(name))
 
 
 def sanitize_error_message(error: Exception, context: str = "") -> str:
@@ -94,6 +109,12 @@ async def install_plugin_from_marketplace(request: Request):
             return {
                 "success": False,
                 "error": "Missing required fields: marketplace_name, plugin_name",
+            }
+
+        if not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
         user_id = extract_user_id_from_token(auth_token)
@@ -254,6 +275,12 @@ async def install_plugin(request: Request):
                 "error": "Missing required plugin fields: name, marketplaceName",
             }
 
+        if not _is_valid_marketplace_name(plugin.get("marketplaceName")):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {plugin.get('marketplaceName')}",
+            }
+
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
@@ -372,6 +399,12 @@ async def fetch_marketplace_metadata(request: Request):
 
         if not owner or not repo:
             return {"success": False, "error": "Missing required fields: owner, repo"}
+
+        if marketplace_name and not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
 
         try:
             user_id = extract_user_id_from_token(auth_token)
@@ -512,6 +545,12 @@ async def clone_marketplace(request: Request):
 
         if not owner or not repo:
             return {"success": False, "error": "Missing required fields: owner, repo"}
+
+        if marketplace_name and not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
 
         try:
             user_id = extract_user_id_from_token(auth_token)
@@ -662,6 +701,12 @@ async def update_marketplace(request: Request):
 
         if not marketplace_name:
             return {"success": False, "error": "Missing required field: marketplace_name"}
+
+        if not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
 
         user_id = extract_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Updating marketplace '{marketplace_name}'")
@@ -909,6 +954,12 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
+
+        if not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
 
         logger.info(f"User {user_id}: Deleting marketplace '{marketplace_name}'")
 
