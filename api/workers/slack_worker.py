@@ -944,15 +944,17 @@ class SlackWorker:
                 }
             ]
 
-            # Add description if available (same as original message)
+            # Add description if available (truncate to stay within Slack's 3000 char limit)
             if incident_data.get('description'):
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Description:*\n{incident_data.get('description')}"
-                    }
-                })
+                description, _ = self.clean_description_text(incident_data.get('description'))
+                if description:
+                    blocks.append({
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Description:*\n{description}"
+                        }
+                    })
 
             # Add view incident button
             if incident_data.get('id'):
