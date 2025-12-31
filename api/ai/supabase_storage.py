@@ -632,7 +632,15 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
 
             # Build absolute path from install_path
             # install_path is relative to workspace root (e.g., ".claude/plugins/marketplaces/anthropics-skills/document-skills/xlsx")
-            plugin_absolute_path = workspace_path / install_path
+            # We use resolve() and is_relative_to() to satisfy security scans (CodeQL)
+            try:
+                plugin_absolute_path = (workspace_path / install_path).resolve()
+                if not plugin_absolute_path.is_relative_to(workspace_path.resolve()):
+                    logger.warning(f"🚨 Potential path traversal detected in plugin path: {install_path}")
+                    continue
+            except Exception as e:
+                logger.warning(f"⚠️ Error resolving plugin path {install_path}: {e}")
+                continue
 
             # Check if plugin directory exists
             if not plugin_absolute_path.exists():

@@ -8,6 +8,7 @@ and managing marketplace repositories.
 import asyncio
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple
@@ -324,15 +325,19 @@ def get_marketplace_dir(workspace_path: Path, marketplace_name: str) -> Path:
     Raises:
         GitError: If the marketplace name attempts directory traversal
     """
+    if not marketplace_name or not re.fullmatch(r"^[A-Za-z0-9_.-]+$", marketplace_name):
+        logger.error(f"🚨 Invalid marketplace name detected: {marketplace_name}")
+        raise GitError(f"Invalid marketplace name: {marketplace_name}")
+
     # Define and resolve the base directory for all marketplaces
     marketplaces_root = (workspace_path / ".claude" / "plugins" / "marketplaces").resolve()
     
     # Compute and resolve the candidate directory
+    # Note: resolve() handles '..' and symlinks
     candidate_dir = (marketplaces_root / marketplace_name).resolve()
     
-    # Ensure the resolved candidate is within the resolved marketplaces root
-    # Using is_relative_to (Python 3.9+)
-    if not candidate_dir.is_relative_to(marketplaces_root):
+    # Robust check to satisfy both runtime security and static analysis (CodeQL)
+    if not candidate_dir.is_relative_to(marketplaces_root) or candidate_dir == marketplaces_root:
         logger.error(f"🚨 Path traversal attempt detected: {marketplace_name}")
         raise GitError(f"Invalid marketplace name: {marketplace_name}")
         

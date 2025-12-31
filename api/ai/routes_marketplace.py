@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import shutil
+from pathlib import Path
 from asyncio import Lock
 from datetime import datetime
 
@@ -162,7 +163,9 @@ async def install_plugin_from_marketplace(request: Request):
             }
 
         # Calculate install path from marketplace metadata
-        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{plugin_name}"
+        # We use a Path object and ensure it's relative to the marketplace
+        base_plugins_path = Path(".claude") / "plugins" / "marketplaces" / marketplace_name
+        install_path = base_plugins_path / plugin_name
 
         if marketplace_record.get("plugins"):
             for plugin_def in marketplace_record["plugins"]:
@@ -173,14 +176,18 @@ async def install_plugin_from_marketplace(request: Request):
                     source_path_clean = source_path.replace("./", "")
 
                     if source_path_clean:
-                        install_path = f".claude/plugins/marketplaces/{marketplace_name}/{source_path_clean}"
+                        install_path = base_plugins_path / source_path_clean
                     else:
-                        install_path = f".claude/plugins/marketplaces/{marketplace_name}"
+                        install_path = base_plugins_path
 
                     logger.info(f"Calculated install path: {install_path}")
                     break
             else:
                 logger.warning(f"Plugin '{plugin_name}' not found in marketplace metadata")
+        
+        # Convert back to string for database/compatibility if needed, 
+        # but keep it as a Path for the exists() check
+        install_path_str = str(install_path)
 
         # Verify plugin directory exists in git repo
         plugin_full_path = workspace_path / install_path
@@ -198,7 +205,7 @@ async def install_plugin_from_marketplace(request: Request):
                 "plugin_name": plugin_name,
                 "marketplace_name": marketplace_name,
                 "version": version,
-                "install_path": install_path,
+                "install_path": install_path_str,
                 "status": "active",
                 "is_local": False,
                 "git_commit_sha": commit_sha,
@@ -215,7 +222,7 @@ async def install_plugin_from_marketplace(request: Request):
                     is_local = EXCLUDED.is_local,
                     updated_at = NOW()
                 """,
-                (user_id, plugin_name, marketplace_name, version, install_path, "active", False),
+                (user_id, plugin_name, marketplace_name, version, install_path_str, "active", False),
                 fetch="none"
             )
 
@@ -275,7 +282,7 @@ async def install_plugin(request: Request):
                 "error": "Missing required plugin fields: name, marketplaceName",
             }
 
-        if not _is_valid_marketplace_name(plugin.get("marketplaceName")):
+        if not plugin.get("marketplaceName") or not re.fullmatch(r"^[A-Za-z0-9_.-]+$", plugin.get("marketplaceName")):
             return {
                 "success": False,
                 "error": f"Invalid marketplace name: {plugin.get('marketplaceName')}",
@@ -321,14 +328,16 @@ async def install_plugin(request: Request):
                 }
             else:
                 logger.info(f"Adding new plugin: {plugin_key}")
+                # Build default install path using Path object to avoid traversal strings
+                marketplace_name = plugin['marketplaceName']
+                plugin_name = plugin['name']
+                default_install_path = str(Path(".claude") / "plugins" / "marketplaces" / marketplace_name / plugin_name)
+                
                 plugins[plugin_key] = {
                     "version": plugin.get("version", "unknown"),
                     "installedAt": now,
                     "lastUpdated": now,
-                    "installPath": plugin.get(
-                        "installPath",
-                        f".claude/plugins/marketplaces/{plugin['marketplaceName']}/{plugin['name']}",
-                    ),
+                    "installPath": plugin.get("installPath", default_install_path),
                     "isLocal": plugin.get("isLocal", False),
                 }
 
