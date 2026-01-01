@@ -10,6 +10,8 @@ jobs:
   lint-go:
     name: Lint Go API
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +28,8 @@ jobs:
   lint-web:
     name: Lint Web Frontend
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +51,8 @@ jobs:
   lint-ai:
     name: Lint AI module
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
