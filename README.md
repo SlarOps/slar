@@ -9,6 +9,9 @@
 </p>
 
 ---
+[![Lint](https://github.com/SlarOps/slar/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/SlarOps/slar/actions/workflows/lint.yml)
+[![CodeQL](https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql)
+[![Build Docker](https://github.com/SlarOps/slar/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/SlarOps/slar/actions/workflows/build.yaml)
 
 ### What is SLAR?
 
