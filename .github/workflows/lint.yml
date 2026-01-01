@@ -1,0 +1,63 @@
+name: Lint
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-go:
+    name: Lint Go API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: slar/api/go.sum
+
+      - name: Run Go Vet
+        working-directory: api
+        run: go vet ./...
+
+  lint-web:
+    name: Lint Web Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/slar/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web/slar
+        run: npm ci
+
+      - name: Run Next Lint
+        working-directory: web/slar
+        run: npx next lint
+
+  lint-ai:
+    name: Lint AI module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install flake8
+        run: pip install flake8
+
+      - name: Run flake8
+        working-directory: api/ai
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
