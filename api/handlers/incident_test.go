@@ -62,9 +62,9 @@ type MockProjectService struct {
 }
 
 // MockIncidentService (we need to mock the service layer too, but it's a struct not interface)
-// For unit testing handlers, we usually need to mock the service. 
+// For unit testing handlers, we usually need to mock the service.
 // However, IncidentService is a struct. We might need to integration test or refactor service to interface.
-// For now, let's try to run a basic test that fails if dependencies aren't set up, 
+// For now, let's try to run a basic test that fails if dependencies aren't set up,
 // just to verify the handler structure.
 // Actually, since IncidentService is a struct, we can't easily mock it without an interface.
 // But we can test the `checkIncidentAccess` logic if we can control the service response.
@@ -88,7 +88,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 	// Setup Mocks
 	mockAuthorizer := new(MockAuthorizer)
 	mockProjectService := &authz.ProjectService{} // We might need to mock this if used, but for GetIncident it's not used directly
-	
+
 	// Create Service with mocked DB
 	// Note: We need to initialize the service with dependencies.
 	// Since we can't easily mock the internal fields of IncidentService (like Redis/FCM),
@@ -97,13 +97,13 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 	serviceService := services.NewServiceService(db) // For routing_key lookup
 
 	// Create Handler
-	handler := NewIncidentHandler(incidentService, serviceService, mockProjectService, mockAuthorizer)
+	handler := NewIncidentHandler(incidentService, serviceService, mockProjectService, mockAuthorizer, nil)
 
 	// Test Case 1: User has project access (Allowed)
 	t.Run("Allowed_ProjectAccess", func(t *testing.T) {
 		// Mock DB response for GetIncident
 		rows := sqlmock.NewRows([]string{
-			"id", "title", "description", "status", "urgency", "priority", 
+			"id", "title", "description", "status", "urgency", "priority",
 			"created_at", "updated_at", "assigned_to", "assigned_at",
 			"acknowledged_by", "acknowledged_at", "resolved_by", "resolved_at",
 			"source", "integration_id", "service_id", "external_id", "external_url",
@@ -126,7 +126,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 			"org-1", "proj-1",
 			nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		)
-		
+
 		mockDB.ExpectQuery("SELECT .* FROM incidents").WithArgs("inc-1").WillReturnRows(rows)
 
 		// Mock Authorizer response
@@ -153,7 +153,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 	t.Run("Forbidden_NoAccess", func(t *testing.T) {
 		// Mock DB response for GetIncident
 		rows := sqlmock.NewRows([]string{
-			"id", "title", "description", "status", "urgency", "priority", 
+			"id", "title", "description", "status", "urgency", "priority",
 			"created_at", "updated_at", "assigned_to", "assigned_at",
 			"acknowledged_by", "acknowledged_at", "resolved_by", "resolved_at",
 			"source", "integration_id", "service_id", "external_id", "external_url",
@@ -176,7 +176,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 			"org-1", "proj-2",
 			nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		)
-		
+
 		mockDB.ExpectQuery("SELECT .* FROM incidents").WithArgs("inc-2").WillReturnRows(rows)
 
 		// Mock Authorizer response
@@ -203,7 +203,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 	t.Run("Allowed_AdHocAccess", func(t *testing.T) {
 		// Mock DB response for GetIncident - Assigned to user-1
 		rows := sqlmock.NewRows([]string{
-			"id", "title", "description", "status", "urgency", "priority", 
+			"id", "title", "description", "status", "urgency", "priority",
 			"created_at", "updated_at", "assigned_to", "assigned_at",
 			"acknowledged_by", "acknowledged_at", "resolved_by", "resolved_at",
 			"source", "integration_id", "service_id", "external_id", "external_url",
@@ -226,7 +226,7 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 			"org-1", "proj-3",
 			"User One", "user1@example.com", nil, nil, nil, nil, nil, nil, nil,
 		)
-		
+
 		mockDB.ExpectQuery("SELECT .* FROM incidents").WithArgs("inc-3").WillReturnRows(rows)
 
 		// Mock Authorizer NOT called because ad-hoc check passes first
