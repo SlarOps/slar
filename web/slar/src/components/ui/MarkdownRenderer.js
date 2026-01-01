@@ -145,8 +145,8 @@ export default function MarkdownRenderer({
           hr: ({ node, ...props }) => (
             <hr className="my-4 border-gray-300 dark:border-gray-700" {...props} />
           ),
-          img: ({ node, ...props }) => (
-            <img className="rounded-lg my-3 max-w-full h-auto" {...props} />
+          img: ({ node, alt, ...props }) => (
+            <img className="rounded-lg my-3 max-w-full h-auto" alt={alt || ''} {...props} />
           ),
         }}
       >

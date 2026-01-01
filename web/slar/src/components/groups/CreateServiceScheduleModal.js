@@ -136,7 +136,7 @@ export default function CreateServiceScheduleModal({
                 <div className="text-sm">
                   <div className="font-medium text-blue-700 dark:text-blue-300">Service-specific Schedule</div>
                   <div className="text-blue-600 dark:text-blue-400">
-                    This schedule will only apply to alerts from "{service.name}" and will override group-wide schedules.
+                    This schedule will only apply to alerts from &quot;{service.name}&quot; and will override group-wide schedules.
                   </div>
                 </div>
               </div>

@@ -112,7 +112,7 @@ export default function PWAInstallPrompt() {
 
   const handleDismiss = () => {
     setShowInstallPrompt(false);
-    // Don't show again for 7 days
+    // Don&apos;t show again for 7 days
     localStorage.setItem('pwa-install-dismissed', Date.now().toString());
   };
 
@@ -174,7 +174,7 @@ export default function PWAInstallPrompt() {
                 onClick={handleNeverShow}
                 className="flex-shrink-0 bg-white/10 backdrop-blur-sm text-white font-medium py-2 px-4 rounded-lg hover:bg-white/20 transition-colors text-sm"
               >
-                Don't show
+                Don&apos;t show
               </button>
             </div>
           </div>

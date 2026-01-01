@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { MessageComponent } from '../../../components/ai-agent';
 
 // Public shared conversation viewer - no auth required
@@ -84,12 +85,12 @@ export default function SharedConversationPage() {
           </div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Unable to Load</h1>
           <p className="text-gray-600 dark:text-gray-400">{error}</p>
-          <a
+          <Link
             href="/"
             className="inline-block px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
           >
             Go to Home
-          </a>
+          </Link>
         </div>
       </div>
     );
@@ -149,12 +150,12 @@ export default function SharedConversationPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Shared via SLAR AI Agent
           </p>
-          <a
+          <Link
             href="/"
             className="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
           >
             Learn more about SLAR
-          </a>
+          </Link>
         </div>
       </footer>
     </div>

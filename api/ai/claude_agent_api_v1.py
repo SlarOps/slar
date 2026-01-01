@@ -220,8 +220,6 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI.
     Handles startup and shutdown events.
     """
-    global cleanup_worker_task
-
     # Startup
     logger.info("🚀 Starting application...")
 
@@ -549,7 +547,7 @@ async def agent_task_streaming(
         AsyncGenerator that yields messages from agent_queue.
         This is the TRUE streaming mode - generator keeps yielding until queue returns None.
         """
-        nonlocal interrupted, session_initialized, assistant_text_buffer, user_message_saved, current_prompt
+        nonlocal interrupted, assistant_text_buffer, user_message_saved, current_prompt
 
         while True:
             try:
@@ -665,7 +663,7 @@ async def agent_task_streaming(
         IMPORTANT: receive_response() generator may exhaust after each turn (ResultMessage).
         We need to keep looping to handle subsequent turns in the streaming session.
         """
-        nonlocal interrupted, session_initialized, assistant_text_buffer, user_message_saved
+        nonlocal session_initialized, assistant_text_buffer, user_message_saved
 
         was_interrupted = False  # Track if we broke due to interrupt
 

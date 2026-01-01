@@ -19,7 +19,7 @@ export default function AlertsPage() {
           Redirecting to Incidents...
         </p>
         <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
-          We've moved from alerts to incidents for better incident management.
+          We&apos;ve moved from alerts to incidents for better incident management.
         </p>
       </div>
     </div>

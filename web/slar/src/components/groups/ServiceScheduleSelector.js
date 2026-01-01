@@ -164,7 +164,7 @@ export default function ServiceScheduleSelector({
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 mr-2">
                 Service Schedule
               </span>
-              This schedule will only apply to "{services.find(s => s.id === selectedServiceId)?.name}" service
+              This schedule will only apply to &quot;{services.find(s => s.id === selectedServiceId)?.name}&quot; service
             </>
           )}
           {selectedScope === 'service' && !selectedServiceId && (

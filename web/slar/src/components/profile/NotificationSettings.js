@@ -320,7 +320,7 @@ export default function NotificationSettings({ userId }) {
           <div className="flex items-start space-x-2">
             <InfoIcon className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-yellow-700">
-              Email notifications are coming soon. You'll receive incident notifications at your registered email address.
+              Email notifications are coming soon. You&apos;ll receive incident notifications at your registered email address.
             </p>
           </div>
         </div>

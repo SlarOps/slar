@@ -226,7 +226,7 @@ export default function OnboardingPage() {
                 Welcome to SLAR
               </h1>
               <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Let's get you set up with your first organization and project. This will only take a minute.
+                Let&apos;s get you set up with your first organization and project. This will only take a minute.
               </p>
               <button
                 onClick={() => setCurrentStep(1)}
@@ -359,7 +359,7 @@ export default function OnboardingPage() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Organization "{createdOrg.name}" created
+                    Organization &quot;{createdOrg.name}&quot; created
                   </div>
                 )}
               </div>
@@ -457,7 +457,7 @@ export default function OnboardingPage() {
                 </svg>
               </div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                You're All Set!
+                You&apos;re All Set!
               </h1>
               <p className="text-gray-600 dark:text-gray-400 mb-6">
                 Your workspace is ready. Start managing your incidents and on-call schedules.

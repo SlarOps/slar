@@ -333,7 +333,7 @@ export default function IntegrationSelector({
           <p className="font-medium mb-1">Integration Summary:</p>
           <p>
             {serviceIntegrations.length} integration{serviceIntegrations.length !== 1 ? 's' : ''} configured. 
-            Alerts matching the routing conditions will be sent to this service's escalation policy.
+            Alerts matching the routing conditions will be sent to this service&apos;s escalation policy.
           </p>
         </div>
       )}

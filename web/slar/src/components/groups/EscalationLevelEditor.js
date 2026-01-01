@@ -207,7 +207,7 @@ export default function EscalationLevelEditor({
                       <div>
                         <p className="font-medium text-blue-900 dark:text-blue-300">Current on-call user</p>
                         <p className="text-xs mt-1">
-                          Will automatically escalate to whoever is currently on-call in this group's schedule at the time of escalation.
+                          Will automatically escalate to whoever is currently on-call in this group&apos;s schedule at the time of escalation.
                         </p>
                       </div>
                     </div>

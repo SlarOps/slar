@@ -124,7 +124,7 @@ export default function MembersList({ members, selectedMembers, onMembersChange 
             </>
           ) : (
             <div className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
-              No members found matching "{searchTerm}"
+              No members found matching &quot;{searchTerm}&quot;
             </div>
           )}
         </div>
