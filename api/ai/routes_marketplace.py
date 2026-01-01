@@ -32,6 +32,7 @@ from supabase_storage import (
     extract_user_id_from_token,
     get_supabase_client,
     get_user_workspace_path,
+    unzip_installed_plugins,
 )
 from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
 from git_utils import (
