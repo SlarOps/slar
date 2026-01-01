@@ -23,10 +23,7 @@ export const metadata = {
     telephone: false,
   },
   icons: {
-    icon: [
-      { url: '/icon-192x192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512x512.png', sizes: '512x512', type: 'image/png' },
-    ],
+    icon: '/icon.png',
     apple: [
       { url: '/icon-152x152.png', sizes: '152x152', type: 'image/png' },
     ],
@@ -38,7 +35,7 @@ export const viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: 'cover',
-  themeColor: '#2563eb',
+  themeColor: '#10b981',
 };
 
 export default function RootLayout({ children }) {
@@ -51,15 +48,15 @@ export default function RootLayout({ children }) {
               <AuthWrapper>
                 {/* Desktop Sidebar */}
                 <Sidebar />
-              
-              {/* Mobile Top Nav */}
-              <MobileNav />
-              
-              {/* Main Content - margin adjusts based on sidebar state */}
-              <MainContent>
-                {children}
-              </MainContent>
-            </AuthWrapper>
+
+                {/* Mobile Top Nav */}
+                <MobileNav />
+
+                {/* Main Content - margin adjusts based on sidebar state */}
+                <MainContent>
+                  {children}
+                </MainContent>
+              </AuthWrapper>
             </OrgProvider>
             <PWAInstallPrompt />
             <Toaster

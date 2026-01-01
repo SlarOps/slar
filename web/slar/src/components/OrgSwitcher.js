@@ -69,7 +69,7 @@ export default function OrgSwitcher({ collapsed = false }) {
       case 'owner':
         return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300';
       case 'admin':
-        return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300';
       case 'member':
         return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
       default:
@@ -81,9 +81,8 @@ export default function OrgSwitcher({ collapsed = false }) {
     <div className="relative px-2 py-2" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${
-          collapsed ? 'justify-center' : ''
-        }`}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${collapsed ? 'justify-center' : ''
+          }`}
         title={collapsed ? currentOrg.name : undefined}
       >
         {/* Org Icon */}
@@ -117,9 +116,8 @@ export default function OrgSwitcher({ collapsed = false }) {
 
       {/* Dropdown */}
       {isOpen && (
-        <div className={`absolute z-50 mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden ${
-          collapsed ? 'left-full ml-2 top-0 w-64' : 'left-2 right-2'
-        }`}>
+        <div className={`absolute z-50 mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden ${collapsed ? 'left-full ml-2 top-0 w-64' : 'left-2 right-2'
+          }`}>
           {/* Header */}
           <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
             <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -136,9 +134,8 @@ export default function OrgSwitcher({ collapsed = false }) {
                   switchOrg(org);
                   setIsOpen(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${
-                  org.id === currentOrg.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''
-                }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${org.id === currentOrg.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                  }`}
               >
                 <OrgIcon className="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                 <div className="flex-1 text-left min-w-0">

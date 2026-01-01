@@ -36,10 +36,10 @@ const Input = forwardRef(function Input({
   rightElement,
   ...props
 }, ref) {
-  const baseClasses = 'w-full rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm py-3 px-4 text-sm text-gray-900 dark:text-white focus:outline-2 focus:-outline-offset-2 focus:outline-blue-500 focus:bg-white dark:focus:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-  
+  const baseClasses = 'w-full rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm py-3 px-4 text-sm text-gray-900 dark:text-white focus:outline-2 focus:-outline-offset-2 focus:outline-emerald-500 focus:bg-white dark:focus:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
   const errorClasses = error ? 'focus:outline-red-500 bg-red-50/80 dark:bg-red-900/20' : '';
-  
+
   const inputClasses = `${baseClasses} ${errorClasses} ${leftIcon ? 'pl-10' : ''} ${rightElement ? 'pr-2' : ''} ${className}`;
 
   return (

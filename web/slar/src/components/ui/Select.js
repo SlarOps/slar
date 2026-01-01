@@ -40,10 +40,9 @@ export default function Select({
   ...props
 }) {
   const selectedOption = options.find(option => option.value === value);
-  
-  const buttonClasses = `inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-4 py-3 text-sm text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-blue-500 data-focus:bg-white dark:data-focus:bg-gray-600 transition-colors ${
-    disabled ? 'opacity-50 cursor-not-allowed' : ''
-  } ${error ? 'data-focus:outline-red-500 bg-red-50/80 dark:bg-red-900/20' : ''} ${leftIcon ? 'pl-10' : ''} ${className}`;
+
+  const buttonClasses = `inline-flex w-full justify-between items-center rounded-lg bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm px-4 py-3 text-sm text-gray-900 dark:text-white data-hover:bg-gray-100 dark:data-hover:bg-gray-600 data-focus:outline-2 data-focus:-outline-offset-2 data-focus:outline-emerald-500 data-focus:bg-white dark:data-focus:bg-gray-600 transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : ''
+    } ${error ? 'data-focus:outline-red-500 bg-red-50/80 dark:bg-red-900/20' : ''} ${leftIcon ? 'pl-10' : ''} ${className}`;
 
   return (
     <div className="space-y-1">
@@ -67,7 +66,7 @@ export default function Select({
         )}
 
         <Menu>
-          <MenuButton 
+          <MenuButton
             disabled={disabled}
             className={buttonClasses}
             {...props}
@@ -77,7 +76,7 @@ export default function Select({
             </span>
             <ChevronDownIcon className="h-5 w-5 text-gray-400" />
           </MenuButton>
-          
+
           <MenuItems
             transition
             anchor={anchor}
@@ -97,7 +96,7 @@ export default function Select({
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1" />
               </>
             )}
-            
+
             {/* Options */}
             {options.length > 0 ? (
               options.map((option) => (
@@ -105,11 +104,10 @@ export default function Select({
                   <button
                     onClick={() => onChange(option.value)}
                     disabled={option.disabled}
-                    className={`group flex w-full items-start rounded-lg px-3 py-2 text-sm data-focus:bg-blue-100 dark:data-focus:bg-blue-900 disabled:opacity-50 disabled:cursor-not-allowed ${
-                      value === option.value 
-                        ? 'bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-300' 
+                    className={`group flex w-full items-start rounded-lg px-3 py-2 text-sm data-focus:bg-emerald-100 dark:data-focus:bg-emerald-900 disabled:opacity-50 disabled:cursor-not-allowed ${value === option.value
+                        ? 'bg-emerald-50 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-300'
                         : 'text-gray-700 dark:text-gray-200'
-                    }`}
+                      }`}
                   >
                     <div className="text-left flex-1">
                       <div className="font-medium">{option.label}</div>
@@ -120,7 +118,7 @@ export default function Select({
                       )}
                     </div>
                     {value === option.value && (
-                      <svg className="w-4 h-4 text-blue-600 dark:text-blue-300 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-300 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     )}

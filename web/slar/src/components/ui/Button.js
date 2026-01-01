@@ -4,16 +4,16 @@ const baseClasses = 'inline-flex items-center justify-center font-medium transit
 
 const variants = {
   solid: {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500',
+    primary: 'bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500',
     secondary: 'bg-gray-900 text-white hover:bg-gray-800 focus-visible:ring-gray-700 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white',
     white: 'bg-white text-gray-900 hover:bg-gray-50 focus-visible:ring-gray-300',
   },
   outline: {
-    primary: 'border border-blue-400 text-white hover:bg-blue-500/10 focus-visible:ring-blue-400',
+    primary: 'border border-emerald-400 text-white hover:bg-emerald-500/10 focus-visible:ring-emerald-400',
     neutral: 'border border-gray-300 text-gray-700 hover:bg-gray-50 focus-visible:ring-gray-300 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-800',
   },
   ghost: {
-    primary: 'text-blue-600 hover:bg-blue-50 focus-visible:ring-blue-400',
+    primary: 'text-emerald-600 hover:bg-emerald-50 focus-visible:ring-emerald-400',
     neutral: 'text-gray-700 hover:bg-gray-100 focus-visible:ring-gray-300 dark:text-gray-200 dark:hover:bg-gray-800',
   }
 };

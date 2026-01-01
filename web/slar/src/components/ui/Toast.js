@@ -2,11 +2,11 @@
 
 import { Toaster } from 'react-hot-toast';
 
-export default function Toast({ 
+export default function Toast({
   position = "top-right",
   duration = 4000,
   successDuration = 3000,
-  errorDuration = 5000 
+  errorDuration = 5000
 }) {
   return (
     <Toaster
@@ -46,12 +46,12 @@ export default function Toast({
         },
         loading: {
           style: {
-            background: '#3b82f6',
+            background: '#10b981',
             color: '#fff',
           },
           iconTheme: {
             primary: '#fff',
-            secondary: '#3b82f6',
+            secondary: '#10b981',
           },
         },
         // Custom warning style

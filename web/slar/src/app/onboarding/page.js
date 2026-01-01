@@ -174,13 +174,12 @@ export default function OnboardingPage() {
             {STEPS.map((step, index) => (
               <div key={step.id} className="flex items-center">
                 <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                    index < currentStep
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${index < currentStep
                       ? 'bg-emerald-500 text-white'
                       : index === currentStep
-                      ? 'bg-emerald-500 text-white ring-4 ring-emerald-100 dark:ring-emerald-900'
-                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
-                  }`}
+                        ? 'bg-emerald-500 text-white ring-4 ring-emerald-100 dark:ring-emerald-900'
+                        : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                    }`}
                 >
                   {index < currentStep ? (
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -192,11 +191,10 @@ export default function OnboardingPage() {
                 </div>
                 {index < STEPS.length - 1 && (
                   <div
-                    className={`w-16 sm:w-24 h-1 mx-2 rounded ${
-                      index < currentStep
+                    className={`w-16 sm:w-24 h-1 mx-2 rounded ${index < currentStep
                         ? 'bg-emerald-500'
                         : 'bg-gray-200 dark:bg-gray-700'
-                    }`}
+                      }`}
                   />
                 )}
               </div>
@@ -243,8 +241,8 @@ export default function OnboardingPage() {
           {currentStep === 1 && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8">
               <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                   </svg>
                 </div>

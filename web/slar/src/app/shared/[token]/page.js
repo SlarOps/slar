@@ -66,7 +66,7 @@ export default function SharedConversationPage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto" />
           <p className="text-gray-600 dark:text-gray-400">Loading shared conversation...</p>
         </div>
       </div>
@@ -86,7 +86,7 @@ export default function SharedConversationPage() {
           <p className="text-gray-600 dark:text-gray-400">{error}</p>
           <a
             href="/"
-            className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="inline-block px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
           >
             Go to Home
           </a>
@@ -151,7 +151,7 @@ export default function SharedConversationPage() {
           </p>
           <a
             href="/"
-            className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            className="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
           >
             Learn more about SLAR
           </a>

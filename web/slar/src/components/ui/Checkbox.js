@@ -32,7 +32,7 @@ const Checkbox = forwardRef(function Checkbox({
     lg: 'h-5 w-5'
   };
 
-  const checkboxClasses = `${sizeClasses[size]} text-blue-600 focus:ring-blue-500 border-gray-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed`;
+  const checkboxClasses = `${sizeClasses[size]} text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed`;
 
   return (
     <div className={`space-y-1 ${className}`}>
@@ -76,10 +76,10 @@ const Checkbox = forwardRef(function Checkbox({
 /**
  * Checkbox Group Component for multiple related checkboxes
  */
-export function CheckboxGroup({ 
-  label, 
-  children, 
-  error, 
+export function CheckboxGroup({
+  label,
+  children,
+  error,
   className = '',
   containerClassName = ''
 }) {
@@ -90,7 +90,7 @@ export function CheckboxGroup({
           {label}
         </label>
       )}
-      
+
       <div className={`p-4 bg-gray-50/80 dark:bg-gray-700/80 backdrop-blur-sm rounded-lg space-y-3 ${containerClassName}`}>
         {children}
       </div>

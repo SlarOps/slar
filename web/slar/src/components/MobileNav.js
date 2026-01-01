@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrg } from '../contexts/OrgContext';
 import { usePathname } from 'next/navigation';
+import Logo from './Logo';
 
 const NAV_LINKS = [
   { href: '/ai-agent', label: 'Assistant' },
@@ -84,7 +85,10 @@ export default function MobileNav() {
       >
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 z-50 relative">
-            <span className="text-xl font-bold bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 bg-clip-text text-transparent">
+            <div className="flex items-center justify-center text-gray-900 dark:text-white">
+              <Logo size={24} />
+            </div>
+            <span className="text-xl font-black tracking-tighter text-gray-900 dark:text-white">
               SLAR
             </span>
           </Link>
