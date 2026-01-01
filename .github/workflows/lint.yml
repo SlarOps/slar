@@ -46,7 +46,7 @@ jobs:
 
       - name: Run Next Lint
         working-directory: web/slar
-        run: npx next lint
+        run: npm run lint
 
   lint-ai:
     name: Lint AI module
