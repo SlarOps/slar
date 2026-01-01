@@ -282,8 +282,8 @@ export default function MCPServerModal({
               </h4>
               <ul className="text-sm text-blue-700 dark:text-blue-300 mt-1 space-y-1">
                 <li><strong>Command:</strong> Local server with command, args, env</li>
-                <li><strong>SSE:</strong> Remote server with type: "sse", url, headers</li>
-                <li><strong>HTTP:</strong> Remote server with type: "http", url, headers</li>
+                <li><strong>SSE:</strong> Remote server with type: &quot;sse&quot;, url, headers</li>
+                <li><strong>HTTP:</strong> Remote server with type: &quot;http&quot;, url, headers</li>
               </ul>
             </div>
           </div>

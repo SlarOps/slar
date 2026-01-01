@@ -127,7 +127,7 @@ export default function AllowedToolsTab() {
                         <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-600 mb-3" />
                         <p>No tools are currently in the allowed list.</p>
                         <p className="text-sm mt-1">
-                            Add tools manually above or click "Always Allow" when the agent asks for permission.
+                            Add tools manually above or click &quot;Always Allow&quot; when the agent asks for permission.
                         </p>
                     </div>
                 ) : (

@@ -187,8 +187,8 @@ export default function MobileAppSettings({ userId }) {
           <h4 className="text-sm font-medium text-blue-900 mb-2">How to connect:</h4>
           <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
             <li>Download the SLAR app from App Store or Google Play</li>
-            <li>Open the app and tap "Connect Instance"</li>
-            <li>Scan this QR code with your phone's camera</li>
+            <li>Open the app and tap &quot;Connect Instance&quot;</li>
+            <li>Scan this QR code with your phone&apos;s camera</li>
             <li>Allow notifications when prompted</li>
           </ol>
         </div>

@@ -256,7 +256,7 @@ export default function ShiftSwapModal({
                     const targetSchedule = availableSwapSchedules.find(s => s.id === selectedSwapSchedule);
                     return (
                       <>
-                        <p><strong>You will take:</strong> {targetSchedule?.user_name}'s shift ({formatScheduleTime(targetSchedule?.start_time, targetSchedule?.end_time)})</p>
+                        <p><strong>You will take:</strong> {targetSchedule?.user_name}&apos;s shift ({formatScheduleTime(targetSchedule?.start_time, targetSchedule?.end_time)})</p>
                         <p><strong>They will take:</strong> Your shift ({formatScheduleTime(currentSchedule.start_time, currentSchedule.end_time)})</p>
                       </>
                     );

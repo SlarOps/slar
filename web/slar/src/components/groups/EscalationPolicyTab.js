@@ -133,7 +133,7 @@ export default function EscalationPolicyTab({ groupId, members = [] }) {
             Escalation Policies
           </h3>
           <p className="mt-1 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-            Define how alerts escalate when team members don't respond
+            Define how alerts escalate when team members don&apos;t respond
           </p>
         </div>
         <button
