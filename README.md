@@ -5,8 +5,37 @@
 <h1 align="center">SLAR - Smart Live Alert & Response</h1>
 
 <p align="center">
-  <strong>Open-source on-call management with AI-powered incident response</strong>
+  <strong>The AI-native on-call platform that resolves incidents before you wake up</strong>
 </p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#why-slar">Why SLAR</a> •
+  <a href="#features">Features</a> •
+  <a href="#roadmap">Roadmap</a>
+</p>
+
+---
+
+### Why SLAR?
+
+Most on-call tools just **notify** you. SLAR **resolves** incidents.
+
+| Traditional On-Call | With SLAR |
+|---------------------|-----------|
+| Alert fires → You wake up → Investigate → Fix | **AI Pilot** investigates & remediates while you sleep |
+| Manually write post-mortem after incident | **Automated RCA** generates root cause analysis in real-time |
+| Search through runbooks and dashboards | **Chat with your infrastructure** - AI understands your context |
+| Hope the on-call engineer knows what to do | **AI-guided troubleshooting** with approval workflows |
+
+### Key Differentiators
+
+- **AI Pilot** - Autonomous remediation for routine incidents
+- **Automated RCA** - Instant root cause analysis when incidents occur
+- **Chat with Infra** - Context-aware AI that understands your stack
+- **Zero-Trust Security** - End-to-end encryption for all AI conversations
+- **Human-in-the-Loop** - Approval workflows ensure AI actions are verified
+- **Open Source** - Self-host, customize, no vendor lock-in (AGPLv3)
 
 ---
 [![Lint](https://github.com/SlarOps/slar/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/SlarOps/slar/actions/workflows/lint.yml)
@@ -15,7 +44,7 @@
 
 ### What is SLAR?
 
-SLAR is an open-source on-call management platform with AI-powered incident response. It helps teams manage on-call rotations, route alerts, and respond to incidents with AI-powered assistance.
+SLAR is an open-source, AI-native on-call management platform. It combines traditional on-call features (rotations, escalations, integrations) with AI-powered incident response that can investigate, diagnose, and remediate issues autonomously.
 
 <p align="center">
 <img src="./images/mobile.png" alt="SLAR Mobile" width="200"> <img src="./images/web.png" alt="SLAR Web" width="600">
