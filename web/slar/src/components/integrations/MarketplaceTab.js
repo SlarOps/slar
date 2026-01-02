@@ -55,37 +55,23 @@ export default function MarketplaceTab() {
     setLoading(true);
 
     try {
-      // Load saved marketplaces from localStorage
-      const savedMarketplaces = localStorage.getItem('marketplaces');
-      let userMarketplaces = savedMarketplaces
-        ? JSON.parse(savedMarketplaces)
-        : DEFAULT_MARKETPLACES;
+      // Load marketplaces from database (no localStorage cache)
+      let userMarketplaces = DEFAULT_MARKETPLACES;
 
-      // Migrate old marketplaces to add name field if missing
-      let needsUpdate = false;
-      userMarketplaces = userMarketplaces.map(m => {
-        if (!m.name && m.url) {
-          // Try to infer name from URL
-          const parsed = parseGitHubUrl(m.url);
-          if (parsed) {
-            // Check for known marketplaces
-            if (m.url.toLowerCase().includes('anthropics/skills') ||
-              parsed.owner === 'anthropics' && parsed.repo === 'skills') {
-              needsUpdate = true;
-              console.log('[MarketplaceTab] Migrating marketplace to add name: anthropic-agent-skills');
-              return { ...m, name: 'anthropic-agent-skills' };
-            }
-            // For unknown marketplaces, try to fetch the name from bucket
-            // We'll just use repo name as fallback
-            console.log(`[MarketplaceTab] No name for marketplace ${m.url}, needs manual fetch`);
-          }
+      if (session?.user?.id && session?.access_token) {
+        apiClient.setToken(session.access_token);
+        const dbMarketplaces = await apiClient.getAllMarketplaces();
+
+        if (dbMarketplaces.success && dbMarketplaces.marketplaces) {
+          // Transform DB format to component format
+          userMarketplaces = dbMarketplaces.marketplaces.map(m => ({
+            url: m.repository_url,
+            branch: m.branch || 'main',
+            name: m.name,
+            fetchedAt: m.updated_at
+          }));
+          console.log('[MarketplaceTab] ✅ Loaded marketplaces from database:', userMarketplaces.length);
         }
-        return m;
-      });
-
-      if (needsUpdate) {
-        localStorage.setItem('marketplaces', JSON.stringify(userMarketplaces));
-        console.log('[MarketplaceTab] ✅ Migrated localStorage with name fields');
       }
 
       console.log('[MarketplaceTab] 📋 User marketplaces:', userMarketplaces);
@@ -253,7 +239,7 @@ export default function MarketplaceTab() {
 
       const marketplaceName = downloadResult.marketplaceName || downloadResult.marketplace?.name || inferredMarketplaceName;
 
-      // Add to marketplaces list
+      // Add to marketplaces list (UI state only - already saved to DB by backend)
       const newMarketplace = {
         url: newRepoUrl.trim(),
         branch: 'main',
@@ -263,7 +249,6 @@ export default function MarketplaceTab() {
 
       const updatedMarketplaces = [...marketplaces, newMarketplace];
       setMarketplaces(updatedMarketplaces);
-      localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
 
       // Parse marketplace data for UI display
       const plugins = [];
@@ -346,10 +331,9 @@ export default function MarketplaceTab() {
 
       console.log(`[MarketplaceTab] ✅ Marketplace deletion initiated (job_id: ${result.job_id})`);
 
-      // Update UI immediately (optimistic update)
+      // Update UI immediately (optimistic update - already deleted from DB by backend)
       const updatedMarketplaces = marketplaces.filter(m => m.url !== marketplaceUrl);
       setMarketplaces(updatedMarketplaces);
-      localStorage.setItem('marketplaces', JSON.stringify(updatedMarketplaces));
 
       // Remove marketplace data from state
       const newData = { ...marketplaceData };
