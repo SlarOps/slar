@@ -128,12 +128,12 @@ export default function Sidebar() {
       <div className={`flex items-center h-14 px-4 border-b border-gray-200 dark:border-gray-800 ${collapsed ? 'justify-center' : 'justify-between'}`}>
         <Link href="/" className="flex items-center gap-2">
           {/* Logo Icon */}
-          <div className="flex items-center justify-center text-gray-900 dark:text-white">
+          <div className="flex items-center justify-center">
             <Logo size={28} />
           </div>
           {!collapsed && (
             <span className="text-xl font-black tracking-tighter text-gray-900 dark:text-white">
-              SLAR
+              slar<span className="text-emerald-500">.</span>
             </span>
           )}
         </Link>

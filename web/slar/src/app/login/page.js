@@ -40,17 +40,17 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8">
         {/* Header */}
         <div className="text-center">
-          <Link href="/" className="inline-flex items-center gap-3 mb-4">
+          <Link href="/" className="inline-flex items-center gap-2 mb-6">
             <Logo size={40} />
-            <span className="text-4xl font-black tracking-tighter text-gray-900 dark:text-white">
-              SLAR
+            <span className="text-3xl font-black tracking-tighter text-gray-900 dark:text-white">
+              slar<span className="text-emerald-500">.</span>
             </span>
           </Link>
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
             Sign in to your account
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            Monitor your systems and manage alerts
+            AI-native incident management platform
           </p>
         </div>
 
