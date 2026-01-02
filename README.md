@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./images/banner.png" alt="SLAR Banner">
+  <img src="./images/icon.svg" alt="SLAR Icon" width="80">
 </p>
 
 <h1 align="center">SLAR - Smart Live Alert & Response</h1>

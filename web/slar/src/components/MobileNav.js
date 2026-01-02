@@ -85,11 +85,11 @@ export default function MobileNav() {
       >
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 z-50 relative">
-            <div className="flex items-center justify-center text-gray-900 dark:text-white">
+            <div className="flex items-center justify-center">
               <Logo size={24} />
             </div>
             <span className="text-xl font-black tracking-tighter text-gray-900 dark:text-white">
-              SLAR
+              slar<span className="text-emerald-500">.</span>
             </span>
           </Link>
 
