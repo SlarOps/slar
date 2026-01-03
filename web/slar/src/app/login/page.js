@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import EnvironmentBadge from '../../components/EnvironmentBadge';
-import Logo from '../../components/Logo';
+import Brand from '../../components/Brand';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -40,12 +40,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8">
         {/* Header */}
         <div className="text-center">
-          <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <Logo size={40} />
-            <span className="text-3xl font-black tracking-tighter text-gray-900 dark:text-white">
-              slar<span className="text-emerald-500">.</span>
-            </span>
-          </Link>
+          <Brand size={40} withLink={true} className="mb-6 justify-center" />
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
             Sign in to your account
           </h2>
