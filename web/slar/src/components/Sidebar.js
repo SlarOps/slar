@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSidebar } from '../contexts/SidebarContext';
 import OrgSwitcher from './OrgSwitcher';
 import ProjectSwitcher from './ProjectSwitcher';
-import Logo from './Logo';
+import Brand from './Brand';
 
 const NAV_ITEMS = [
   {
@@ -126,17 +126,7 @@ export default function Sidebar() {
     >
       {/* Logo Header */}
       <div className={`flex items-center h-14 px-4 border-b border-gray-200 dark:border-gray-800 ${collapsed ? 'justify-center' : 'justify-between'}`}>
-        <Link href="/" className="flex items-center gap-2">
-          {/* Logo Icon */}
-          <div className="flex items-center justify-center">
-            <Logo size={28} />
-          </div>
-          {!collapsed && (
-            <span className="text-xl font-black tracking-tighter text-gray-900 dark:text-white">
-              slar<span className="text-emerald-500">.</span>
-            </span>
-          )}
-        </Link>
+        <Brand size={28} showText={!collapsed} withLink={true} />
 
         {/* Collapse Toggle (only show when expanded) */}
         {!collapsed && (
