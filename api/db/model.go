@@ -203,6 +203,10 @@ type Service struct {
 	EscalationRuleName string `json:"escalation_rule_name,omitempty"`
 	AlertCount         int    `json:"alert_count,omitempty"`    // Current active alerts
 	IncidentCount      int    `json:"incident_count,omitempty"` // Current incidents
+
+	// Generated URLs (populated by service layer)
+	GenericWebhookURL    string `json:"generic_webhook_url,omitempty"`
+	PrometheusWebhookURL string `json:"prometheus_webhook_url,omitempty"`
 }
 
 // Service request/response models (Datadog-style)

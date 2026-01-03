@@ -290,11 +290,12 @@ func (s *RoutingService) CreateRoutingRule(tableID string, req db.CreateRoutingR
 	}
 
 	var timeConditionsJSON []byte
-	if req.TimeConditions != nil {
-		timeConditionsJSON, err = json.Marshal(req.TimeConditions)
-		if err != nil {
-			return nil, fmt.Errorf("invalid time_conditions: %w", err)
-		}
+	// If req.TimeConditions is nil, json.Marshal will produce "null".
+	// If it's an empty map, it will produce "{}".
+	// The explicit nil check is removed as json.Marshal handles nil maps gracefully.
+	timeConditionsJSON, err = json.Marshal(req.TimeConditions)
+	if err != nil {
+		return nil, fmt.Errorf("invalid time_conditions: %w", err)
 	}
 
 	var createdByParam interface{}
@@ -534,7 +535,7 @@ func (s *RoutingService) evaluateRule(attrs db.AlertAttributes, rule *db.AlertRo
 
 // evaluateTimeConditions evaluates time-based conditions
 func (s *RoutingService) evaluateTimeConditions(timeConditions map[string]interface{}) bool {
-	if timeConditions == nil || len(timeConditions) == 0 {
+	if len(timeConditions) == 0 {
 		return true // No time conditions means always match
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
+	"github.com/vanchonlee/slar/internal/config"
 )
 
 type ServiceService struct {
@@ -75,6 +76,9 @@ func (s *ServiceService) CreateService(groupID string, req db.CreateServiceReque
 		service.EscalationPolicyID = *req.EscalationPolicyID
 	}
 
+	// Populate computed webhook URLs
+	s.populateWebhookURLs(&service)
+
 	return service, nil
 }
 
@@ -128,6 +132,9 @@ func (s *ServiceService) GetService(serviceID string) (db.Service, error) {
 		service.EscalationPolicyID = escalationPolicyID.String
 	}
 
+	// Populate computed webhook URLs
+	s.populateWebhookURLs(&service)
+
 	return service, nil
 }
 
@@ -177,6 +184,9 @@ func (s *ServiceService) GetGroupServices(groupID string) ([]db.Service, error) 
 		if escalationPolicyID.Valid {
 			service.EscalationPolicyID = escalationPolicyID.String
 		}
+
+		// Populate computed webhook URLs
+		s.populateWebhookURLs(&service)
 
 		services = append(services, service)
 	}
@@ -235,13 +245,21 @@ func (s *ServiceService) UpdateService(serviceID string, req db.UpdateServiceReq
 		return service, fmt.Errorf("failed to update service: %w", err)
 	}
 
+	// Populate computed webhook URLs
+	s.populateWebhookURLs(&service)
+
 	return service, nil
 }
 
 // DeleteService soft deletes a service
 func (s *ServiceService) DeleteService(serviceID string) error {
+	// Soft delete service and its integrations
 	result, err := s.PG.Exec(`
-		UPDATE services SET is_active = false, updated_at = $1 WHERE id = $2
+		WITH deleted_service AS (
+			UPDATE services SET is_active = false, updated_at = $1 WHERE id = $2 RETURNING id
+		)
+		UPDATE service_integrations SET is_active = false, updated_at = $1 
+		WHERE service_id = $2 AND is_active = true
 	`, time.Now(), serviceID)
 
 	if err != nil {
@@ -301,6 +319,9 @@ func (s *ServiceService) GetServiceByRoutingKey(routingKey string) (db.Service, 
 	if escalationPolicyID.Valid {
 		service.EscalationPolicyID = escalationPolicyID.String
 	}
+
+	// Populate computed webhook URLs
+	s.populateWebhookURLs(&service)
 
 	return service, nil
 }
@@ -453,6 +474,9 @@ func (s *ServiceService) ListServices(filters map[string]interface{}) ([]db.Serv
 			service.EscalationPolicyID = escalationPolicyID.String
 		}
 
+		// Populate computed webhook URLs
+		s.populateWebhookURLs(&service)
+
 		services = append(services, service)
 	}
 
@@ -517,8 +541,22 @@ func (s *ServiceService) ListAllServices(isActive *bool) ([]db.Service, error) {
 			service.EscalationPolicyID = escalationPolicyID.String
 		}
 
+		// Populate computed webhook URLs
+		s.populateWebhookURLs(&service)
+
 		services = append(services, service)
 	}
 
 	return services, nil
+}
+
+// populateWebhookURLs computes and sets the webhook URLs for a service
+func (s *ServiceService) populateWebhookURLs(service *db.Service) {
+	baseURL := config.App.WebhookAPIBaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+
+	service.GenericWebhookURL = fmt.Sprintf("%s/webhook/generic/%s", baseURL, service.RoutingKey)
+	service.PrometheusWebhookURL = fmt.Sprintf("%s/webhook/prometheus/%s", baseURL, service.RoutingKey)
 }
