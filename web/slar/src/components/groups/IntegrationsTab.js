@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
-import { toast, ConfirmationModal } from '../ui';
+import { toast, ConfirmationModal, Alert } from '../ui';
 import IntegrationModal from '../integrations/IntegrationModal';
 import IntegrationDetailModal from '../integrations/IntegrationDetailModal';
 import SkillUploadModal from '../SkillUploadModal';
@@ -93,6 +93,8 @@ export default function IntegrationsTab({ groupId }) {
 
   const handleDeleteIntegration = (integration) => {
     setIntegrationToDelete(integration);
+    setDeleteError(null);
+    setBlockingServices([]);
     setShowDeleteModal(true);
   };
 
@@ -108,12 +110,17 @@ export default function IntegrationsTab({ groupId }) {
     setShowIntegrationModal(true);
   };
 
+  const [deleteError, setDeleteError] = useState(null);
+  const [blockingServices, setBlockingServices] = useState([]);
+
   const confirmDeleteIntegration = async () => {
     if (!integrationToDelete || !currentOrg?.id) return;
 
+    setDeleteError(null);
+    setBlockingServices([]);
+
     try {
       apiClient.setToken(session.access_token);
-      // ReBAC: Build filters with org_id (MANDATORY) and project_id (OPTIONAL)
       const rebacFilters = {
         org_id: currentOrg.id,
         ...(currentProject?.id && { project_id: currentProject.id })
@@ -122,12 +129,33 @@ export default function IntegrationsTab({ groupId }) {
 
       await loadIntegrations();
       toast.success('Integration deleted successfully');
-    } catch (error) {
-      console.error('Failed to delete integration:', error);
-      toast.error(`Failed to delete integration: ${error.message}`);
-    } finally {
       setShowDeleteModal(false);
       setIntegrationToDelete(null);
+    } catch (error) {
+      console.error('Failed to delete integration:', error);
+
+      // Try to parse detailed error message from backend
+      // Backend returns: {"error": "...", "details": ["Service A", ...]}
+      try {
+        // Extract JSON part if mixed with text like "failed to delete: {...}"
+        const jsonMatch = error.message.match(/\{.*\}/);
+        if (jsonMatch) {
+          const errorObj = JSON.parse(jsonMatch[0]);
+          if (errorObj.details && Array.isArray(errorObj.details)) {
+            setBlockingServices(errorObj.details);
+            setDeleteError("Cannot delete integration because it is used by the following active services:");
+            return; // Don't close modal
+          }
+        }
+      } catch (e) {
+        // Fallback to standard error handling
+      }
+
+      toast.error(`Failed to delete integration: ${error.message}`);
+      // Only close if it's not a validation error we want to show
+      if (!blockingServices.length) {
+        setShowDeleteModal(false);
+      }
     }
   };
 
@@ -510,7 +538,30 @@ export default function IntegrationsTab({ groupId }) {
         message={`Are you sure you want to delete "${integrationToDelete?.name}"? This action cannot be undone and will remove all service mappings for this integration.`}
         confirmText="Delete Integration"
         confirmVariant="danger"
-      />
+      >
+        {deleteError ? (
+          <div className="space-y-4">
+            <Alert
+              variant="error"
+              title="Deletion Failed"
+              message={deleteError}
+            >
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                {blockingServices.map((service, idx) => (
+                  <li key={idx} className="font-medium">{service}</li>
+                ))}
+              </ul>
+            </Alert>
+            <p className="text-sm text-gray-500">
+              Please disconnect these services before deleting the integration.
+            </p>
+          </div>
+        ) : (
+          <p>
+            Are you sure you want to delete "{integrationToDelete?.name}"? This action cannot be undone and will remove all service mappings for this integration.
+          </p>
+        )}
+      </ConfirmationModal>
 
       {/* Skill Upload Modal */}
       <SkillUploadModal

@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
+	"github.com/vanchonlee/slar/internal/config"
 )
 
 type IntegrationService struct {
@@ -63,9 +63,9 @@ func (s *IntegrationService) CreateIntegration(req db.CreateIntegrationRequest, 
 	}
 
 	// Generate webhook URL based on environment
-	baseURL := os.Getenv("WEBHOOK_API_BASE_URL")
+	baseURL := config.App.WebhookAPIBaseURL
 	if baseURL == "" {
-		baseURL = "https://api.slar.io" // Default fallback
+		baseURL = "http://localhost:8080" // Default fallback
 	}
 	integration.WebhookURL = fmt.Sprintf("%s/webhook/%s/%s", baseURL, integration.Type, integration.ID)
 
@@ -395,15 +395,23 @@ func (s *IntegrationService) UpdateIntegration(integrationID string, req db.Upda
 		return integration, fmt.Errorf("failed to marshal config: %w", err)
 	}
 
+	// Recalculate webhook URL to ensure it matches current configuration
+	baseURL := config.App.WebhookAPIBaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	integration.WebhookURL = fmt.Sprintf("%s/webhook/%s/%s", baseURL, integration.Type, integration.ID)
+
 	// Update the integration
 	_, err = s.PG.Exec(`
 		UPDATE integrations 
 		SET name = $2, description = $3, config = $4, webhook_secret = $5,
-		    is_active = $6, heartbeat_interval = $7, updated_at = $8
+		    is_active = $6, heartbeat_interval = $7, updated_at = $8,
+		    webhook_url = $9
 		WHERE id = $1
 	`, integrationID, integration.Name, integration.Description, configJSON,
 		integration.WebhookSecret, integration.IsActive, integration.HeartbeatInterval,
-		integration.UpdatedAt)
+		integration.UpdatedAt, integration.WebhookURL)
 
 	if err != nil {
 		return integration, fmt.Errorf("failed to update integration: %w", err)
@@ -414,19 +422,33 @@ func (s *IntegrationService) UpdateIntegration(integrationID string, req db.Upda
 
 // DeleteIntegration soft deletes an integration
 func (s *IntegrationService) DeleteIntegration(integrationID string) error {
-	// Check if integration has active service mappings
-	var count int
-	err := s.PG.QueryRow(`
-		SELECT COUNT(*) FROM service_integrations 
-		WHERE integration_id = $1 AND is_active = true
-	`, integrationID).Scan(&count)
-
+	// Check if integration has active service mappings (only count if service is also active)
+	rows, err := s.PG.Query(`
+		SELECT s.name 
+		FROM service_integrations si
+		JOIN services s ON si.service_id = s.id
+		WHERE si.integration_id = $1 AND si.is_active = true AND s.is_active = true
+	`, integrationID)
 	if err != nil {
 		return fmt.Errorf("failed to check service mappings: %w", err)
 	}
+	defer rows.Close()
 
-	if count > 0 {
-		return fmt.Errorf("cannot delete integration: %d active service mappings exist", count)
+	var activeServices []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue // Skip errors
+		}
+		activeServices = append(activeServices, name)
+	}
+
+	if len(activeServices) > 0 {
+		// Return a special error format that the handler can parse
+		// We use a structured JSON string as the error message for simplicity without custom error types yet
+		// Format: {"error": "cannot delete...", "details": ["Service A", ...]}
+		detailsJSON, _ := json.Marshal(activeServices)
+		return fmt.Errorf(`{"error": "cannot delete integration: active service mappings exist", "details": %s}`, string(detailsJSON))
 	}
 
 	// Delete the integration (CASCADE will handle service_integrations)

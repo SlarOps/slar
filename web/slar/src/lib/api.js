@@ -445,7 +445,7 @@ class APIClient {
   async createSchedulerWithShiftsOptimized(groupId, data, filters = {}) {
     const params = this._buildReBACParams(filters);
     const queryString = params.toString();
-    return this.request(`/groups/${groupId}/schedulers/with-shifts-optimized${queryString ? `?${queryString}` : ''}`, {
+    return this.request(`/groups/${groupId}/schedulers/with-shifts${queryString ? `?${queryString}` : ''}`, {
       method: 'POST',
       body: JSON.stringify(data)
     });

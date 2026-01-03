@@ -798,7 +798,7 @@ func (h *GroupHandler) DeleteEscalationPolicy(c *gin.Context) {
 
 	// Validate group access
 	userID := c.GetString("user_id")
-	ok, err := h.GroupService.IsUserInGroup(userID, groupID)
+	ok, err := h.GroupService.IsUserInGroup(groupID, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check group membership"})
 		return

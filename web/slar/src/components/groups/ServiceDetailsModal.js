@@ -26,9 +26,9 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
   const status = getServiceStatus(service);
   const type = getServiceType(service);
 
-  // Generate webhook URLs using env variable
-  const genericWebhookUrl = `${API_BASE_URL}/webhook/generic/${service.routing_key}`;
-  const prometheusWebhookUrl = `${API_BASE_URL}/webhook/prometheus/${service.routing_key}`;
+  // Generate webhook URLs (prefer backend-provided, fallback to construction)
+  const genericWebhookUrl = service.generic_webhook_url || `${API_BASE_URL}/webhook/generic/${service.routing_key}`;
+  const prometheusWebhookUrl = service.prometheus_webhook_url || `${API_BASE_URL}/webhook/prometheus/${service.routing_key}`;
 
   return (
     <Modal
