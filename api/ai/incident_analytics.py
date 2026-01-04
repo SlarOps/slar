@@ -8,6 +8,7 @@ This runs in a background asyncio task within the main AI service.
 import asyncio
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 
 import psycopg2
@@ -15,6 +16,7 @@ from psycopg2.extras import RealDictCursor
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from config import config
+from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class IncidentAnalyticsPGMQ:
                 cursor.execute("SELECT pgmq.create(%s);", (self.queue_name,))
                 conn.commit()
             conn.close()
-            logger.info(f"✅ PGMQ queue '{self.queue_name}' ready")
+            logger.info(f"PGMQ queue '{self.queue_name}' ready")
         except Exception as e:
             logger.debug(f"Queue creation info: {e}")  # Likely already exists
 
@@ -91,7 +93,7 @@ class IncidentAnalyticsPGMQ:
         raw_data = incident.get("raw_data", {})
 
         prompt = f"""Analyze this production incident and provide actionable insights make sumary is simple and clean, use your tools:
-
+You can find related incident in 10 minutes before or after this incident to help you analyze this incident.
 # Incident Details
 - **Title**: {title}
 - **Source**: {source}
@@ -166,22 +168,54 @@ Keep it practical and action-oriented for on-call engineers.
         # Load configuration dynamically from environment
         config = self.get_analytics_config()
 
+        # 🔑 Set Auth Context BEFORE creating MCP server
+        api_key = os.getenv("SLAR_API_KEY", "")
+        if api_key:
+            set_auth_token(api_key)
+            logger.info(f"🔑 Auth token set for incident analysis (len={len(api_key)})")
+        else:
+            logger.warning("⚠️ SLAR_API_KEY not set - API calls may fail")
+
+        # Set tenant context from incident data (ReBAC tenant isolation)
+        org_id = incident.get("organization_id") or incident.get("org_id")
+        if org_id:
+            set_org_id(org_id)
+            logger.info(f"🏢 Org context set for incident analysis: {org_id}")
+        else:
+            logger.warning("⚠️ No organization_id in incident data - API calls may fail")
+
+        project_id = incident.get("project_id")
+        if project_id:
+            set_project_id(project_id)
+            logger.info(f"📁 Project context set for incident analysis: {project_id}")
+
+        # Load MCP servers (AFTER auth context is set)
+        incident_tools_server = create_incident_tools_server()
+        mcp_servers = {"incident_tools": incident_tools_server}
+        
+        logger.info(f" INCIDENT TOOLS SERVER: {incident_tools_server}")
+
         # Configure options for one-off analysis
         options = ClaudeAgentOptions(
             permission_mode=config["permission_mode"],
             model=config["model"],
             setting_sources=config["setting_sources"],
             allowed_tools=config["allowed_tools"],
+            mcp_servers=mcp_servers,
+            max_turns=10
         )
 
         full_response = ""
 
         # Use query() for one-off analysis (creates new session each time)
-        async for message in query(prompt=prompt, options=options):
-            if hasattr(message, 'content'):
-                for block in message.content:
-                    if hasattr(block, 'text'):
-                        full_response += block.text
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt=prompt)
+            async for message in client.receive_response():
+                print(message)
+                if hasattr(message, 'content'):
+                    for block in message.content:
+                        if hasattr(block, 'text'):
+                            full_response += block.text
 
         return full_response
 
@@ -226,11 +260,11 @@ Keep it practical and action-oriented for on-call engineers.
                 conn.commit()
 
             conn.close()
-            logger.info(f"✅ Updated incident {incident_id} with AI analysis")
+            logger.info(f"Updated incident {incident_id} with AI analysis")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to update incident {incident_id}: {e}", exc_info=True)
+            logger.error(f"Failed to update incident {incident_id}: {e}", exc_info=True)
             return False
 
     async def process_message(self, message: Dict):
@@ -251,12 +285,12 @@ Keep it practical and action-oriented for on-call engineers.
             if self.update_incident_description(incident_id, analysis):
                 # Success - delete message
                 self.delete_message(msg_id)
-                logger.info(f"✅ Completed analysis for incident {incident_id}")
+                logger.info(f"Completed analysis for incident {incident_id}")
             else:
-                logger.error(f"❌ Failed to update incident {incident_id}")
+                logger.error(f"Failed to update incident {incident_id}")
 
         except Exception as e:
-            logger.error(f"❌ Error processing incident {incident_id}: {e}", exc_info=True)
+            logger.error(f"Error processing incident {incident_id}: {e}", exc_info=True)
 
     async def run_consumer(self):
         """Main consumer loop - runs in background"""
@@ -281,13 +315,13 @@ Keep it practical and action-oriented for on-call engineers.
                     await asyncio.sleep(2)
 
             except Exception as e:
-                logger.error(f"❌ PGMQ consumer error: {e}", exc_info=True)
+                logger.error(f"PGMQ consumer error: {e}", exc_info=True)
                 await asyncio.sleep(5)
 
     def stop(self):
         """Stop the consumer"""
         self.running = False
-        logger.info("🛑 Stopping PGMQ incident analytics consumer...")
+        logger.info("Stopping PGMQ incident analytics consumer...")
 
 
 # Global instance
@@ -306,11 +340,11 @@ async def start_pgmq_consumer():
     """Start PGMQ consumer in background - called at app startup"""
     consumer = get_pgmq_consumer()
     asyncio.create_task(consumer.run_consumer())
-    logger.info("✅ PGMQ incident analytics consumer started in background")
+    logger.info("PGMQ incident analytics consumer started in background")
 
 
 async def stop_pgmq_consumer():
     """Stop PGMQ consumer - called at app shutdown"""
     consumer = get_pgmq_consumer()
     consumer.stop()
-    logger.info("✅ PGMQ incident analytics consumer stopped")
+    logger.info("PGMQ incident analytics consumer stopped")

@@ -381,7 +381,6 @@ func GetProjectRoleFromContext(c *gin.Context) Role {
 	return Role(role)
 }
 
-
 // ProjectScopedMiddleware injects project context for resource creation/listing
 // - If project_id provided (param/query/header): validate access, set project_id + org_id
 // - If no project_id: compute accessible projects list for filtering
@@ -403,6 +402,57 @@ func NewProjectScopedMiddleware(az Authorizer, ps *ProjectService) *ProjectScope
 func (m *ProjectScopedMiddleware) InjectProjectContext() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
+		isAPIKey := c.GetBool("is_api_key")
+
+		// API Key: validate org/project context with security checks
+		// This allows AI Pilot and other API clients to operate with explicit tenant scope
+		if isAPIKey {
+			// Get the API key's stored org_id (set by auth middleware from database)
+			apiKeyOrgID := c.GetString("org_id")
+
+			// Get requested org_id from header
+			requestedOrgID := c.GetHeader("X-Org-ID")
+
+			// SECURITY: Validate org_id
+			// If API key has a stored org_id, the request must match it
+			// If API key has no stored org_id, allow the header value (legacy behavior)
+			var effectiveOrgID string
+			if apiKeyOrgID != "" {
+				// API key is scoped to a specific org
+				if requestedOrgID != "" && requestedOrgID != apiKeyOrgID {
+					log.Printf("REBAC DENIED: API Key org mismatch - key org: %s, requested: %s", apiKeyOrgID, requestedOrgID)
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+						"error":   "forbidden",
+						"message": "API key is not authorized for the requested organization",
+					})
+					return
+				}
+				effectiveOrgID = apiKeyOrgID
+			} else {
+				// API key has no org restriction - use requested org (legacy behavior)
+				// TODO: Consider requiring org_id on all API keys for better security
+				effectiveOrgID = requestedOrgID
+				if effectiveOrgID != "" {
+					log.Printf("REBAC WARNING: API Key without org restriction accessing org %s", effectiveOrgID)
+				}
+			}
+
+			projectID := c.GetHeader("X-Project-ID")
+
+			if effectiveOrgID != "" {
+				c.Set(string(ContextKeyOrgID), effectiveOrgID)
+				log.Printf("REBAC: API Key scoped to org %s", effectiveOrgID)
+			}
+			if projectID != "" {
+				// TODO: Validate project belongs to the org if needed
+				c.Set(string(ContextKeyProjectID), projectID)
+				log.Printf("REBAC: API Key scoped to project %s", projectID)
+			}
+			c.Next()
+			return
+		}
+
+		// Normal user authentication required
 		if userID == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error":   "unauthorized",
@@ -505,8 +555,9 @@ func GetReBACFilters(c *gin.Context) map[string]interface{} {
 // Example: /orgs/:org_id/projects/:project_id
 //
 // Usage:
-//   router.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceProject))
-//   router.DELETE("/:id", authzMiddleware.RequirePermission(authz.ActionDelete, authz.ResourceOrg), handler)
+//
+//	router.Use(authzMiddleware.RequirePermission(authz.ActionView, authz.ResourceProject))
+//	router.DELETE("/:id", authzMiddleware.RequirePermission(authz.ActionDelete, authz.ResourceOrg), handler)
 func (m *AuthzMiddleware) RequirePermission(action Action, resourceType ResourceType) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
@@ -571,8 +622,9 @@ func (m *AuthzMiddleware) RequirePermission(action Action, resourceType Resource
 // a custom URL param key for the resource ID.
 //
 // Usage:
-//   router.GET("/custom/:customID", authzMiddleware.RequirePermissionWithParamKey(
-//       authz.ActionView, authz.ResourceProject, "customID"), handler)
+//
+//	router.GET("/custom/:customID", authzMiddleware.RequirePermissionWithParamKey(
+//	    authz.ActionView, authz.ResourceProject, "customID"), handler)
 func (m *AuthzMiddleware) RequirePermissionWithParamKey(action Action, resourceType ResourceType, paramKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")

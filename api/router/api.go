@@ -112,7 +112,7 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	reportHandler := monitor.NewReportHandler(pg, incidentService)
 
 	// Initialize middleware
-	supabaseAuthMiddleware := handlers.NewSupabaseAuthMiddleware(userService)
+	supabaseAuthMiddleware := handlers.NewSupabaseAuthMiddleware(userService, apiKeyService)
 
 	// PUBLIC ENDPOINTS (no authentication required)
 

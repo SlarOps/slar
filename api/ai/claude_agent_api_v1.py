@@ -284,35 +284,35 @@ app.add_middleware(
 
 # Apply rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
-logger.info(f"✅ Rate limiting enabled: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
+logger.info(f"[Rate Limiting]Enabled: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
 
 # Include database routes (installed_plugins, marketplaces)
 app.include_router(db_router)
-logger.info("✅ Database routes loaded from routes_db.py")
+logger.info("[Database] Database routes loaded from routes_db.py")
 
 # Include conversation history routes
 app.include_router(conversations_router)
-logger.info("✅ Conversation routes loaded from routes_conversations.py")
+logger.info("[Conversation] Conversation routes loaded from routes_conversations.py")
 
 # Include audit routes
 app.include_router(audit_router)
-logger.info("✅ Audit routes loaded from routes_audit.py")
+logger.info("[Audit] Audit routes loaded from routes_audit.py")
 
 # Include modular routes
 app.include_router(sync_router)
-logger.info("✅ Sync routes loaded from routes_sync.py")
+logger.info("[Sync] Sync routes loaded from routes_sync.py")
 
 app.include_router(mcp_router)
-logger.info("✅ MCP routes loaded from routes_mcp.py")
+logger.info("[MCP] MCP routes loaded from routes_mcp.py")
 
 app.include_router(tools_router)
-logger.info("✅ Tools routes loaded from routes_tools.py")
+logger.info("[Tools] Tools routes loaded from routes_tools.py")
 
 app.include_router(memory_router)
-logger.info("✅ Memory routes loaded from routes_memory.py")
+logger.info("[Memory] Memory routes loaded from routes_memory.py")
 
 app.include_router(marketplace_router)
-logger.info("✅ Marketplace routes loaded from routes_marketplace.py")
+logger.info("[Marketplace] Marketplace routes loaded from routes_marketplace.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -339,7 +339,7 @@ async def heartbeat_task(websocket: WebSocket, output_queue: asyncio.Queue = Non
 
             # Check if connection is still open before sending
             if websocket.client_state != WebSocketState.CONNECTED:
-                print("🛑 Heartbeat task stopping: WebSocket not connected")
+                print("[!] Heartbeat task stopping: WebSocket not connected")
                 break
 
             try:
@@ -353,7 +353,7 @@ async def heartbeat_task(websocket: WebSocket, output_queue: asyncio.Queue = Non
             except Exception as e:
                 # Only log if it's not a normal disconnect
                 if "disconnect" not in str(e).lower() and "closed" not in str(e).lower():
-                    print(f"❌ Heartbeat failed: {e}")
+                    print(f"[!] Heartbeat failed: {e}")
                 break
     except asyncio.CancelledError:
         raise
@@ -384,22 +384,22 @@ async def message_router(
             msg_type = data.get("type")
 
             if msg_type == "interrupt":
-                logger.info("📬 Routing interrupt message to interrupt_queue")
+                logger.info("[!] Routing interrupt message to interrupt_queue")
                 await interrupt_queue.put(data)
             elif msg_type == "permission_response" or data.get("allow") is not None:
                 # Permission approval/denial from user
                 logger.info(
-                    "📬 Routing permission response to permission_response_queue"
+                    "[!] Routing permission response to permission_response_queue"
                 )
                 await permission_response_queue.put(data)
             else:
-                logger.info("📬 Routing agent message to agent_queue")
+                logger.info("[!] Routing agent message to agent_queue")
                 await agent_queue.put(data)
 
     except WebSocketDisconnect:
         logger.info("🔌 Message router: WebSocket disconnected")
     except Exception as e:
-        logger.error(f"❌ Message router error: {e}", exc_info=True)
+        logger.error(f"[!] Message router error: {e}", exc_info=True)
         raise  # Propagate error
     finally:
         # Signal end of messages to all queues
@@ -436,10 +436,10 @@ async def websocket_sender(websocket: WebSocket, output_queue: asyncio.Queue):
                 # Could implement retry or persistent queue here
 
     except asyncio.CancelledError:
-        logger.info("🛑 WebSocket sender: Cancelled")
+        logger.info("[!] WebSocket sender: Cancelled")
         raise
     except Exception as e:
-        logger.error(f"❌ WebSocket sender error: {e}", exc_info=True)
+        logger.error(f"[!] WebSocket sender error: {e}", exc_info=True)
     finally:
         logger.info("🧹 WebSocket sender finished")
 
@@ -459,7 +459,7 @@ async def interrupt_task(
 
             # Check for end of messages
             if data is None:
-                logger.info("🛑 Interrupt task: End of messages")
+                logger.info("[!] Interrupt task: End of messages")
                 break
 
             # Handle interrupt request
@@ -467,7 +467,7 @@ async def interrupt_task(
                 session_id = data.get("session_id")
                 if session_id:
                     logger.info(
-                        f"🛑 Interrupt task: Setting stop event for session: {session_id}"
+                        f"[!] Interrupt task: Setting stop event for session: {session_id}"
                     )
 
                     # Ensure event exists
@@ -483,10 +483,10 @@ async def interrupt_task(
                     )
 
     except asyncio.CancelledError:
-        logger.info("🛑 Interrupt task: Cancelled")
+        logger.info("[!] Interrupt task: Cancelled")
         raise
     except Exception as e:
-        logger.error(f"❌ Interrupt task error: {e}", exc_info=True)
+        logger.error(f"[!] Interrupt task error: {e}", exc_info=True)
         raise  # Propagate error
     finally:
         logger.info("🧹 Interrupt task finished")
@@ -650,10 +650,10 @@ async def agent_task_streaming(
                     }
 
             except asyncio.CancelledError:
-                logger.info("🛑 Message generator: cancelled")
+                logger.info("[!] Message generator: cancelled")
                 return
             except Exception as e:
-                logger.error(f"❌ Message generator error: {e}", exc_info=True)
+                logger.error(f"[!] Message generator error: {e}", exc_info=True)
                 continue
 
     async def process_responses():

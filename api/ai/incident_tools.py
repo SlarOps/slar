@@ -13,7 +13,8 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 # Configuration
 API_BASE_URL = os.getenv("SLAR_API_URL", "http://localhost:8080")
-API_TOKEN = os.getenv("SLAR_API_TOKEN", "")
+# API_TOKEN_KEY should be set to Supabase Service Role key for system access
+API_TOKEN_KEY = os.getenv("SLAR_API_KEY", "")
 
 from contextvars import ContextVar
 
@@ -43,7 +44,7 @@ def get_auth_token() -> str:
     Returns:
         The authentication token to use for API requests
     """
-    return _auth_token_ctx.get() or API_TOKEN
+    return _auth_token_ctx.get() or API_TOKEN_KEY
 
 
 def set_org_id(org_id: str) -> None:
@@ -118,7 +119,7 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
             "content": [
                 {
                     "type": "text",
-                    "text": f"❌ Error: Invalid time format. Please use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'). Error: {str(e)}",
+                    "text": f"Error: Invalid time format. Please use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'). Error: {str(e)}",
                 }
             ],
             "isError": True,
@@ -128,7 +129,7 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     if limit < 1 or limit > 1000:
         return {
             "content": [
-                {"type": "text", "text": "❌ Error: Limit must be between 1 and 1000"}
+                {"type": "text", "text": "Error: Limit must be between 1 and 1000"}
             ],
             "isError": True,
         }
@@ -180,23 +181,23 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
 
                         for idx, incident in enumerate(incidents, 1):
                             result_text += f"**Incident #{idx}**\n"
-                            result_text += f"  • ID: {incident.get('id', 'N/A')}\n"
+                            result_text += f"• ID: {incident.get('id', 'N/A')}\n"
                             result_text += (
-                                f"  • Title: {incident.get('title', 'N/A')}\n"
+                                f"•Title: {incident.get('title', 'N/A')}\n"
                             )
                             result_text += (
-                                f"  • Status: {incident.get('status', 'N/A')}\n"
+                                f"•Status: {incident.get('status', 'N/A')}\n"
                             )
                             result_text += (
-                                f"  • Severity: {incident.get('severity', 'N/A')}\n"
+                                f"•Severity: {incident.get('severity', 'N/A')}\n"
                             )
                             result_text += (
-                                f"  • Service: {incident.get('service_name', 'N/A')}\n"
+                                f"•Service: {incident.get('service_name', 'N/A')}\n"
                             )
                             result_text += (
-                                f"  • Created: {incident.get('created_at', 'N/A')}\n"
+                                f"•Created: {incident.get('created_at', 'N/A')}\n"
                             )
-                            result_text += f"  • Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
+                            result_text += f"•Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
 
                             if incident.get("acknowledged_at"):
                                 result_text += f"  • Acknowledged: {incident.get('acknowledged_at')}\n"
@@ -496,7 +497,6 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
         "start_time": str,  # ISO 8601 format: 2024-01-01T00:00:00Z
         "end_time": str,  # ISO 8601 format: 2024-01-01T23:59:59Z
         "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
-        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
         "limit": int,  # Optional: Max number of incidents to return (default: 50)
     },
 )
@@ -757,7 +757,7 @@ INCIDENT_TOOLS = [
 # Create MCP server for incident tools
 def create_incident_tools_server():
     """
-    Create and return an MCP server with all incident management tools.
+    Create and return an MCP server with incident management tools.
 
     This centralizes tool management - when you add new tools to INCIDENT_TOOLS,
     they will automatically be included in the MCP server.

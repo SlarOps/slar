@@ -37,12 +37,23 @@ type Config struct {
 	AnthropicAPIKey string `mapstructure:"anthropic_api_key"`
 	SlackBotToken   string `mapstructure:"slack_bot_token"`
 	SlackAppToken   string `mapstructure:"slack_app_token"`
+
+	// AI Incident Analytics
+	AIIncidentAnalytics AIIncidentAnalyticsConfig `mapstructure:"ai_incident_analytics"`
 }
 
 type NotificationGatewayConfig struct {
 	URL        string `mapstructure:"url"`
 	InstanceID string `mapstructure:"instance_id"`
 	APIToken   string `mapstructure:"api_token"`
+}
+
+type AIIncidentAnalyticsConfig struct {
+	Enabled        bool     `mapstructure:"enabled"`
+	Model          string   `mapstructure:"model"`
+	PermissionMode string   `mapstructure:"permission_mode"`
+	SettingSources []string `mapstructure:"setting_sources"`
+	AllowedTools   []string `mapstructure:"allowed_tools"`
 }
 
 // App holds the global config instance
@@ -104,6 +115,10 @@ func LoadConfig(path string) error {
 	v.BindEnv("notification_gateway.api_token", "SLAR_CLOUD_TOKEN")
 	v.BindEnv("notification_gateway.instance_id", "SLAR_INSTANCE_ID")
 	v.BindEnv("webhook_api_base_url", "WEBHOOK_API_BASE_URL")
+
+	// Bind AI Incident Analytics Env Vars
+	v.BindEnv("ai_incident_analytics.enabled", "AI_PILOT_ENABLED")
+	v.BindEnv("ai_incident_analytics.model", "AI_PILOT_MODEL")
 
 	v.AutomaticEnv()
 

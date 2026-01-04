@@ -83,54 +83,66 @@ func (a *SimpleAuthorizer) CanAccessProject(ctx context.Context, userID, project
 }
 
 // GetProjectRole returns the user's effective role in a project
-// It first checks explicit project membership, then inherits from org
+// Optimized: Uses a single query to check explicit membership, org inheritance, and restrictions
+// Previously required 4-5 queries, now reduced to 1
 func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID string) Role {
-	// 1. Check explicit project membership first
-	var role string
+	// Single optimized query that handles all cases:
+	// 1. Check explicit project membership
+	// 2. If no explicit membership, check org membership for inheritance
+	// 3. Only inherit if project has no explicit members (is "open")
+	// 4. Returns both role and whether it's inherited for proper role mapping
+	var role sql.NullString
+	var isInherited bool
 	err := a.db.QueryRowContext(ctx, `
-		SELECT role FROM memberships
-		WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
-	`, userID, projectID).Scan(&role)
-
-	if err == nil {
-		return Role(role)
-	}
-
-	// 2. No explicit role -> check org membership for inheritance
-	var orgID string
-	err = a.db.QueryRowContext(ctx, `
-		SELECT organization_id FROM projects WHERE id = $1
-	`, projectID).Scan(&orgID)
+		WITH project_info AS (
+			-- Get project's org_id and check if it has explicit members
+			SELECT
+				p.organization_id,
+				EXISTS(
+					SELECT 1 FROM memberships
+					WHERE resource_type = 'project' AND resource_id = $2
+				) AS has_explicit_members
+			FROM projects p
+			WHERE p.id = $2
+		),
+		explicit_role AS (
+			-- Check for explicit project membership
+			SELECT role, 0 AS priority, false AS is_inherited FROM memberships
+			WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
+		),
+		inherited_role AS (
+			-- Check org membership for inheritance (only if no explicit project members)
+			SELECT m.role, 1 AS priority, true AS is_inherited FROM memberships m
+			JOIN project_info pi ON m.resource_id = pi.organization_id
+			WHERE m.user_id = $1
+			AND m.resource_type = 'org'
+			AND NOT pi.has_explicit_members
+		),
+		all_roles AS (
+			SELECT role, priority, is_inherited FROM explicit_role
+			UNION ALL
+			SELECT role, priority, is_inherited FROM inherited_role
+		)
+		SELECT role, is_inherited FROM all_roles ORDER BY priority LIMIT 1
+	`, userID, projectID).Scan(&role, &isInherited)
 
 	if err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("Error getting project org: %v", err)
+			log.Printf("Error getting project role: %v", err)
 		}
 		return ""
 	}
 
-	// 3. Check if project has explicit members (restricts access)
-	var hasExplicitMembers bool
-	err = a.db.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM memberships
-			WHERE resource_type = 'project' AND resource_id = $1
-		)
-	`, projectID).Scan(&hasExplicitMembers)
-
-	if err != nil {
-		log.Printf("Error checking project members: %v", err)
+	if !role.Valid || role.String == "" {
 		return ""
 	}
 
-	// 4. If project has explicit members, user must be one of them
-	if hasExplicitMembers {
-		return ""
+	// If inherited from org, map the role
+	if isInherited {
+		return MapOrgRoleToProjectRole(Role(role.String))
 	}
 
-	// 5. No explicit members -> inherit from org
-	orgRole := a.GetOrgRole(ctx, userID, orgID)
-	return MapOrgRoleToProjectRole(orgRole)
+	return Role(role.String)
 }
 
 // CanPerformProjectAction checks if a user can perform an action on a project
