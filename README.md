@@ -5,7 +5,7 @@
 <h1 align="center">SLAR - Smart Live Alert & Response</h1>
 
 <p align="center">
-  <strong>The AI-native on-call platform that resolves incidents before you wake up</strong>
+  <strong>AI-powered incident analysis — understand issues faster, resolve smarter</strong>
 </p>
 
 <p align="center">
