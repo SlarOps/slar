@@ -420,7 +420,7 @@ func (m *ProjectScopedMiddleware) InjectProjectContext() gin.HandlerFunc {
 			if apiKeyOrgID != "" {
 				// API key is scoped to a specific org
 				if requestedOrgID != "" && requestedOrgID != apiKeyOrgID {
-					log.Printf("REBAC DENIED: API Key org mismatch - key org: %s, requested: %s", apiKeyOrgID, requestedOrgID)
+					log.Printf("REBAC DENIED: API Key org mismatch - key org, requested: %s", requestedOrgID)
 					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 						"error":   "forbidden",
 						"message": "API key is not authorized for the requested organization",
@@ -430,7 +430,6 @@ func (m *ProjectScopedMiddleware) InjectProjectContext() gin.HandlerFunc {
 				effectiveOrgID = apiKeyOrgID
 			} else {
 				// API key has no org restriction - use requested org (legacy behavior)
-				// TODO: Consider requiring org_id on all API keys for better security
 				effectiveOrgID = requestedOrgID
 				if effectiveOrgID != "" {
 					log.Printf("REBAC WARNING: API Key without org restriction accessing org %s", effectiveOrgID)
@@ -441,12 +440,9 @@ func (m *ProjectScopedMiddleware) InjectProjectContext() gin.HandlerFunc {
 
 			if effectiveOrgID != "" {
 				c.Set(string(ContextKeyOrgID), effectiveOrgID)
-				log.Printf("REBAC: API Key scoped to org %s", effectiveOrgID)
 			}
 			if projectID != "" {
-				// TODO: Validate project belongs to the org if needed
 				c.Set(string(ContextKeyProjectID), projectID)
-				log.Printf("REBAC: API Key scoped to project %s", projectID)
 			}
 			c.Next()
 			return
