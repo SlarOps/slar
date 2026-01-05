@@ -13,11 +13,12 @@ import (
 )
 
 type SupabaseAuthMiddleware struct {
-	SupabaseAuth *services.SupabaseAuthService
-	UserService  *services.UserService
+	SupabaseAuth  *services.SupabaseAuthService
+	UserService   *services.UserService
+	APIKeyService *services.APIKeyService
 }
 
-func NewSupabaseAuthMiddleware(userService *services.UserService) *SupabaseAuthMiddleware {
+func NewSupabaseAuthMiddleware(userService *services.UserService, apiKeyService *services.APIKeyService) *SupabaseAuthMiddleware {
 	// Get Supabase configuration from environment variables
 	supabaseURL := os.Getenv("SUPABASE_URL")
 	jwtSecret := os.Getenv("SUPABASE_JWT_SECRET") // Legacy: only needed for HS256
@@ -30,8 +31,9 @@ func NewSupabaseAuthMiddleware(userService *services.UserService) *SupabaseAuthM
 	supabaseAuth := services.NewSupabaseAuthService(supabaseURL, jwtSecret)
 
 	return &SupabaseAuthMiddleware{
-		SupabaseAuth: supabaseAuth,
-		UserService:  userService,
+		SupabaseAuth:  supabaseAuth,
+		UserService:   userService,
+		APIKeyService: apiKeyService,
 	}
 }
 
@@ -53,7 +55,32 @@ func (m *SupabaseAuthMiddleware) SupabaseAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Validate the Supabase token
+		// Check if it's an API key (database lookup via APIKeyService)
+		// This handles both internal (AI Pilot) and external API keys
+		if m.APIKeyService != nil {
+			apiKey, err := m.APIKeyService.ValidateAPIKey(token)
+			if err == nil {
+				// Valid API key - set context from database record
+				c.Set("user_id", apiKey.UserID)
+				c.Set("user_email", "api-key@slar.local")
+				c.Set("user_role", "api_key")
+				c.Set("is_api_key", true)
+				c.Set("api_key_id", apiKey.ID)
+				c.Set("api_key_permissions", apiKey.Permissions)
+				// Set org_id if available on API key
+				if apiKey.OrganizationID != "" {
+					c.Set("org_id", apiKey.OrganizationID)
+				}
+				log.Printf("AUTH SUCCESS - API Key: %s (user: %s)", apiKey.Name, apiKey.UserID)
+				// Update last used timestamp (async, don't block request)
+				go m.APIKeyService.UpdateLastUsed(apiKey.ID)
+				c.Next()
+				return
+			}
+			// API key validation failed - fall through to JWT validation
+		}
+
+		// Validate the Supabase token (normal user JWT)
 		claims, err := m.SupabaseAuth.ValidateSupabaseToken(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: " + err.Error()})

@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/vanchonlee/slar/db"
+	"github.com/vanchonlee/slar/internal/config"
 )
 
 // IncidentAnalyticsService handles AI-powered incident analysis via PGMQ
@@ -40,18 +41,27 @@ type AnalysisRequest struct {
 // Returns:
 //   - error: Any error that occurred
 func (s *IncidentAnalyticsService) QueueIncidentForAnalysis(incident *db.Incident) error {
+	// Check if AI Pilot is enabled
+	if !config.App.AIIncidentAnalytics.Enabled {
+		// Log only at debug level (or not at all?) - using Printf for now as info
+		log.Printf("ℹ️  AI Pilot disabled, skipping analysis for incident %s", incident.ID)
+		return nil
+	}
+
 	queueName := "incident_analysis_queue"
 
 	// Build incident data for analysis
 	incidentData := map[string]any{
-		"id":          incident.ID,
-		"title":       incident.Title,
-		"description": incident.Description,
-		"source":      incident.Source,
-		"urgency":     incident.Urgency,
-		"priority":    incident.Priority,
-		"status":      incident.Status,
-		"created_at":  incident.CreatedAt,
+		"id":              incident.ID,
+		"title":           incident.Title,
+		"description":     incident.Description,
+		"source":          incident.Source,
+		"urgency":         incident.Urgency,
+		"priority":        incident.Priority,
+		"status":          incident.Status,
+		"created_at":      incident.CreatedAt,
+		"organization_id": incident.OrganizationID, // Required for ReBAC tenant isolation
+		"project_id":      incident.ProjectID,      // Optional project scoping
 	}
 
 	// Add labels if present

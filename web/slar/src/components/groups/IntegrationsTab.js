@@ -558,7 +558,7 @@ export default function IntegrationsTab({ groupId }) {
           </div>
         ) : (
           <p>
-            Are you sure you want to delete "{integrationToDelete?.name}"? This action cannot be undone and will remove all service mappings for this integration.
+            Are you sure you want to delete &quot;{integrationToDelete?.name}&quot;? This action cannot be undone and will remove all service mappings for this integration.
           </p>
         )}
       </ConfirmationModal>

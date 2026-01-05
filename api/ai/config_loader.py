@@ -49,6 +49,7 @@ def load_config():
             # API Connections
             "slar_api_url": "SLAR_API_URL",
             "backend_url": "SLAR_BACKEND_URL",
+            "slar_api_key": "SLAR_API_KEY",
 
             # Supabase
             "supabase_url": "SUPABASE_URL",
