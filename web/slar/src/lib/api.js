@@ -34,7 +34,19 @@ class APIClient {
     try {
       const response = await fetch(url, config);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Try to parse error response body for detailed error message
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          // API returns error in 'error' or 'message' field
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          // If response body is not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        const error = new Error(errorMessage);
+        error.status = response.status;
+        throw error;
       }
       return await response.json();
     } catch (error) {

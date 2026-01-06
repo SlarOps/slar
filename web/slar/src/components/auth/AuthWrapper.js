@@ -69,7 +69,7 @@ export default function AuthWrapper({ children }) {
         router.push('/login');
       } else if (user && (pathname === '/login' || pathname === '/signup')) {
         // Redirect to dashboard if authenticated and on auth pages
-        router.push('/dashboard');
+        router.push('/incidents');
       } else if (user && !isOnboardingPage && lastCheckedUserIdRef.current !== user.id) {
         // Check if user needs onboarding (no organizations)
         // Only check if we haven't checked for this specific user yet

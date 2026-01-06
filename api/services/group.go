@@ -567,6 +567,8 @@ func (s *GroupService) GetGroupMember(groupID, userID string) (db.GroupMember, e
 
 // AddGroupMember adds a user to a group
 // ReBAC: Uses memberships table with resource_type = 'group'
+// Requires: User must be a member of the org that owns the group
+// Auto-adds user to Project if group belongs to a project and user is not already a member
 func (s *GroupService) AddGroupMember(groupID string, req db.AddGroupMemberRequest, addedBy string) (db.GroupMember, error) {
 	now := time.Now()
 	member := db.GroupMember{
@@ -585,19 +587,74 @@ func (s *GroupService) AddGroupMember(groupID string, req db.AddGroupMemberReque
 		member.Role = "admin" // ReBAC uses 'admin' instead of 'leader'
 	}
 
-	// Note: escalation_order and notification_preferences belong to Scheduler tables, not memberships
+	// Get group info (org_id and project_id)
+	var orgID string
+	var projectID sql.NullString
+	err := s.PG.QueryRow(`SELECT organization_id, project_id FROM groups WHERE id = $1`, groupID).Scan(&orgID, &projectID)
+	if err != nil {
+		return member, fmt.Errorf("failed to get group: %w", err)
+	}
 
+	// Check if user is a member of the org (REQUIRED)
+	var orgMemberCount int
+	err = s.PG.QueryRow(`
+		SELECT COUNT(*) FROM memberships
+		WHERE user_id = $1 AND resource_type = 'org' AND resource_id = $2
+	`, req.UserID, orgID).Scan(&orgMemberCount)
+	if err != nil {
+		return member, fmt.Errorf("failed to check org membership: %w", err)
+	}
+	if orgMemberCount == 0 {
+		return member, fmt.Errorf("user must be invited to the organization first before adding to a group")
+	}
+
+	// Start transaction for atomic operation
+	tx, err := s.PG.Begin()
+	if err != nil {
+		return member, err
+	}
+	defer tx.Rollback()
+
+	// Auto-add to Project if group has project_id and user is not already a project member
+	if projectID.Valid && projectID.String != "" {
+		var existingProjectMembership int
+		err = tx.QueryRow(`
+			SELECT COUNT(*) FROM memberships
+			WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
+		`, req.UserID, projectID.String).Scan(&existingProjectMembership)
+		if err != nil {
+			return member, fmt.Errorf("failed to check project membership: %w", err)
+		}
+
+		if existingProjectMembership == 0 {
+			// Auto-add user to project with 'member' role
+			_, err = tx.Exec(`
+				INSERT INTO memberships (user_id, resource_type, resource_id, role, created_at, updated_at, invited_by)
+				VALUES ($1, 'project', $2, 'member', $3, $4, $5)
+			`, req.UserID, projectID.String, now, now, addedBy)
+			if err != nil {
+				return member, fmt.Errorf("failed to auto-add user to project: %w", err)
+			}
+			fmt.Printf("Auto-added user %s to project %s (from group %s)\n", req.UserID, projectID.String, groupID)
+		}
+	}
+
+	// Add user to group
 	var memberID string
-	err := s.PG.QueryRow(`
+	err = tx.QueryRow(`
 		INSERT INTO memberships (user_id, resource_type, resource_id, role, created_at, updated_at, invited_by)
 		VALUES ($1, 'group', $2, $3, $4, $5, $6)
 		RETURNING id
 	`, member.UserID, groupID, member.Role, now, now, addedBy).Scan(&memberID)
-
 	if err != nil {
-		return member, err
+		return member, fmt.Errorf("failed to add user to group: %w", err)
 	}
 	member.ID = memberID
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		return member, err
+	}
 
 	// Get the full member info with user details
 	return s.GetGroupMember(groupID, req.UserID)

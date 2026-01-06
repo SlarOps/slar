@@ -1609,9 +1609,14 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
     """
     Verify WebSocket authentication before accepting connection.
 
+    Also ensures user exists in database (syncs from OIDC on first login).
+
     Returns:
         tuple: (is_valid, user_id or error_message)
     """
+    from supabase_storage import get_user_info_from_token
+    from database_util import ensure_user_exists
+
     # Get token from query parameters
     token = websocket.query_params.get("token")
 
@@ -1620,13 +1625,30 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
         return False, "Missing authentication token"
 
     try:
-        # Verify JWT token
-        user_id = extract_user_id_from_token(token)
-        if not user_id:
+        # Get full user info (includes id, email, name)
+        logger.info(f"🔍 Verifying token...")
+        user_info = get_user_info_from_token(token)
+        logger.info(f"🔍 User info from token: {user_info}")
+
+        if not user_info or not user_info.get("id"):
             logger.warning("⚠️  WebSocket connection attempt with invalid token")
             return False, "Invalid authentication token"
 
-        logger.info(f"✅ WebSocket authenticated for user: {user_id}")
+        user_id = user_info["id"]
+        email = user_info.get("email")
+        name = user_info.get("name")
+
+        # Ensure user exists in database (sync from OIDC)
+        # This matches Go API's ensureUserExists behavior
+        logger.info(f"🔍 Ensuring user exists: {user_id} ({email}, {name})")
+        user_created = ensure_user_exists(user_id, email=email, name=name)
+        if user_created:
+            logger.info(f"✅ User synced to database: {user_id} ({email})")
+        else:
+            logger.warning(f"⚠️  Failed to sync user to database: {user_id}")
+            # Continue anyway - user might already exist
+
+        logger.info(f"✅ WebSocket authenticated for user: {user_id} ({email})")
         return True, user_id
 
     except Exception as e:

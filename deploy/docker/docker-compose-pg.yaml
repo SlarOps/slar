@@ -1,0 +1,21 @@
+services:
+  postgres:
+    container_name: postgres
+    platform: linux/amd64
+    # Sử dụng image của Tembo đã có sẵn pgmq
+    image: quay.io/tembo/pg17-pgmq:latest 
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: slar
+    volumes:
+      # - ./volumes/db/data:/var/lib/postgresql/data
+      # Tự động kích hoạt extension khi khởi tạo DB
+      - ./init-db:/docker-entrypoint-initdb.d 
+    networks:
+      - slar-network
+
+networks:
+  slar-network:

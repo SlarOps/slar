@@ -124,14 +124,18 @@ def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional
 
 def extract_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
     """
-    Extract user info from Supabase JWT token.
+    Extract user info from JWT token (supports OIDC and Supabase formats).
 
     Returns dict with user_id, email, and name (if available).
     This is a lightweight extraction without full signature verification
     (signature should be verified by the caller using extract_user_id_from_token).
 
+    Supports:
+    - OIDC standard claims: sub, email, name, given_name, family_name, preferred_username
+    - Supabase claims: user_metadata, app_metadata
+
     Args:
-        auth_token: JWT token from Supabase Auth
+        auth_token: JWT token from OIDC provider or Supabase Auth
 
     Returns:
         Dict with user_id, email, name or None on error
@@ -151,22 +155,40 @@ def extract_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
         user_id = decoded.get("sub")
         email = decoded.get("email")
 
-        # Try to get name from user_metadata or app_metadata
-        user_metadata = decoded.get("user_metadata", {})
-        app_metadata = decoded.get("app_metadata", {})
+        # Try to get name from various sources (OIDC and Supabase compatible)
+        name = None
 
-        name = (
-            user_metadata.get("full_name") or
-            user_metadata.get("name") or
-            app_metadata.get("full_name") or
-            app_metadata.get("name") or
-            None
-        )
+        # 1. Standard OIDC claims
+        if decoded.get("name"):
+            name = decoded.get("name")
+        elif decoded.get("given_name") or decoded.get("family_name"):
+            # Build name from given_name + family_name
+            given = decoded.get("given_name", "")
+            family = decoded.get("family_name", "")
+            name = f"{given} {family}".strip()
+        elif decoded.get("preferred_username"):
+            name = decoded.get("preferred_username")
+
+        # 2. Supabase specific claims (fallback)
+        if not name:
+            user_metadata = decoded.get("user_metadata", {})
+            app_metadata = decoded.get("app_metadata", {})
+
+            name = (
+                user_metadata.get("full_name") or
+                user_metadata.get("name") or
+                app_metadata.get("full_name") or
+                app_metadata.get("name") or
+                None
+            )
 
         return {
             "user_id": user_id,
             "email": email,
-            "name": name
+            "name": name,
+            # Additional OIDC fields for reference
+            "preferred_username": decoded.get("preferred_username"),
+            "email_verified": decoded.get("email_verified", False),
         }
 
     except Exception as e:

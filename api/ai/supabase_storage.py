@@ -1,15 +1,20 @@
 """
-Supabase Storage & Database Utility
+Storage & Authentication Utility
 
 This module handles:
-1. MCP servers from PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
-2. Skills sync from Supabase Storage bucket
-3. Plugins sync from Supabase Storage bucket
-4. Hash-based sync to avoid unnecessary downloads
-5. User workspace management
+1. OIDC JWT token verification (primary auth method)
+2. MCP servers from PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
+3. Skills sync from Supabase Storage bucket
+4. Plugins sync from Supabase Storage bucket
+5. Hash-based sync to avoid unnecessary downloads
+6. User workspace management
 
 NOTE: MCP servers are now stored in PostgreSQL, NOT object storage.
 Use get_user_mcp_servers() to load MCP servers from database.
+
+AUTHENTICATION:
+- Primary: OIDC (Keycloak, Auth0, Okta, etc.) - requires OIDC_ISSUER env var
+- Deprecated: Supabase Auth (kept for migration period only)
 """
 
 import os
@@ -18,6 +23,7 @@ import logging
 import zipfile
 import shutil
 import hashlib
+import uuid
 from pathlib import Path
 from typing import Dict, Optional, Any, List
 from supabase import create_client, Client
@@ -26,6 +32,40 @@ from database_util import execute_query
 from config import config
 
 logger = logging.getLogger(__name__)
+
+# OIDC namespace for generating deterministic UUIDs from OIDC subject IDs
+# Must match Go API's oidcNamespace for consistency
+OIDC_UUID_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # DNS namespace
+
+
+def oidc_sub_to_uuid(sub: str) -> str:
+    """
+    Convert an OIDC subject ID to a deterministic UUID.
+
+    This ensures the same OIDC user always gets the same UUID in our database.
+    Uses UUID v5 (SHA-1 based) for deterministic generation.
+
+    Must match Go API's oidcSubToUUID function for consistency.
+
+    Args:
+        sub: OIDC subject identifier (from 'sub' claim)
+
+    Returns:
+        UUID string
+
+    Example:
+        >>> oidc_sub_to_uuid("google-oauth2|123456")
+        "a1b2c3d4-e5f6-5789-0abc-def012345678"
+    """
+    # If it's already a valid UUID, return as-is
+    try:
+        uuid.UUID(sub)
+        return sub
+    except (ValueError, TypeError):
+        pass
+
+    # Generate UUID v5 from OIDC subject (deterministic)
+    return str(uuid.uuid5(OIDC_UUID_NAMESPACE, sub))
 
 MCP_FILE_NAME = ".mcp.json"
 CLAUDE_SKILLS_DIR = ".claude/skills"  # Skills location in both bucket and workspace
@@ -196,14 +236,21 @@ def load_config_from_file(user_id: str) -> Optional[Dict[str, Any]]:
 
 def extract_user_id_from_token(auth_token: str) -> Optional[str]:
     """
-    Extract and VERIFY user ID from Supabase JWT token.
+    Extract and VERIFY user ID from JWT token.
 
-    SECURITY: This function verifies JWT signature using either:
-    - ES256/RS256: JWKS public key from Supabase (new default)
-    - HS256: JWT secret (legacy fallback)
+    Primary: OIDC (Keycloak, Auth0, Okta, etc.) - REQUIRED
+    Deprecated: Supabase Auth (for migration period only)
+
+    SECURITY: This function verifies JWT signature using:
+    - OIDC: RS256/RS384/RS512 with JWKS public key (primary)
+    - Supabase: Deprecated fallback for migration period
+
+    The returned user_id is a UUID:
+    - If OIDC 'sub' claim is already a UUID, it's returned as-is
+    - Otherwise, OIDC 'sub' is converted to UUID v5 (deterministic)
 
     Args:
-        auth_token: JWT token from Supabase Auth
+        auth_token: JWT token from OIDC provider
 
     Returns:
         User ID (UUID string) or None if verification fails
@@ -219,12 +266,50 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         # Remove 'Bearer ' prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
+        # OIDC Authentication (Primary - Required)
+        if config.oidc_issuer:
+            from oidc_auth import extract_user_id_from_oidc_token
+            oidc_sub = extract_user_id_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
+            if oidc_sub:
+                # Convert OIDC subject to UUID for database compatibility
+                user_id = oidc_sub_to_uuid(oidc_sub)
+                logger.debug(f"✅ Verified OIDC token: sub={oidc_sub} -> uuid={user_id}")
+                return user_id
+            else:
+                logger.warning("⚠️ OIDC token verification failed")
+                return None
+
+        # No OIDC issuer configured - check for Supabase fallback (deprecated)
+        if config.supabase_url or config.supabase_jwt_secret:
+            logger.warning("⚠️ Using deprecated Supabase auth fallback. Please configure OIDC_ISSUER.")
+            return _extract_user_id_from_supabase_token(token)
+
+        # No auth provider configured
+        logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+        return None
+
+    except Exception as e:
+        logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}: {e}")
+        return None
+
+
+def _extract_user_id_from_supabase_token(token: str) -> Optional[str]:
+    """
+    Extract user ID from Supabase JWT token (deprecated, fallback only).
+
+    Args:
+        token: JWT token string (without Bearer prefix)
+
+    Returns:
+        User ID or None
+    """
+    try:
         # Decode header to check algorithm
         header = jwt.get_unverified_header(token)
         alg = header.get("alg", "HS256")
         kid = header.get("kid")
 
-        logger.debug(f"Token algorithm: {alg}, kid: {kid}")
+        logger.debug(f"Supabase token algorithm: {alg}, kid: {kid}")
 
         # For ES256/RS256 (asymmetric), use JWKS public key verification
         if alg in ["ES256", "RS256"] and kid and config.supabase_url:
@@ -243,30 +328,30 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
                 }
             )
         else:
-            logger.warning(f"⚠️ Cannot verify token: alg={alg}, has_secret={bool(config.supabase_jwt_secret)}, has_url={bool(config.supabase_url)}")
+            logger.warning(f"⚠️ Cannot verify Supabase token: alg={alg}, has_secret={bool(config.supabase_jwt_secret)}, has_url={bool(config.supabase_url)}")
             return None
 
         # Extract user ID from 'sub' claim
         user_id = decoded.get("sub")
 
         if user_id:
-            logger.debug(f"✅ Verified token for user_id: {user_id}")
+            logger.debug(f"✅ Verified Supabase token for user_id: {user_id}")
             return user_id
         else:
-            logger.warning("⚠️ Token does not contain 'sub' claim")
+            logger.warning("⚠️ Supabase token does not contain 'sub' claim")
             return None
 
     except jwt.ExpiredSignatureError:
-        logger.warning("⚠️ Token has expired")
+        logger.warning("⚠️ Supabase token has expired")
         return None
     except jwt.InvalidSignatureError:
-        logger.warning("🚨 Invalid token signature - possible forgery attempt!")
+        logger.warning("🚨 Invalid Supabase token signature - possible forgery attempt!")
         return None
     except jwt.DecodeError as e:
-        logger.warning(f"⚠️ Failed to decode JWT token: {type(e).__name__}")
+        logger.warning(f"⚠️ Failed to decode Supabase JWT token: {type(e).__name__}")
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}: {e}")
+        logger.error(f"❌ Unexpected error verifying Supabase token: {type(e).__name__}: {e}")
         return None
 
 
@@ -579,6 +664,119 @@ def get_user_id_from_token(auth_token: str) -> Optional[str]:
         User ID or None
     """
     return extract_user_id_from_token(auth_token)
+
+
+def get_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
+    """
+    Get full user info from OIDC or Supabase JWT token.
+
+    This function first verifies the token, then extracts user info.
+    Primary: OIDC providers (Keycloak, Auth0, Okta, etc.)
+    Deprecated: Supabase Auth (for migration period only)
+
+    Args:
+        auth_token: JWT token (with or without Bearer prefix)
+
+    Returns:
+        User info dictionary or None if verification fails:
+        {
+            "id": "user-uuid",           # UUID (converted from OIDC sub if needed)
+            "oidc_sub": "original-sub",  # Original OIDC subject for reference
+            "email": "user@example.com",
+            "name": "John Doe",
+            "email_verified": True,
+            "preferred_username": "johndoe"
+        }
+
+    Example:
+        user_info = get_user_info_from_token(auth_token)
+        if user_info:
+            print(f"Welcome {user_info['name']}")
+    """
+    if not auth_token:
+        logger.warning("⚠️ No auth token provided")
+        return None
+
+    try:
+        # Remove Bearer prefix if present
+        token = auth_token.replace("Bearer ", "").strip()
+
+        # OIDC Authentication (Primary - Required)
+        if config.oidc_issuer:
+            from oidc_auth import get_user_info_from_oidc_token
+            user_info = get_user_info_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
+            if user_info:
+                # Convert OIDC subject to UUID for database compatibility
+                oidc_sub = user_info.get("id")
+                if oidc_sub:
+                    user_info["oidc_sub"] = oidc_sub  # Keep original for reference
+                    user_info["id"] = oidc_sub_to_uuid(oidc_sub)  # Convert to UUID
+                logger.debug(f"✅ Got user info from OIDC token: {user_info.get('id')}")
+                return user_info
+            else:
+                logger.warning("⚠️ OIDC token verification failed")
+                return None
+
+        # No OIDC issuer configured - check for Supabase fallback (deprecated)
+        if config.supabase_url or config.supabase_jwt_secret:
+            logger.warning("⚠️ Using deprecated Supabase auth fallback. Please configure OIDC_ISSUER.")
+            return _get_user_info_from_supabase_token(token)
+
+        # No auth provider configured
+        logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+        return None
+
+    except Exception as e:
+        logger.error(f"❌ Unexpected error getting user info: {type(e).__name__}: {e}")
+        return None
+
+
+def _get_user_info_from_supabase_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Extract user info from Supabase JWT token (deprecated, fallback only).
+
+    Args:
+        token: JWT token string (without Bearer prefix)
+
+    Returns:
+        User info dictionary or None
+    """
+    try:
+        # First verify the token
+        user_id = _extract_user_id_from_supabase_token(token)
+        if not user_id:
+            return None
+
+        # Decode without verification (we just verified above)
+        decoded = jwt.decode(token, options={"verify_signature": False})
+
+        # Extract user info
+        user_metadata = decoded.get("user_metadata", {})
+        app_metadata = decoded.get("app_metadata", {})
+
+        # Build name from various sources
+        name = (
+            user_metadata.get("full_name") or
+            user_metadata.get("name") or
+            app_metadata.get("full_name") or
+            app_metadata.get("name") or
+            decoded.get("email", "").split("@")[0]  # Use email prefix as fallback
+        )
+
+        user_info = {
+            "id": user_id,
+            "email": decoded.get("email"),
+            "name": name,
+            "email_verified": decoded.get("email_verified", False),
+            "preferred_username": user_metadata.get("preferred_username"),
+        }
+
+        logger.debug(f"✅ Got user info from Supabase token: {user_id}")
+        return user_info
+
+    except Exception as e:
+        logger.error(f"❌ Error extracting user info from Supabase token: {e}")
+        return None
 
 
 def load_user_plugins(user_id: str) -> List[Dict[str, str]]:

@@ -12,7 +12,7 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 
-CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";
+-- CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";
 
 
 
@@ -23,21 +23,21 @@ COMMENT ON SCHEMA "public" IS 'All performance indexes have been dropped - only 
 
 
 
-CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
+-- CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
 
 
 
 
 
 
-CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
+-- CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
 
 
 
 
 
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
+-- CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 
 
 
@@ -52,13 +52,13 @@ CREATE EXTENSION IF NOT EXISTS "pgmq" WITH SCHEMA "pgmq";
 
 
 
-CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
+-- CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
 
 
 
 
 
-
+CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
@@ -66,7 +66,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
-CREATE EXTENSION IF NOT EXISTS "vector" WITH SCHEMA "extensions";
+-- CREATE EXTENSION IF NOT EXISTS "vector" WITH SCHEMA "extensions";
 
 
 
@@ -1615,16 +1615,16 @@ ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
 
 
 
-ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
+-- ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
 
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";
-GRANT USAGE ON SCHEMA "public" TO "anon";
-GRANT USAGE ON SCHEMA "public" TO "authenticated";
-GRANT USAGE ON SCHEMA "public" TO "service_role";
+-- GRANT USAGE ON SCHEMA "public" TO "anon";
+-- GRANT USAGE ON SCHEMA "public" TO "authenticated";
+-- GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
@@ -2120,111 +2120,111 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "anon";
+-- GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."create_schedule_override"("p_original_schedule_id" "uuid", "p_override_user_id" "text", "p_override_reason" "text", "p_created_by" "text") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "anon";
-GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "authenticated";
-GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "anon";
+-- GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."generate_rotation_schedules"("rotation_cycle_id_param" "uuid", "weeks_ahead_param" integer) TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "anon";
+-- GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."get_current_oncall_user"("p_group_id" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "anon";
+-- GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."get_current_rotation_member"("p_rotation_cycle_id" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "anon";
+-- GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."get_integration_health_status"("integration_uuid" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "anon";
-GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "authenticated";
-GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "anon";
+-- GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."get_upcoming_oncall_schedules"("p_group_id" "uuid", "p_days" integer) TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."set_incident_assigned_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_alerts_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_escalation_policies_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_groups_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_incidents_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_integration_heartbeat"("integration_uuid" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_notification_configs_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_oncall_schedules_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_rotation_cycles_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_services_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "anon";
-GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "service_role";
+-- GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "anon";
+-- GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "authenticated";
+-- GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "service_role";
 
 
 
@@ -2255,165 +2255,165 @@ GRANT ALL ON FUNCTION "public"."update_users_updated_at"() TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."alert_escalations" TO "anon";
-GRANT ALL ON TABLE "public"."alert_escalations" TO "authenticated";
-GRANT ALL ON TABLE "public"."alert_escalations" TO "service_role";
+-- GRANT ALL ON TABLE "public"."alert_escalations" TO "anon";
+-- GRANT ALL ON TABLE "public"."alert_escalations" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."alert_escalations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."alert_routing_tables" TO "anon";
-GRANT ALL ON TABLE "public"."alert_routing_tables" TO "authenticated";
-GRANT ALL ON TABLE "public"."alert_routing_tables" TO "service_role";
+-- GRANT ALL ON TABLE "public"."alert_routing_tables" TO "anon";
+-- GRANT ALL ON TABLE "public"."alert_routing_tables" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."alert_routing_tables" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."alerts" TO "anon";
-GRANT ALL ON TABLE "public"."alerts" TO "authenticated";
-GRANT ALL ON TABLE "public"."alerts" TO "service_role";
+-- GRANT ALL ON TABLE "public"."alerts" TO "anon";
+-- GRANT ALL ON TABLE "public"."alerts" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."alerts" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."schedule_overrides" TO "anon";
-GRANT ALL ON TABLE "public"."schedule_overrides" TO "authenticated";
-GRANT ALL ON TABLE "public"."schedule_overrides" TO "service_role";
+-- GRANT ALL ON TABLE "public"."schedule_overrides" TO "anon";
+-- GRANT ALL ON TABLE "public"."schedule_overrides" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."schedule_overrides" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."shifts" TO "anon";
-GRANT ALL ON TABLE "public"."shifts" TO "authenticated";
-GRANT ALL ON TABLE "public"."shifts" TO "service_role";
+-- GRANT ALL ON TABLE "public"."shifts" TO "anon";
+-- GRANT ALL ON TABLE "public"."shifts" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."shifts" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."users" TO "anon";
-GRANT ALL ON TABLE "public"."users" TO "authenticated";
-GRANT ALL ON TABLE "public"."users" TO "service_role";
+-- GRANT ALL ON TABLE "public"."users" TO "anon";
+-- GRANT ALL ON TABLE "public"."users" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."users" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."effective_schedules" TO "anon";
-GRANT ALL ON TABLE "public"."effective_schedules" TO "authenticated";
-GRANT ALL ON TABLE "public"."effective_schedules" TO "service_role";
+-- GRANT ALL ON TABLE "public"."effective_schedules" TO "anon";
+-- GRANT ALL ON TABLE "public"."effective_schedules" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."effective_schedules" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."escalation_levels" TO "anon";
-GRANT ALL ON TABLE "public"."escalation_levels" TO "authenticated";
-GRANT ALL ON TABLE "public"."escalation_levels" TO "service_role";
+-- GRANT ALL ON TABLE "public"."escalation_levels" TO "anon";
+-- GRANT ALL ON TABLE "public"."escalation_levels" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."escalation_levels" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."escalation_policies" TO "anon";
-GRANT ALL ON TABLE "public"."escalation_policies" TO "authenticated";
-GRANT ALL ON TABLE "public"."escalation_policies" TO "service_role";
+-- GRANT ALL ON TABLE "public"."escalation_policies" TO "anon";
+-- GRANT ALL ON TABLE "public"."escalation_policies" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."escalation_policies" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."escalation_rules" TO "anon";
-GRANT ALL ON TABLE "public"."escalation_rules" TO "authenticated";
-GRANT ALL ON TABLE "public"."escalation_rules" TO "service_role";
+-- GRANT ALL ON TABLE "public"."escalation_rules" TO "anon";
+-- GRANT ALL ON TABLE "public"."escalation_rules" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."escalation_rules" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."escalation_targets" TO "anon";
-GRANT ALL ON TABLE "public"."escalation_targets" TO "authenticated";
-GRANT ALL ON TABLE "public"."escalation_targets" TO "service_role";
+-- GRANT ALL ON TABLE "public"."escalation_targets" TO "anon";
+-- GRANT ALL ON TABLE "public"."escalation_targets" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."escalation_targets" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."group_members" TO "anon";
-GRANT ALL ON TABLE "public"."group_members" TO "authenticated";
-GRANT ALL ON TABLE "public"."group_members" TO "service_role";
+-- GRANT ALL ON TABLE "public"."group_members" TO "anon";
+-- GRANT ALL ON TABLE "public"."group_members" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."group_members" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."groups" TO "anon";
-GRANT ALL ON TABLE "public"."groups" TO "authenticated";
-GRANT ALL ON TABLE "public"."groups" TO "service_role";
+-- GRANT ALL ON TABLE "public"."groups" TO "anon";
+-- GRANT ALL ON TABLE "public"."groups" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."groups" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."incident_events" TO "anon";
-GRANT ALL ON TABLE "public"."incident_events" TO "authenticated";
-GRANT ALL ON TABLE "public"."incident_events" TO "service_role";
+-- GRANT ALL ON TABLE "public"."incident_events" TO "anon";
+-- GRANT ALL ON TABLE "public"."incident_events" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."incident_events" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."incidents" TO "anon";
-GRANT ALL ON TABLE "public"."incidents" TO "authenticated";
-GRANT ALL ON TABLE "public"."incidents" TO "service_role";
+-- GRANT ALL ON TABLE "public"."incidents" TO "anon";
+-- GRANT ALL ON TABLE "public"."incidents" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."incidents" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."integrations" TO "anon";
-GRANT ALL ON TABLE "public"."integrations" TO "authenticated";
-GRANT ALL ON TABLE "public"."integrations" TO "service_role";
+-- GRANT ALL ON TABLE "public"."integrations" TO "anon";
+-- GRANT ALL ON TABLE "public"."integrations" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."integrations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."notification_logs" TO "anon";
-GRANT ALL ON TABLE "public"."notification_logs" TO "authenticated";
-GRANT ALL ON TABLE "public"."notification_logs" TO "service_role";
+-- GRANT ALL ON TABLE "public"."notification_logs" TO "anon";
+-- GRANT ALL ON TABLE "public"."notification_logs" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."notification_logs" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."raw_alerts" TO "anon";
-GRANT ALL ON TABLE "public"."raw_alerts" TO "authenticated";
-GRANT ALL ON TABLE "public"."raw_alerts" TO "service_role";
+-- GRANT ALL ON TABLE "public"."raw_alerts" TO "anon";
+-- GRANT ALL ON TABLE "public"."raw_alerts" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."raw_alerts" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."rotation_cycles" TO "anon";
-GRANT ALL ON TABLE "public"."rotation_cycles" TO "authenticated";
-GRANT ALL ON TABLE "public"."rotation_cycles" TO "service_role";
+-- GRANT ALL ON TABLE "public"."rotation_cycles" TO "anon";
+-- GRANT ALL ON TABLE "public"."rotation_cycles" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."rotation_cycles" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."schedulers" TO "anon";
-GRANT ALL ON TABLE "public"."schedulers" TO "authenticated";
-GRANT ALL ON TABLE "public"."schedulers" TO "service_role";
+-- GRANT ALL ON TABLE "public"."schedulers" TO "anon";
+-- GRANT ALL ON TABLE "public"."schedulers" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."schedulers" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."schema_migrations" TO "anon";
-GRANT ALL ON TABLE "public"."schema_migrations" TO "authenticated";
-GRANT ALL ON TABLE "public"."schema_migrations" TO "service_role";
+-- GRANT ALL ON TABLE "public"."schema_migrations" TO "anon";
+-- GRANT ALL ON TABLE "public"."schema_migrations" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."schema_migrations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."service_checks" TO "anon";
-GRANT ALL ON TABLE "public"."service_checks" TO "authenticated";
-GRANT ALL ON TABLE "public"."service_checks" TO "service_role";
+-- GRANT ALL ON TABLE "public"."service_checks" TO "anon";
+-- GRANT ALL ON TABLE "public"."service_checks" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."service_checks" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."service_incidents" TO "anon";
-GRANT ALL ON TABLE "public"."service_incidents" TO "authenticated";
-GRANT ALL ON TABLE "public"."service_incidents" TO "service_role";
+-- GRANT ALL ON TABLE "public"."service_incidents" TO "anon";
+-- GRANT ALL ON TABLE "public"."service_incidents" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."service_incidents" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."service_integrations" TO "anon";
-GRANT ALL ON TABLE "public"."service_integrations" TO "authenticated";
-GRANT ALL ON TABLE "public"."service_integrations" TO "service_role";
+-- GRANT ALL ON TABLE "public"."service_integrations" TO "anon";
+-- GRANT ALL ON TABLE "public"."service_integrations" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."service_integrations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."services" TO "anon";
-GRANT ALL ON TABLE "public"."services" TO "authenticated";
-GRANT ALL ON TABLE "public"."services" TO "service_role";
+-- GRANT ALL ON TABLE "public"."services" TO "anon";
+-- GRANT ALL ON TABLE "public"."services" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."services" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."uptime_stats" TO "anon";
-GRANT ALL ON TABLE "public"."uptime_stats" TO "authenticated";
-GRANT ALL ON TABLE "public"."uptime_stats" TO "service_role";
+-- GRANT ALL ON TABLE "public"."uptime_stats" TO "anon";
+-- GRANT ALL ON TABLE "public"."uptime_stats" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."uptime_stats" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."user_notification_configs" TO "anon";
-GRANT ALL ON TABLE "public"."user_notification_configs" TO "authenticated";
-GRANT ALL ON TABLE "public"."user_notification_configs" TO "service_role";
+-- GRANT ALL ON TABLE "public"."user_notification_configs" TO "anon";
+-- GRANT ALL ON TABLE "public"."user_notification_configs" TO "authenticated";
+-- GRANT ALL ON TABLE "public"."user_notification_configs" TO "service_role";
 
 
 
@@ -2424,9 +2424,9 @@ GRANT ALL ON TABLE "public"."user_notification_configs" TO "service_role";
 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
 
 
 
@@ -2434,9 +2434,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQ
 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
 
 
 
@@ -2444,9 +2444,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUN
 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
 
 
 

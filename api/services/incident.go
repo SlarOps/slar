@@ -208,7 +208,20 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 					AND m.resource_id = i.project_id
 				)
 				OR
-				-- Scope B: Inherited access (org member + project is "Open")
+				-- Scope B1: Org owner/admin ALWAYS have access to all projects in the org
+				-- (regardless of whether project has explicit members)
+				(
+					i.project_id IS NOT NULL
+					AND EXISTS (
+						SELECT 1 FROM memberships m
+						WHERE m.user_id = $1
+						AND m.resource_type = 'org'
+						AND m.resource_id = $2
+						AND m.role IN ('owner', 'admin')
+					)
+				)
+				OR
+				-- Scope B2: Org member/viewer inherit only if project is "Open"
 				-- Project is "Open" = no explicit project members exist
 				(
 					i.project_id IS NOT NULL
@@ -217,6 +230,7 @@ func (s *IncidentService) ListIncidents(filters map[string]interface{}) ([]db.In
 						WHERE m.user_id = $1
 						AND m.resource_type = 'org'
 						AND m.resource_id = $2
+						AND m.role IN ('member', 'viewer')
 					)
 					AND NOT EXISTS (
 						SELECT 1 FROM memberships pm

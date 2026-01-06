@@ -244,6 +244,9 @@ func TestSimpleAuthorizer_GetProjectRole(t *testing.T) {
 	authz := NewSimpleAuthorizer(db)
 	ctx := context.Background()
 
+	// The optimized GetProjectRole uses a single CTE query that returns role and is_inherited
+	// This test validates the expected behavior based on the CTE query results
+
 	tests := []struct {
 		name      string
 		userID    string
@@ -256,70 +259,47 @@ func TestSimpleAuthorizer_GetProjectRole(t *testing.T) {
 			userID:    "user-1",
 			projectID: "proj-1",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// CTE query returns explicit role (is_inherited = false)
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-1", "proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+					WillReturnRows(sqlmock.NewRows([]string{"role", "is_inherited"}).AddRow("admin", false))
 			},
 			want: RoleAdmin,
 		},
 		{
-			name:      "inherits from org owner - no explicit project members",
+			name:      "inherits from org owner - maps to admin",
 			userID:    "user-2",
 			projectID: "proj-1",
 			mockFunc: func() {
-				// No explicit project membership
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// CTE query returns inherited role from org owner (is_inherited = true)
+				// Owner role gets mapped to admin for projects
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-2", "proj-1").
-					WillReturnError(sql.ErrNoRows)
-				// Get project's org
-				mock.ExpectQuery("SELECT organization_id FROM projects").
-					WithArgs("proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-				// Check if project has explicit members
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs("proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-				// Get org role
-				mock.ExpectQuery("SELECT role FROM memberships").
-					WithArgs("user-2", "org-1").
-					WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("owner"))
+					WillReturnRows(sqlmock.NewRows([]string{"role", "is_inherited"}).AddRow("owner", true))
 			},
-			want: RoleAdmin, // owner -> admin
+			want: RoleAdmin, // owner -> admin via MapOrgRoleToProjectRole
 		},
 		{
-			name:      "inherits from org member - no explicit project members",
+			name:      "inherits from org member",
 			userID:    "user-3",
 			projectID: "proj-1",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// CTE query returns inherited role from org member (is_inherited = true)
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-3", "proj-1").
-					WillReturnError(sql.ErrNoRows)
-				mock.ExpectQuery("SELECT organization_id FROM projects").
-					WithArgs("proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs("proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-				mock.ExpectQuery("SELECT role FROM memberships").
-					WithArgs("user-3", "org-1").
-					WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("member"))
+					WillReturnRows(sqlmock.NewRows([]string{"role", "is_inherited"}).AddRow("member", true))
 			},
 			want: RoleMember,
 		},
 		{
-			name:      "blocked - project has explicit members but user not in list",
+			name:      "no access - user not in project or org",
 			userID:    "user-4",
 			projectID: "proj-2",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// CTE query returns no rows - user has no access
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-4", "proj-2").
 					WillReturnError(sql.ErrNoRows)
-				mock.ExpectQuery("SELECT organization_id FROM projects").
-					WithArgs("proj-2").
-					WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs("proj-2").
-					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 			},
 			want: "", // No access
 		},
@@ -328,11 +308,9 @@ func TestSimpleAuthorizer_GetProjectRole(t *testing.T) {
 			userID:    "user-5",
 			projectID: "proj-999",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// CTE query returns no rows when project doesn't exist
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-5", "proj-999").
-					WillReturnError(sql.ErrNoRows)
-				mock.ExpectQuery("SELECT organization_id FROM projects").
-					WithArgs("proj-999").
 					WillReturnError(sql.ErrNoRows)
 			},
 			want: "",
@@ -392,9 +370,10 @@ func TestSimpleAuthorizer_Check(t *testing.T) {
 			resourceType: ResourceProject,
 			resourceID:   "proj-1",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT role FROM memberships").
+				// Uses optimized CTE query for project role
+				mock.ExpectQuery("WITH project_info AS").
 					WithArgs("user-1", "proj-1").
-					WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+					WillReturnRows(sqlmock.NewRows([]string{"role", "is_inherited"}).AddRow("admin", false))
 			},
 			want: true,
 		},

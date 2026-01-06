@@ -60,7 +60,7 @@ export default function OnboardingPage() {
 
         if (orgs.length > 0) {
           // User already has orgs, redirect to dashboard
-          router.push('/dashboard');
+          router.push('/incidents');
         }
       } catch (err) {
         // No orgs or error - stay on onboarding
@@ -151,7 +151,7 @@ export default function OnboardingPage() {
   };
 
   const handleFinish = () => {
-    router.push('/dashboard');
+    router.push('/incidents');
   };
 
   if (authLoading) {

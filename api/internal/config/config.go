@@ -23,7 +23,11 @@ type Config struct {
 	// Data storage
 	DataDir string `mapstructure:"data_dir"`
 
-	// Supabase
+	// OIDC Authentication
+	OIDCIssuer   string `mapstructure:"oidc_issuer"`
+	OIDCClientID string `mapstructure:"oidc_client_id"`
+
+	// Supabase (Deprecated - for migration period only)
 	SupabaseURL            string `mapstructure:"supabase_url"`
 	MobileSupabaseURL      string `mapstructure:"mobile_supabase_url"`
 	SupabaseAnonKey        string `mapstructure:"supabase_anon_key"`
@@ -98,7 +102,11 @@ func LoadConfig(path string) error {
 	v.BindEnv("redis_url", "REDIS_URL")
 	v.BindEnv("port", "PORT")
 
-	// Bind Supabase Env Vars
+	// Bind OIDC Env Vars
+	v.BindEnv("oidc_issuer", "OIDC_ISSUER")
+	v.BindEnv("oidc_client_id", "OIDC_CLIENT_ID")
+
+	// Bind Supabase Env Vars (Deprecated - for migration period only)
 	v.BindEnv("supabase_url", "SUPABASE_URL")
 	v.BindEnv("mobile_supabase_url", "MOBILE_SUPABASE_URL")
 	v.BindEnv("supabase_anon_key", "SUPABASE_ANON_KEY")
@@ -145,6 +153,11 @@ func LoadConfig(path string) error {
 	setEnvIfEmpty("REDIS_URL", App.RedisURL)
 	setEnvIfEmpty("PORT", App.Port)
 
+	// OIDC
+	setEnvIfEmpty("OIDC_ISSUER", App.OIDCIssuer)
+	setEnvIfEmpty("OIDC_CLIENT_ID", App.OIDCClientID)
+
+	// Supabase (Deprecated - for migration period only)
 	setEnvIfEmpty("SUPABASE_URL", App.SupabaseURL)
 	setEnvIfEmpty("MOBILE_SUPABASE_URL", App.MobileSupabaseURL)
 	setEnvIfEmpty("AGENT_URL", App.AgentURL)

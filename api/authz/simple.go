@@ -85,11 +85,16 @@ func (a *SimpleAuthorizer) CanAccessProject(ctx context.Context, userID, project
 // GetProjectRole returns the user's effective role in a project
 // Optimized: Uses a single query to check explicit membership, org inheritance, and restrictions
 // Previously required 4-5 queries, now reduced to 1
+//
+// Access logic:
+// 1. Explicit project membership → use that role
+// 2. Org owner/admin → always has access (mapped to project admin)
+// 3. Org member → inherit access only if project has no explicit members (is "open")
 func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID string) Role {
 	// Single optimized query that handles all cases:
 	// 1. Check explicit project membership
-	// 2. If no explicit membership, check org membership for inheritance
-	// 3. Only inherit if project has no explicit members (is "open")
+	// 2. Org owner/admin always inherit access (regardless of explicit members)
+	// 3. Org member inherit only if project has no explicit members (is "open")
 	// 4. Returns both role and whether it's inherited for proper role mapping
 	var role sql.NullString
 	var isInherited bool
@@ -111,12 +116,16 @@ func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID
 			WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
 		),
 		inherited_role AS (
-			-- Check org membership for inheritance (only if no explicit project members)
+			-- Check org membership for inheritance
+			-- Org owner/admin always inherit, org member only inherit if no explicit project members
 			SELECT m.role, 1 AS priority, true AS is_inherited FROM memberships m
 			JOIN project_info pi ON m.resource_id = pi.organization_id
 			WHERE m.user_id = $1
 			AND m.resource_type = 'org'
-			AND NOT pi.has_explicit_members
+			AND (
+				m.role IN ('owner', 'admin')  -- Owner/admin always have access
+				OR NOT pi.has_explicit_members  -- Member only if project is "open"
+			)
 		),
 		all_roles AS (
 			SELECT role, priority, is_inherited FROM explicit_role

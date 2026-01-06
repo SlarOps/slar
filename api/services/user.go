@@ -43,7 +43,8 @@ func (s *UserService) ListUsers() ([]db.User, error) {
 
 func (s *UserService) GetUser(id string) (db.User, error) {
 	var u db.User
-	err := s.PG.QueryRow(`SELECT id, provider, provider_id, name, email, COALESCE(phone, '') as phone, role, team, COALESCE(fcm_token, '') as fcm_token, is_active, created_at, updated_at FROM users WHERE provider_id = $1`, id).
+	// Query by id (UUID) - this is called by ensureUserExists with the converted UUID
+	err := s.PG.QueryRow(`SELECT id, provider, provider_id, name, email, COALESCE(phone, '') as phone, role, team, COALESCE(fcm_token, '') as fcm_token, is_active, created_at, updated_at FROM users WHERE id = $1`, id).
 		Scan(&u.ID, &u.Provider, &u.ProviderID, &u.Name, &u.Email, &u.Phone, &u.Role, &u.Team, &u.FCMToken, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
@@ -228,11 +229,12 @@ func (s *UserService) CreateUserRecord(user db.User) error {
 	}
 
 	_, err := s.PG.Exec(`
-		INSERT INTO users (id, provider, provider_id, name, email, phone, role, team, fcm_token, is_active, created_at, updated_at) 
+		INSERT INTO users (id, provider, provider_id, name, email, phone, role, team, fcm_token, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT (provider_id) DO UPDATE SET
+		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			email = EXCLUDED.email,
+			provider_id = EXCLUDED.provider_id,
 			updated_at = EXCLUDED.updated_at`,
 		user.ID, user.Provider, user.ProviderID, user.Name, user.Email, user.Phone, user.Role, user.Team,
 		user.FCMToken, user.IsActive, user.CreatedAt, user.UpdatedAt)

@@ -5,7 +5,7 @@
 -- Installed plugins table
 CREATE TABLE IF NOT EXISTS public.installed_plugins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
 
     -- Plugin identification
     plugin_name TEXT NOT NULL,
@@ -54,32 +54,11 @@ CREATE TRIGGER trigger_installed_plugins_last_updated
     FOR EACH ROW
     EXECUTE FUNCTION update_installed_plugins_last_updated();
 
--- RLS Policies
-ALTER TABLE public.installed_plugins ENABLE ROW LEVEL SECURITY;
+-- NOTE: RLS disabled - authorization handled at application level (Go/Python API)
+-- ALTER TABLE public.installed_plugins ENABLE ROW LEVEL SECURITY;
 
--- Users can view their own installed plugins
-CREATE POLICY "Users can view own installed plugins"
-    ON public.installed_plugins
-    FOR SELECT
-    USING (auth.uid() = user_id);
-
--- Users can insert their own installed plugins
-CREATE POLICY "Users can insert own installed plugins"
-    ON public.installed_plugins
-    FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
-
--- Users can update their own installed plugins
-CREATE POLICY "Users can update own installed plugins"
-    ON public.installed_plugins
-    FOR UPDATE
-    USING (auth.uid() = user_id);
-
--- Users can delete their own installed plugins
-CREATE POLICY "Users can delete own installed plugins"
-    ON public.installed_plugins
-    FOR DELETE
-    USING (auth.uid() = user_id);
+-- RLS Policies removed - using OIDC auth, not Supabase auth
+-- Authorization is enforced by API via user_id filtering
 
 -- View for easier querying with marketplace info
 CREATE OR REPLACE VIEW public.installed_plugins_with_marketplace AS
@@ -90,9 +69,6 @@ SELECT
     m.status as marketplace_status
 FROM public.installed_plugins ip
 LEFT JOIN public.marketplaces m ON ip.marketplace_id = m.id;
-
--- Grant access to view
-GRANT SELECT ON public.installed_plugins_with_marketplace TO authenticated;
 
 -- Comment
 COMMENT ON TABLE public.installed_plugins IS 'Stores installed plugin metadata for fast queries. Replaces .claude/plugins/installed_plugins.json';

@@ -5,7 +5,7 @@
 -- Marketplaces table
 CREATE TABLE IF NOT EXISTS public.marketplaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
 
     -- Marketplace identification
     name TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS public.marketplaces (
     zip_size BIGINT, -- Size in bytes
 
     -- Status
-    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'syncing', 'error')),
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'syncing', 'error', 'deleting')),
     last_synced_at TIMESTAMPTZ,
     sync_error TEXT,
 
@@ -57,32 +57,11 @@ CREATE TRIGGER trigger_marketplaces_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_marketplaces_updated_at();
 
--- RLS Policies
-ALTER TABLE public.marketplaces ENABLE ROW LEVEL SECURITY;
+-- NOTE: RLS disabled - authorization handled at application level (Go API)
+-- ALTER TABLE public.marketplaces ENABLE ROW LEVEL SECURITY;
 
--- Users can view their own marketplaces
-CREATE POLICY "Users can view own marketplaces"
-    ON public.marketplaces
-    FOR SELECT
-    USING (auth.uid() = user_id);
-
--- Users can insert their own marketplaces
-CREATE POLICY "Users can insert own marketplaces"
-    ON public.marketplaces
-    FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
-
--- Users can update their own marketplaces
-CREATE POLICY "Users can update own marketplaces"
-    ON public.marketplaces
-    FOR UPDATE
-    USING (auth.uid() = user_id);
-
--- Users can delete their own marketplaces
-CREATE POLICY "Users can delete own marketplaces"
-    ON public.marketplaces
-    FOR DELETE
-    USING (auth.uid() = user_id);
+-- RLS Policies removed - using OIDC auth, not Supabase auth
+-- Authorization is enforced by Go API via user_id filtering
 
 -- Comment
 COMMENT ON TABLE public.marketplaces IS 'Stores marketplace metadata for fast queries. Plugin files are stored in S3.';

@@ -71,7 +71,11 @@ class Config:
         self.port: str = "8002"
         self.redis_url: Optional[str] = None
 
-        # Supabase
+        # OIDC Authentication
+        self.oidc_issuer: Optional[str] = None
+        self.oidc_client_id: Optional[str] = None
+
+        # Supabase (Deprecated - for migration period only)
         self.supabase_url: Optional[str] = None
         self.supabase_anon_key: Optional[str] = None
         self.supabase_service_role_key: Optional[str] = None
@@ -89,6 +93,17 @@ class Config:
 
     def _find_config_file(self) -> Optional[Path]:
         """Find config file in search paths"""
+        # Check SLAR_CONFIG_PATH env var first (explicit config path)
+        env_config_path = os.getenv("SLAR_CONFIG_PATH")
+        if env_config_path:
+            config_path = Path(env_config_path)
+            if config_path.exists():
+                logger.info(f"✅ Found config file from SLAR_CONFIG_PATH: {config_path}")
+                return config_path
+            else:
+                logger.warning(f"⚠️  SLAR_CONFIG_PATH set but file not found: {env_config_path}")
+
+        # Default search paths
         search_paths = [
             Path(__file__).parent.parent / "config" / "dev.config.yaml",  # api/config/dev.config.yaml
             Path(__file__).parent.parent / "cmd" / "server" / "dev.config.yaml",  # Legacy
@@ -123,7 +138,11 @@ class Config:
         self.port = os.getenv("AI_PORT") or os.getenv("PORT") or config_dict.get("port", "8002")
         self.redis_url = os.getenv("REDIS_URL") or config_dict.get("redis_url")
 
-        # Supabase
+        # OIDC Authentication
+        self.oidc_issuer = os.getenv("OIDC_ISSUER") or config_dict.get("oidc_issuer")
+        self.oidc_client_id = os.getenv("OIDC_CLIENT_ID") or config_dict.get("oidc_client_id")
+
+        # Supabase (Deprecated - for migration period only)
         self.supabase_url = os.getenv("SUPABASE_URL") or config_dict.get("supabase_url")
         self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY") or config_dict.get("supabase_anon_key")
         self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or config_dict.get("supabase_service_role_key")
@@ -146,9 +165,18 @@ class Config:
         logger.info(f"  • Database: {'✅' if self.database_url else '❌'}")
         logger.info(f"  • Port: {self.port}")
         logger.info(f"  • Redis: {'✅' if self.redis_url else '❌'}")
-        logger.info(f"  • Supabase: {'✅' if self.supabase_url else '❌'}")
+        logger.info(f"  • OIDC: {'✅' if self.oidc_issuer else '❌'} ({self.oidc_issuer or 'not configured'})")
+        logger.info(f"  • Supabase (deprecated): {'✅' if self.supabase_url else '❌'}")
         logger.info(f"  • Anthropic API: {'✅' if self.anthropic_api_key else '❌'}")
         logger.info(f"  • AI Analytics: enabled={self.ai_analytics.enabled}, model={self.ai_analytics.model}")
+
+        # Warn if OIDC is not configured (required for production)
+        if not self.oidc_issuer:
+            logger.warning("⚠️  OIDC_ISSUER not configured - authentication will fail!")
+            logger.warning("   Set OIDC_ISSUER environment variable to your OIDC provider URL")
+            logger.warning("   Example: OIDC_ISSUER=https://auth.your-domain.com")
+            if self.supabase_url or self.supabase_jwt_secret:
+                logger.warning("   (Supabase auth is deprecated and will be removed)")
 
 
 # Global singleton instance

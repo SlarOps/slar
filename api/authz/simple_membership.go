@@ -82,7 +82,7 @@ func (m *SimpleMembershipManager) RemoveMember(ctx context.Context, userID strin
 func (m *SimpleMembershipManager) GetMembership(ctx context.Context, userID string, resourceType ResourceType, resourceID string) (*Membership, error) {
 	var mem Membership
 	err := m.db.QueryRowContext(ctx, `
-		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by, '')
+		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by::text, '')
 		FROM memberships
 		WHERE user_id = $1 AND resource_type = $2 AND resource_id = $3
 	`, userID, resourceType, resourceID).Scan(
@@ -101,7 +101,7 @@ func (m *SimpleMembershipManager) GetMembership(ctx context.Context, userID stri
 // GetUserMemberships returns all memberships for a user
 func (m *SimpleMembershipManager) GetUserMemberships(ctx context.Context, userID string) ([]Membership, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by, '')
+		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by::text, '')
 		FROM memberships
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -117,7 +117,7 @@ func (m *SimpleMembershipManager) GetUserMemberships(ctx context.Context, userID
 // GetUserOrgMemberships returns all organization memberships for a user
 func (m *SimpleMembershipManager) GetUserOrgMemberships(ctx context.Context, userID string) ([]Membership, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by, '')
+		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by::text, '')
 		FROM memberships
 		WHERE user_id = $1 AND resource_type = 'org'
 		ORDER BY created_at DESC
@@ -133,7 +133,7 @@ func (m *SimpleMembershipManager) GetUserOrgMemberships(ctx context.Context, use
 // GetUserProjectMemberships returns all project memberships for a user
 func (m *SimpleMembershipManager) GetUserProjectMemberships(ctx context.Context, userID string) ([]Membership, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by, '')
+		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by::text, '')
 		FROM memberships
 		WHERE user_id = $1 AND resource_type = 'project'
 		ORDER BY created_at DESC
@@ -149,24 +149,27 @@ func (m *SimpleMembershipManager) GetUserProjectMemberships(ctx context.Context,
 // GetResourceMembers returns all members of an organization or project
 func (m *SimpleMembershipManager) GetResourceMembers(ctx context.Context, resourceType ResourceType, resourceID string) ([]Membership, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at, COALESCE(invited_by, '')
-		FROM memberships
-		WHERE resource_type = $1 AND resource_id = $2
+		SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at,
+		       COALESCE(m.invited_by::text, ''),
+		       COALESCE(u.name, ''), COALESCE(u.email, '')
+		FROM memberships m
+		LEFT JOIN users u ON m.user_id = u.id
+		WHERE m.resource_type = $1 AND m.resource_id = $2
 		ORDER BY
-			CASE role
+			CASE m.role
 				WHEN 'owner' THEN 1
 				WHEN 'admin' THEN 2
 				WHEN 'member' THEN 3
 				WHEN 'viewer' THEN 4
 			END,
-			created_at
+			m.created_at
 	`, resourceType, resourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get members: %w", err)
 	}
 	defer rows.Close()
 
-	return scanMemberships(rows)
+	return scanMembershipsWithUser(rows)
 }
 
 // IsMember checks if a user is a member of a resource (any role)
@@ -191,6 +194,19 @@ func scanMemberships(rows *sql.Rows) ([]Membership, error) {
 	for rows.Next() {
 		var mem Membership
 		if err := rows.Scan(&mem.ID, &mem.UserID, &mem.ResourceType, &mem.ResourceID, &mem.Role, &mem.CreatedAt, &mem.UpdatedAt, &mem.InvitedBy); err != nil {
+			return nil, fmt.Errorf("failed to scan membership: %w", err)
+		}
+		memberships = append(memberships, mem)
+	}
+	return memberships, rows.Err()
+}
+
+// Helper function to scan membership rows with user info
+func scanMembershipsWithUser(rows *sql.Rows) ([]Membership, error) {
+	var memberships []Membership
+	for rows.Next() {
+		var mem Membership
+		if err := rows.Scan(&mem.ID, &mem.UserID, &mem.ResourceType, &mem.ResourceID, &mem.Role, &mem.CreatedAt, &mem.UpdatedAt, &mem.InvitedBy, &mem.Name, &mem.Email); err != nil {
 			return nil, fmt.Errorf("failed to scan membership: %w", err)
 		}
 		memberships = append(memberships, mem)

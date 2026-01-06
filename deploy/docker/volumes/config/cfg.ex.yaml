@@ -26,18 +26,26 @@ backend_url: "http://slar-api:8080"
 data_dir: "./data"
 
 # =============================================================================
-# SUPABASE & AUTH
+# OIDC AUTHENTICATION (Required)
+# =============================================================================
+# Any OIDC-compliant provider: Keycloak, Auth0, Okta, Azure AD, Google, etc.
+oidc_issuer: "https://auth.your-domain.com"
+oidc_client_id: "your-client-id"
+oidc_client_secret: "your-client-secret"
+
+# =============================================================================
+# SUPABASE (Deprecated - for migration period only)
 # =============================================================================
 supabase_url: "https://<project>.supabase.co"
 
-# Public key for frontend Supabase client (required)
+# Public key for frontend Supabase client (required for storage)
 supabase_anon_key: "sb_publishable_..."
 
-# Service role key for backend operations (required)
+# Service role key for backend operations (required for storage)
 supabase_service_role_key: "eyJ..."
 
 # JWT secret (optional) - only needed for legacy HS256 tokens
-# New projects use ES256/RS256 with JWKS public key verification
+# New projects use OIDC with JWKS public key verification
 supabase_jwt_secret: ""
 
 # =============================================================================

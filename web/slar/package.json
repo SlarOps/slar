@@ -12,6 +12,7 @@
     "@headlessui/react": "^2.2.7",
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.55.0",
+    "next-auth": "^4.24.13",
     "@types/uuid": "^10.0.0",
     "chart.js": "^4.5.1",
     "highlight.js": "^11.11.1",
