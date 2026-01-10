@@ -12,9 +12,11 @@ SLAR supports authentication via any **OIDC-compliant identity provider**. This 
 ### 1. Configure Environment Variables
 
 ```bash
-# Required
+# Required - Standard OIDC configuration
 OIDC_ISSUER=https://your-identity-provider.com
 OIDC_CLIENT_ID=your-client-id
+
+# Optional - only needed for confidential clients (leave empty for PKCE)
 OIDC_CLIENT_SECRET=your-client-secret
 
 # Required for NextAuth
@@ -22,8 +24,7 @@ NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=$(openssl rand -base64 32)
 
 # Optional
-OIDC_PROVIDER_NAME=SSO           # Button text on login page
-OIDC_SCOPES=openid profile email # Custom scopes if needed
+OIDC_SCOPES=openid profile email  # Custom scopes if needed (default: openid profile email)
 ```
 
 ### 2. Configure Your Identity Provider

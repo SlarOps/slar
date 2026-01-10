@@ -18,6 +18,13 @@ COPY . .
 # This will be set by docker-compose, but good to have a default
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Use placeholder values for NEXT_PUBLIC_* vars - they will be replaced at runtime
+ENV NEXT_PUBLIC_API_URL=__NEXT_PUBLIC_API_URL__
+ENV NEXT_PUBLIC_AI_API_URL=__NEXT_PUBLIC_AI_API_URL__
+ENV NEXT_PUBLIC_AI_WS_URL=__NEXT_PUBLIC_AI_WS_URL__
+ENV NEXT_PUBLIC_SUPABASE_URL=__NEXT_PUBLIC_SUPABASE_URL__
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=__NEXT_PUBLIC_SUPABASE_ANON_KEY__
+
 # Build the application
 RUN npm run build
 
@@ -40,8 +47,13 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Copy entrypoint script for runtime env injection
+COPY --chown=nextjs:nodejs docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 USER nextjs
 
 EXPOSE 3000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

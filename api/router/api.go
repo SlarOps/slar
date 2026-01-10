@@ -112,11 +112,27 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	reportHandler := monitor.NewReportHandler(pg, incidentService)
 
 	// Initialize middleware (OIDC auth - replaces Supabase)
+	// Returns nil if OIDC is not configured
 	oidcAuthMiddleware := handlers.NewOIDCAuthMiddleware(userService, apiKeyService)
+
+	// Middleware that returns 503 when auth is not configured
+	authNotConfiguredMiddleware := func() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.JSON(503, gin.H{
+				"error":   "Authentication not configured",
+				"message": "OIDC provider is not configured. Set OIDC_ISSUER and OIDC_CLIENT_ID environment variables.",
+			})
+			c.Abort()
+		}
+	}
 
 	// PUBLIC ENDPOINTS (no authentication required)
 
 	// Health check and info endpoints
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	r.GET("/env", func(c *gin.Context) {
 		// Set environment header for frontend
 		env := os.Getenv("SLAR_ENV")
@@ -125,13 +141,12 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		}
 		c.Header("x-slar-env", env)
 
-		// Get Supabase config to send to frontend
-		supabaseURL := config.App.SupabaseURL
-		supabaseAnonKey := config.App.SupabaseAnonKey
-
+		// Return OIDC config for frontend authentication
+		// Only standard OIDC fields - provider name not needed (use generic "SSO")
 		c.JSON(200, gin.H{
-			"supabase_url":      supabaseURL,
-			"supabase_anon_key": supabaseAnonKey,
+			"oidc_issuer":    config.App.OIDCIssuer,
+			"oidc_client_id": config.App.OIDCClientID,
+			"api_url":        config.App.BackendURL,
 		})
 	})
 
@@ -158,8 +173,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 
 	// PROTECTED ENDPOINTS (require OIDC authentication)
 	protected := r.Group("/")
-	protected.Use(oidcAuthMiddleware.OIDCAuthMiddleware())
-	// protected.Use()
+	if oidcAuthMiddleware != nil {
+		protected.Use(oidcAuthMiddleware.OIDCAuthMiddleware())
+	} else {
+		protected.Use(authNotConfiguredMiddleware())
+	}
 	{
 		// =====================================================================
 		// ORGANIZATION MANAGEMENT (Defense in Depth)

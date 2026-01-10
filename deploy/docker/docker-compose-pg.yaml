@@ -9,13 +9,15 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: slar
     volumes:
-      # - ./volumes/db/data:/var/lib/postgresql/data
+      - data:/var/lib/postgresql/data
       # Tự động kích hoạt extension khi khởi tạo DB
-      - ./init-db:/docker-entrypoint-initdb.d 
+      # - ./init-db:/docker-entrypoint-initdb.d 
     networks:
       - slar-network
 
 networks:
   slar-network:
+
+volumes:
+  data:

@@ -9,11 +9,15 @@ services:
       - "8002"
     ports:
       - "8002:8002"
+    extra_hosts:
+      # Allow container to reach host's localhost (for Zitadel OIDC)
+      - "localhost:host-gateway"
     volumes:
       - claude_data:/root/.claude
       - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
       - SLAR_CONFIG_PATH=/app/config.yaml
+      - AUTO_MIGRATE=true
     restart: unless-stopped
     networks:
       - slar-network
@@ -25,14 +29,21 @@ services:
     expose:
       - "8080"
     ports:
-      - "8080:8080"
+      - "8081:8080"
+    extra_hosts:
+      # Allow container to reach host's localhost (for Zitadel OIDC)
+      - "localhost:host-gateway"
     volumes:
       - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
       - SLAR_CONFIG_PATH=/app/config.yaml
+      - AUTO_MIGRATE=true
     restart: unless-stopped
     networks:
       - slar-network
+    depends_on:
+      db:
+        condition: service_healthy
 
   slack-worker:
     container_name: slar-slack-worker
@@ -41,6 +52,8 @@ services:
     volumes:
       - ./volumes/config/dev.config.yaml:/app/config.yaml
     restart: unless-stopped
+    environment:
+      - SLAR_CONFIG_PATH=/app/config.yaml
     networks:
       - slar-network
 
@@ -51,10 +64,27 @@ services:
     expose:
       - "3000"
     ports:
-      - "3000:3000"
+      - "3001:3000"
+    extra_hosts:
+      # Allow container to reach host's localhost (where Zitadel port is mapped)
+      - "localhost:host-gateway"
+    environment:
+      # OIDC Authentication - any OIDC-compliant provider (auto-discovery via /.well-known)
+      - OIDC_ISSUER=${OIDC_ISSUER:-http://localhost:8080}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      # NextAuth.js
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3001}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      # API URLs - all through Kong proxy (port 8000)
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      - NEXT_PUBLIC_AI_API_URL=${NEXT_PUBLIC_AI_API_URL:-http://localhost:8000/ai}
+      - NEXT_PUBLIC_AI_WS_URL=${NEXT_PUBLIC_AI_WS_URL:-ws://localhost:8000/ws/chat}
     restart: unless-stopped
     networks:
       - slar-network
+    depends_on:
+      - api
 
   kong:
     container_name: kong
@@ -167,14 +197,13 @@ services:
   login:
     restart: unless-stopped
     image: ghcr.io/zitadel/zitadel-login:latest
-    # If you can't use the network_mode service:zitadel, you can pass the environment variables ZITADEL_API_URL=http://zitadel:8080 and CUSTOM_REQUEST_HEADERS=Host:localhost instead.
+    # Using network_mode: service:zitadel to share network namespace with zitadel
+    # This allows localhost:8080 to correctly point to zitadel container
     environment:
       - ZITADEL_API_URL=http://localhost:8080
       - NEXT_PUBLIC_BASE_PATH=/ui/v2/login
       - ZITADEL_SERVICE_USER_TOKEN_FILE=/current-dir/login-client.pat
-      - ZITADEL_API_URL=http://zitadel:8080
-    networks:
-      - slar-network
+    network_mode: service:zitadel
     user: "0"
     volumes:
       - .:/current-dir:ro
@@ -185,9 +214,9 @@ services:
 
   db:
     restart: unless-stopped
-    image: postgres:17
+    image: quay.io/tembo/pg17-pgmq:latest
     environment:
-      PGUSER: postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: slar
     healthcheck:

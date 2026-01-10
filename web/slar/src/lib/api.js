@@ -55,11 +55,6 @@ class APIClient {
     }
   }
 
-  // Get environment configuration (unified config endpoint)
-  async getEnvConfig() {
-    return this.request('/env', {}, this.baseURL);
-  }
-
   // Dashboard endpoints
   // ReBAC: org_id is required for tenant isolation, project_id is optional
   async getDashboard(filters = {}) {

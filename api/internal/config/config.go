@@ -13,6 +13,8 @@ type Config struct {
 	DatabaseURL       string `mapstructure:"database_url"`
 	RedisURL          string `mapstructure:"redis_url"`
 	Port              string `mapstructure:"port"`
+	AutoMigrate       bool   `mapstructure:"auto_migrate"`
+	MigrateBaseline   bool   `mapstructure:"migrate_baseline"` // Mark all migrations as applied without running them
 	SlarAPIURL        string `mapstructure:"slar_api_url"`
 	SlarWebURL        string `mapstructure:"slar_web_url"`
 	PublicURL         string `mapstructure:"public_url"`
@@ -127,6 +129,12 @@ func LoadConfig(path string) error {
 	// Bind AI Incident Analytics Env Vars
 	v.BindEnv("ai_incident_analytics.enabled", "AI_PILOT_ENABLED")
 	v.BindEnv("ai_incident_analytics.model", "AI_PILOT_MODEL")
+
+	// Bind Auto Migration Env Var
+	v.BindEnv("auto_migrate", "AUTO_MIGRATE")
+	v.SetDefault("auto_migrate", false)
+	v.BindEnv("migrate_baseline", "MIGRATE_BASELINE")
+	v.SetDefault("migrate_baseline", false)
 
 	v.AutomaticEnv()
 

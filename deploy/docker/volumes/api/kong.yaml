@@ -11,10 +11,22 @@ consumers:
 ### API Routes
 ###
 services:
+  ## NextAuth - Must be before api-service to handle /api/auth/*
+  - name: nextauth-service
+    # _comment: 'NextAuth: /api/auth/* -> http://web:3000/api/auth/*'
+    url: http://web:3000/
+    routes:
+      - name: nextauth-routes
+        strip_path: false
+        paths:
+          - /api/auth
+    plugins:
+      - name: cors
+
   ## API Service - Main Backend API
   - name: api-service
-    _comment: 'API: /api/* -> http://api:8080/*'
-    url: http://api:8080/
+    # _comment: 'API: /api/* -> http://api:8081/*'
+    url: http://api:8081/
     routes:
       - name: api-routes
         strip_path: true
@@ -25,7 +37,7 @@ services:
 
   ## AI Service
   - name: ai-service
-    _comment: 'AI: /ai/* -> http://ai:8002/*'
+    # _comment: 'AI: /ai/* -> http://ai:8002/*'
     url: http://ai:8002/
     routes:
       - name: ai-routes
@@ -37,7 +49,7 @@ services:
 
   ## WebSocket for AI Chat
   - name: ai-websocket
-    _comment: 'WebSocket: /ws/chat -> ws://ai:8002/ws/chat'
+    # _comment: 'WebSocket: /ws/chat -> ws://ai:8002/ws/chat'
     url: http://ai:8002
     protocol: ws
     routes:
@@ -50,7 +62,7 @@ services:
   
   ## WebSocket for AI Terminal
   - name: ai-terminal-websocket
-    _comment: 'WebSocket: /ws/terminal?session_id=xxx -> ws://terminal:8003/ws/terminal?session_id=xxx'
+    # _comment: 'WebSocket: /ws/terminal?session_id=xxx -> ws://terminal:8003/ws/terminal?session_id=xxx'
     url: http://terminal:8003
     protocol: ws
     routes:
@@ -63,7 +75,7 @@ services:
 
   ## Web Frontend
   - name: web-service
-    _comment: 'Web: /* -> http://web:3000/*'
+    #_comment: 'Web: /* -> http://web:3000/*'
     url: http://web:3000/
     routes:
       - name: web-routes

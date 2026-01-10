@@ -2,13 +2,13 @@
 
 import { useAuth } from '../../contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from '../../lib/api';
 
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback', '/', '/onboarding', '/shared'];
 
 export default function AuthWrapper({ children }) {
-  const { user, session, loading } = useAuth();
+  const { user, session, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [checkingOnboarding, setCheckingOnboarding] = useState(false);
@@ -20,6 +20,13 @@ export default function AuthWrapper({ children }) {
 
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith('/shared/');
   const isOnboardingPage = pathname === '/onboarding';
+
+  // Handle session invalidation (401 from API)
+  const handleSessionInvalid = useCallback(async () => {
+    console.log('Session invalid (401), signing out...');
+    await signOut();
+    router.push('/login');
+  }, [signOut, router]);
 
   useEffect(() => {
     const checkOnboardingStatus = async () => {
@@ -54,7 +61,13 @@ export default function AuthWrapper({ children }) {
           router.push('/onboarding');
         }
       } catch (err) {
-        // If API fails, still redirect to onboarding (user likely has no orgs)
+        // Check if it's a 401 error (session invalid/expired)
+        if (err.status === 401) {
+          // Session is invalid - sign out and redirect to login
+          await handleSessionInvalid();
+          return;
+        }
+        // For other errors, redirect to onboarding (user likely has no orgs)
         console.log('Onboarding check failed, redirecting to onboarding:', err.message);
         router.push('/onboarding');
       } finally {
@@ -76,7 +89,7 @@ export default function AuthWrapper({ children }) {
         checkOnboardingStatus();
       }
     }
-  }, [user?.id, loading, pathname, router, isPublicRoute, isOnboardingPage]); // Removed session from deps
+  }, [user?.id, loading, pathname, router, isPublicRoute, isOnboardingPage, handleSessionInvalid]); // Removed session from deps
 
   // Show loading spinner while checking authentication or onboarding status
   if (loading || checkingOnboarding) {

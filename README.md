@@ -146,7 +146,7 @@ We are constantly working to make SLAR the most powerful and intuitive on-call m
 - [x] **AI Chat (Chat with Infra)**: Context-aware AI that understands your infrastructure.
 - [x] **Real-time Incident Resolution**: AI-guided troubleshooting and automated suggestions.
 - [x] **Approval Workflows**: Ensure AI-driven actions are approved by human operators.
-- [x] **Zero-Trust Security (E2EE)**: End-to-end encryption for sensitive AI conversations.
+- [x] **Secure Command Channel**: Aplication-layer payload encryption between Mobile App and Agent (independent of TLS)
 - [x] **AI Pilot**: Let the AI handle routine remediation steps autonomously.
 - [x] **Automated Root Cause Analysis**: Instant post-mortems and analysis when an incident occurs.
 

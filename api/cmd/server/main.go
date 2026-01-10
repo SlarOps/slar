@@ -13,6 +13,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/vanchonlee/slar/internal/config"
+	"github.com/vanchonlee/slar/internal/database"
 	"github.com/vanchonlee/slar/router"
 	"github.com/vanchonlee/slar/services"
 	"github.com/vanchonlee/slar/workers"
@@ -60,6 +61,28 @@ func main() {
 	}
 
 	log.Println("Connected to database successfully")
+
+	// Run database migrations
+	migrator := database.NewMigrator(db, database.MigrationConfig{
+		MigrationsFS:  database.MigrationsFS,
+		MigrationsDir: database.MigrationsDir,
+	})
+
+	if config.App.MigrateBaseline {
+		// Baseline mode: mark all migrations as applied without running them
+		// Use this for existing databases that already have the schema
+		log.Println("Running migration baseline (marking all as applied)...")
+		if err := migrator.MarkAllAsApplied(); err != nil {
+			log.Fatalf("Failed to baseline migrations: %v", err)
+		}
+	} else if config.App.AutoMigrate {
+		log.Println("Running database migrations...")
+		if err := migrator.Run(); err != nil {
+			log.Fatalf("Failed to run migrations: %v", err)
+		}
+	} else {
+		log.Println("Auto-migration disabled (set AUTO_MIGRATE=true to enable)")
+	}
 
 	// Initialize Redis connection (optional)
 	var redisClient *redis.Client

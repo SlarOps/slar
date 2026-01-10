@@ -38,20 +38,26 @@ type OIDCAuthMiddleware struct {
 }
 
 // NewOIDCAuthMiddleware creates a new OIDC auth middleware
-// Reads configuration from environment variable OIDC_ISSUER (required)
+// Reads configuration from environment variable OIDC_ISSUER (optional)
+// Returns nil if OIDC is not configured - API will start but protected endpoints will be disabled
 func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *services.APIKeyService) *OIDCAuthMiddleware {
 	oidcIssuer := os.Getenv("OIDC_ISSUER")
 	oidcClientID := os.Getenv("OIDC_CLIENT_ID")
 
 	if oidcIssuer == "" {
-		log.Fatal("Missing OIDC_ISSUER environment variable")
+		log.Println("⚠️  WARNING: OIDC_ISSUER not configured. Protected endpoints will be disabled.")
+		log.Println("   Set OIDC_ISSUER and OIDC_CLIENT_ID to enable authentication.")
+		return nil
 	}
 
 	oidcAuth, err := services.NewOIDCAuthService(oidcIssuer, oidcClientID)
 	if err != nil {
-		log.Printf("Warning: OIDC discovery failed: %v", err)
+		log.Printf("⚠️  WARNING: OIDC discovery failed: %v", err)
+		log.Println("   Protected endpoints will be disabled until OIDC provider is available.")
+		return nil
 	}
 
+	log.Printf("✅ OIDC authentication configured: %s", oidcIssuer)
 	return &OIDCAuthMiddleware{
 		OIDCAuth:      oidcAuth,
 		UserService:   userService,

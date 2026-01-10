@@ -63,16 +63,19 @@ npm run build
 npm start
 ```
 
-### Database (Supabase)
+### Database Migrations
 ```bash
-# Link to Supabase project
-supabase link
+# Migrations are embedded in the API and run automatically on startup
+# Set AUTO_MIGRATE=true to enable (already set in docker-compose.yaml)
 
-# Push migrations
-cd supabase && supabase db push
+# For fresh database:
+AUTO_MIGRATE=true go run cmd/server/main.go
 
-# Generate TypeScript types
-supabase gen types typescript --local > web/slar/src/types/supabase.ts
+# For existing database (mark all migrations as applied without running):
+MIGRATE_BASELINE=true go run cmd/server/main.go
+
+# Migration files location (single source of truth):
+api/internal/database/migrations/
 ```
 
 ### Docker Compose
@@ -153,9 +156,9 @@ SLAR is a multi-service on-call management platform with AI-powered incident res
 - **Workers → Database**: PGMQ (PostgreSQL Message Queue) for async tasks
 
 ### Database Pattern
-- **PostgreSQL** as primary database via Supabase
+- **PostgreSQL** as primary database
 - **PGMQ** extension for message queue (used by escalation worker)
-- **Migrations** in `supabase/migrations/` - use Supabase CLI to apply
+- **Migrations** in `api/internal/database/migrations/` - embedded in API binary, auto-applied on startup with `AUTO_MIGRATE=true`
 - No ORM - uses raw SQL with `database/sql` package in Go
 
 ### Authentication Flow
@@ -288,4 +291,7 @@ Critical environment variables (see `.env.example`):
 - Verify `.air.toml` configuration in `api/` directory
 - Check `tmp/` directory permissions
 
-Database migrations are in the supabase/migrations/ directory
+### "Migration failed"
+- For existing databases, run with `MIGRATE_BASELINE=true` first to mark all migrations as applied
+- Check `schema_migrations` table for applied versions
+- Migration files are in `api/internal/database/migrations/`
