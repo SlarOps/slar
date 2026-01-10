@@ -89,22 +89,34 @@ services:
   kong:
     container_name: kong
     platform: linux/amd64
-    image: kong:2.8.1
+    image: kong:latest
     ports:
       - "8000:8000/tcp"
     volumes:
-      - ./volumes/api/kong.yaml:/home/kong/temp.yml:ro,z
+      - ./volumes/api/kong.yaml:/tmp/kong-template.yml:ro
     environment:
       KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DECLARATIVE_CONFIG: /tmp/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      # Reduce memory usage
+      KONG_NGINX_WORKER_PROCESSES: 1
+      KONG_LUA_SOCKET_POOL_SIZE: 30
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     restart: unless-stopped
     networks:
       - slar-network
-    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+    entrypoint: bash -c 'eval "echo \"$$(cat /tmp/kong-template.yml)\"" > /tmp/kong.yml && /docker-entrypoint.sh kong docker-start'
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   zitadel:
     restart: unless-stopped
