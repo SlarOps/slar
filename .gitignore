@@ -119,6 +119,9 @@ temp/
 # .claude/skills/
 # .claude/plugins/
 
+# User workspaces (contains runtime data, API keys, etc.)
+api/ai/workspaces/
+
 # Cursor IDE chat assets (auto-generated from screenshots)
 assets/
 
