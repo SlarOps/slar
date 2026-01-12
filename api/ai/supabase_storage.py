@@ -4,30 +4,25 @@ Storage & Authentication Utility
 This module handles:
 1. OIDC JWT token verification (primary auth method)
 2. MCP servers from PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
-3. Skills sync from Supabase Storage bucket
-4. Plugins sync from Supabase Storage bucket
-5. Hash-based sync to avoid unnecessary downloads
-6. User workspace management
+3. Skills sync from local workspace
+4. Plugins sync from git repositories
+5. User workspace management
 
-NOTE: MCP servers are now stored in PostgreSQL, NOT object storage.
+NOTE: MCP servers are stored in PostgreSQL, NOT object storage.
 Use get_user_mcp_servers() to load MCP servers from database.
 
 AUTHENTICATION:
-- Primary: OIDC (Keycloak, Auth0, Okta, etc.) - requires OIDC_ISSUER env var
-- Deprecated: Supabase Auth (kept for migration period only)
+- Primary: OIDC (Keycloak, Auth0, Okta, Zitadel, etc.) - requires OIDC_ISSUER env var
 """
 
 import os
 import json
 import logging
-import zipfile
 import shutil
-import hashlib
 import uuid
 from pathlib import Path
 from typing import Dict, Optional, Any, List
-from supabase import create_client, Client
-import jwt
+
 from database_util import execute_query
 from config import config
 
@@ -67,80 +62,13 @@ def oidc_sub_to_uuid(sub: str) -> str:
     # Generate UUID v5 from OIDC subject (deterministic)
     return str(uuid.uuid5(OIDC_UUID_NAMESPACE, sub))
 
+
 MCP_FILE_NAME = ".mcp.json"
-CLAUDE_SKILLS_DIR = ".claude/skills"  # Skills location in both bucket and workspace
-CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in both bucket and workspace
+CLAUDE_SKILLS_DIR = ".claude/skills"  # Skills location in workspace
+CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in workspace
 
 # Workspace configuration
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
-
-def get_supabase_client() -> Client:
-    """
-    Create and return Supabase client with service role key.
-
-    Service role key is needed to bypass RLS policies for downloading
-    user's .mcp.json files.
-
-    Returns:
-        Supabase client instance
-
-    Raises:
-        ValueError: If environment variables are not set
-    """
-    if not config.supabase_url:
-        raise ValueError("SUPABASE_URL environment variable not set")
-
-    if not config.supabase_service_role_key:
-        raise ValueError("SUPABASE_SERVICE_ROLE_KEY environment variable not set")
-
-    return create_client(config.supabase_url, config.supabase_service_role_key)
-
-
-def ensure_user_bucket_exists(user_id: str) -> bool:
-    """
-    Ensure user's storage bucket exists in Supabase Storage.
-    Creates the bucket if it doesn't exist.
-
-    Args:
-        user_id: User's UUID (used as bucket name)
-
-    Returns:
-        True if bucket exists or was created successfully
-    """
-    if not user_id:
-        logger.warning("No user_id provided for bucket check")
-        return False
-
-    try:
-        supabase = get_supabase_client()
-
-        # Try to list buckets and check if user's bucket exists
-        buckets = supabase.storage.list_buckets()
-        bucket_names = [b.name for b in buckets]
-
-        if user_id in bucket_names:
-            logger.debug(f"✅ Bucket already exists: {user_id}")
-            return True
-
-        # Create bucket for user
-        logger.info(f"📦 Creating storage bucket for user: {user_id}")
-        supabase.storage.create_bucket(
-            user_id,
-            options={
-                "public": False,
-                "file_size_limit": 52428800,  # 50MB
-            }
-        )
-        logger.info(f"✅ Created storage bucket: {user_id}")
-        return True
-
-    except Exception as e:
-        # Bucket might already exist (race condition) - that's OK
-        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-            logger.debug(f"Bucket already exists: {user_id}")
-            return True
-        logger.error(f"❌ Failed to ensure bucket exists for {user_id}: {e}")
-        return False
 
 
 def get_user_workspace_path(user_id: str) -> Path:
@@ -174,13 +102,13 @@ def ensure_user_workspace(user_id: str) -> Path:
     return workspace_path
 
 
-def save_config_to_file(user_id: str, config: Dict[str, Any]) -> bool:
+def save_config_to_file(user_id: str, mcp_config: Dict[str, Any]) -> bool:
     """
     Save MCP configuration to file in user's workspace.
 
     Args:
         user_id: User's UUID
-        config: MCP configuration dictionary
+        mcp_config: MCP configuration dictionary
 
     Returns:
         True if saved successfully, False otherwise
@@ -192,7 +120,7 @@ def save_config_to_file(user_id: str, config: Dict[str, Any]) -> bool:
         # Write config to .mcp.json file
         config_file = workspace_path / MCP_FILE_NAME
         with open(config_file, 'w') as f:
-            json.dump(config, f, indent=2)
+            json.dump(mcp_config, f, indent=2)
 
         logger.info(f"💾 Saved config to file: {config_file}")
         return True
@@ -205,9 +133,6 @@ def save_config_to_file(user_id: str, config: Dict[str, Any]) -> bool:
 def load_config_from_file(user_id: str) -> Optional[Dict[str, Any]]:
     """
     Load MCP configuration from file in user's workspace.
-
-    This can be used as fallback if Supabase download fails,
-    or for faster loading if file is recent.
 
     Args:
         user_id: User's UUID
@@ -224,10 +149,10 @@ def load_config_from_file(user_id: str) -> Optional[Dict[str, Any]]:
             return None
 
         with open(config_file, 'r') as f:
-            config = json.load(f)
+            mcp_config = json.load(f)
 
         logger.info(f"📂 Loaded config from file: {config_file}")
-        return config
+        return mcp_config
 
     except Exception as e:
         logger.error(f"❌ Failed to load config from file for user {user_id}: {e}")
@@ -238,12 +163,10 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
     """
     Extract and VERIFY user ID from JWT token.
 
-    Primary: OIDC (Keycloak, Auth0, Okta, etc.) - REQUIRED
-    Deprecated: Supabase Auth (for migration period only)
+    Uses OIDC authentication (Keycloak, Auth0, Okta, Zitadel, etc.)
 
     SECURITY: This function verifies JWT signature using:
-    - OIDC: RS256/RS384/RS512 with JWKS public key (primary)
-    - Supabase: Deprecated fallback for migration period
+    - OIDC: RS256/RS384/RS512 with JWKS public key
 
     The returned user_id is a UUID:
     - If OIDC 'sub' claim is already a UUID, it's returned as-is
@@ -266,243 +189,66 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         # Remove 'Bearer ' prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # OIDC Authentication (Primary - Required)
-        if config.oidc_issuer:
-            from oidc_auth import extract_user_id_from_oidc_token
-            oidc_sub = extract_user_id_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
-            if oidc_sub:
-                # Convert OIDC subject to UUID for database compatibility
-                user_id = oidc_sub_to_uuid(oidc_sub)
-                logger.debug(f"✅ Verified OIDC token: sub={oidc_sub} -> uuid={user_id}")
-                return user_id
-            else:
-                logger.warning("⚠️ OIDC token verification failed")
-                return None
+        # OIDC Authentication (Required)
+        if not config.oidc_issuer:
+            logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+            return None
 
-        # No OIDC issuer configured - check for Supabase fallback (deprecated)
-        if config.supabase_url or config.supabase_jwt_secret:
-            logger.warning("⚠️ Using deprecated Supabase auth fallback. Please configure OIDC_ISSUER.")
-            return _extract_user_id_from_supabase_token(token)
-
-        # No auth provider configured
-        logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
-        return None
+        from oidc_auth import extract_user_id_from_oidc_token
+        oidc_sub = extract_user_id_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
+        if oidc_sub:
+            # Convert OIDC subject to UUID for database compatibility
+            user_id = oidc_sub_to_uuid(oidc_sub)
+            logger.debug(f"✅ Verified OIDC token: sub={oidc_sub} -> uuid={user_id}")
+            return user_id
+        else:
+            logger.warning("⚠️ OIDC token verification failed")
+            return None
 
     except Exception as e:
         logger.error(f"❌ Unexpected error verifying token: {type(e).__name__}: {e}")
         return None
 
 
-def _extract_user_id_from_supabase_token(token: str) -> Optional[str]:
-    """
-    Extract user ID from Supabase JWT token (deprecated, fallback only).
-
-    Args:
-        token: JWT token string (without Bearer prefix)
-
-    Returns:
-        User ID or None
-    """
-    try:
-        # Decode header to check algorithm
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg", "HS256")
-        kid = header.get("kid")
-
-        logger.debug(f"Supabase token algorithm: {alg}, kid: {kid}")
-
-        # For ES256/RS256 (asymmetric), use JWKS public key verification
-        if alg in ["ES256", "RS256"] and kid and config.supabase_url:
-            decoded = _verify_with_jwks(token, alg, kid)
-        # For HS256 (symmetric), use JWT secret
-        elif alg == "HS256" and config.supabase_jwt_secret:
-            decoded = jwt.decode(
-                token,
-                config.supabase_jwt_secret,
-                algorithms=["HS256"],
-                options={
-                    "verify_signature": True,
-                    "verify_exp": True,
-                    "verify_iat": True,
-                    "verify_aud": False,
-                }
-            )
-        else:
-            logger.warning(f"⚠️ Cannot verify Supabase token: alg={alg}, has_secret={bool(config.supabase_jwt_secret)}, has_url={bool(config.supabase_url)}")
-            return None
-
-        # Extract user ID from 'sub' claim
-        user_id = decoded.get("sub")
-
-        if user_id:
-            logger.debug(f"✅ Verified Supabase token for user_id: {user_id}")
-            return user_id
-        else:
-            logger.warning("⚠️ Supabase token does not contain 'sub' claim")
-            return None
-
-    except jwt.ExpiredSignatureError:
-        logger.warning("⚠️ Supabase token has expired")
-        return None
-    except jwt.InvalidSignatureError:
-        logger.warning("🚨 Invalid Supabase token signature - possible forgery attempt!")
-        return None
-    except jwt.DecodeError as e:
-        logger.warning(f"⚠️ Failed to decode Supabase JWT token: {type(e).__name__}")
-        return None
-    except Exception as e:
-        logger.error(f"❌ Unexpected error verifying Supabase token: {type(e).__name__}: {e}")
-        return None
-
-
-# Cache for JWKS keys (10 min TTL per Supabase docs)
-_jwks_cache: Dict[str, Any] = {}
-_jwks_cache_time: float = 0
-JWKS_CACHE_TTL = 600  # 10 minutes
-
-
-def _verify_with_jwks(token: str, alg: str, kid: str) -> Dict[str, Any]:
-    """
-    Verify JWT using JWKS public key from Supabase.
-
-    Args:
-        token: JWT token string
-        alg: Algorithm (ES256 or RS256)
-        kid: Key ID from token header
-
-    Returns:
-        Decoded token payload
-
-    Raises:
-        jwt.InvalidSignatureError: If signature verification fails
-    """
-    import httpx
-    import time
-    from jwt.algorithms import ECAlgorithm, RSAAlgorithm
-
-    global _jwks_cache, _jwks_cache_time
-
-    # Check cache
-    current_time = time.time()
-    if current_time - _jwks_cache_time > JWKS_CACHE_TTL:
-        _jwks_cache = {}
-        _jwks_cache_time = current_time
-
-    # Get public key from cache or fetch from JWKS
-    cache_key = f"{alg}:{kid}"
-    if cache_key not in _jwks_cache:
-        # Fetch JWKS from Supabase
-        jwks_url = f"{config.supabase_url}/auth/v1/.well-known/jwks.json"
-        logger.debug(f"Fetching JWKS from: {jwks_url}")
-
-        response = httpx.get(jwks_url, timeout=10)
-        response.raise_for_status()
-        jwks = response.json()
-
-        # Find key by kid
-        key_data = None
-        for key in jwks.get("keys", []):
-            if key.get("kid") == kid:
-                key_data = key
-                break
-
-        if not key_data:
-            raise jwt.InvalidSignatureError(f"Key ID {kid} not found in JWKS")
-
-        # Convert JWK to public key
-        if alg == "ES256" and key_data.get("kty") == "EC":
-            public_key = ECAlgorithm.from_jwk(key_data)
-        elif alg == "RS256" and key_data.get("kty") == "RSA":
-            public_key = RSAAlgorithm.from_jwk(key_data)
-        else:
-            raise jwt.InvalidSignatureError(f"Unsupported key type: {key_data.get('kty')} for algorithm {alg}")
-
-        _jwks_cache[cache_key] = public_key
-        logger.debug(f"Cached public key for {cache_key}")
-
-    # Verify token with public key
-    return jwt.decode(
-        token,
-        _jwks_cache[cache_key],
-        algorithms=[alg],
-        options={
-            "verify_signature": True,
-            "verify_exp": True,
-            "verify_iat": True,
-            "verify_aud": False,
-        }
-    )
-
-
-def parse_mcp_servers(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def parse_mcp_servers(mcp_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Parse MCP configuration and extract mcpServers.
 
     Args:
-        config: Full MCP configuration dictionary
+        mcp_config: Full MCP configuration dictionary
 
     Returns:
         Dictionary of MCP servers in format expected by ClaudeAgentOptions
         Empty dict if config is None or invalid
-
-    Example:
-        Input:
-            {
-                "mcpServers": {
-                    "context7": {...},
-                    "slar-incident-tools": {...}
-                }
-            }
-
-        Output:
-            {
-                "context7": MCPServer(...),
-                "slar-incident-tools": MCPServer(...)
-            }
     """
-    if not config:
+    if not mcp_config:
         logger.warning("No config provided to parse")
         return {}
 
-    mcp_servers = config.get("mcpServers", {})
+    mcp_servers = mcp_config.get("mcpServers", {})
 
     if not mcp_servers:
         logger.warning("Config does not contain 'mcpServers' field")
         return {}
 
     logger.info(f"📋 Found {len(mcp_servers)} MCP servers in config")
-
-    # TODO: Convert to MCPServer objects if needed
-    # For now, return the raw dictionary
-    # The claude-agent-sdk should handle the conversion
-
     return mcp_servers
 
 
 async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[str, Any]:
     """
-    Get MCP servers configuration from PostgreSQL database (instant, no S3 lag).
+    Get MCP servers configuration from PostgreSQL database (instant, no lag).
 
-    NEW APPROACH (Fast & Reliable):
-    - Reads from PostgreSQL user_mcp_servers table
-    - No S3 download required
-    - Instant access, no lag
-    - Frontend saves directly to PostgreSQL
-    - Supports all three server types: stdio, sse, http
+    Reads from PostgreSQL user_mcp_servers table.
+    Supports all three server types: stdio, sse, http
 
     Args:
-        auth_token: Supabase JWT token (for unsecure flow)
+        auth_token: JWT token (for unsecure flow)
         user_id: User ID directly (for secure/Zero-Trust flow, takes priority)
 
     Returns:
         Dictionary of MCP servers ready to pass to ClaudeAgentOptions
         Empty dict if no servers found (safe for mcp_servers.update())
-
-    Example usage (unsecure flow):
-        user_mcp_servers = await get_user_mcp_servers(auth_token=auth_token)
-
-    Example usage (secure/Zero-Trust flow):
-        user_mcp_servers = await get_user_mcp_servers(user_id=user_id)
 
     Example return format (stdio):
         {
@@ -523,10 +269,8 @@ async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[
         }
     """
     # Priority: direct user_id > extract from auth_token
-    # Secure flow provides user_id directly (from Zero-Trust certificate)
-    # Unsecure flow provides auth_token (JWT)
     effective_user_id = user_id
-    
+
     if not effective_user_id and auth_token:
         effective_user_id = extract_user_id_from_token(auth_token)
 
@@ -583,32 +327,32 @@ async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[
 async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
     """
     Sync MCP configuration from PostgreSQL to local .mcp.json file.
-    
+
     This ensures the local workspace file matches the database state.
     Should be called after any MCP server add/delete operation.
-    
+
     Args:
         user_id: User's UUID
-        
+
     Returns:
         {"success": bool, "message": str, "servers_count": int}
     """
     try:
         from datetime import datetime
-        
+
         # Get all active MCP servers from PostgreSQL using raw SQL
         query = "SELECT * FROM user_mcp_servers WHERE user_id = %s AND status = 'active'"
         results = execute_query(query, (user_id,), fetch="all")
-        
+
         # Convert to .mcp.json format
         mcp_servers = {}
         for server in results or []:
             server_name = server.get("server_name")
             server_type = server.get("server_type", "stdio")
-            
+
             if not server_name:
                 continue
-            
+
             if server_type == "stdio":
                 mcp_servers[server_name] = {
                     "command": server.get("command", ""),
@@ -621,9 +365,9 @@ async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
                     "url": server.get("url", ""),
                     "headers": server.get("headers", {})
                 }
-        
+
         # Build config object
-        config = {
+        mcp_config = {
             "mcpServers": mcp_servers,
             "metadata": {
                 "version": "1.0.0",
@@ -631,18 +375,18 @@ async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
                 "syncedFrom": "postgresql"
             }
         }
-        
+
         # Save to local .mcp.json file
-        save_config_to_file(user_id, config)
-        
+        save_config_to_file(user_id, mcp_config)
+
         logger.info(f"✅ Synced {len(mcp_servers)} MCP servers to local .mcp.json for user {user_id}")
-        
+
         return {
             "success": True,
             "message": f"Synced {len(mcp_servers)} servers to local file",
             "servers_count": len(mcp_servers)
         }
-        
+
     except Exception as e:
         logger.error(f"❌ Failed to sync MCP config to local for user {user_id}: {e}")
         return {
@@ -658,7 +402,7 @@ def get_user_id_from_token(auth_token: str) -> Optional[str]:
     Alias for extract_user_id_from_token for backward compatibility.
 
     Args:
-        auth_token: Supabase JWT token
+        auth_token: JWT token
 
     Returns:
         User ID or None
@@ -668,11 +412,10 @@ def get_user_id_from_token(auth_token: str) -> Optional[str]:
 
 def get_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
     """
-    Get full user info from OIDC or Supabase JWT token.
+    Get full user info from OIDC JWT token.
 
     This function first verifies the token, then extracts user info.
-    Primary: OIDC providers (Keycloak, Auth0, Okta, etc.)
-    Deprecated: Supabase Auth (for migration period only)
+    Uses OIDC providers (Keycloak, Auth0, Okta, Zitadel, etc.)
 
     Args:
         auth_token: JWT token (with or without Bearer prefix)
@@ -687,11 +430,6 @@ def get_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
             "email_verified": True,
             "preferred_username": "johndoe"
         }
-
-    Example:
-        user_info = get_user_info_from_token(auth_token)
-        if user_info:
-            print(f"Welcome {user_info['name']}")
     """
     if not auth_token:
         logger.warning("⚠️ No auth token provided")
@@ -701,81 +439,27 @@ def get_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
         # Remove Bearer prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # OIDC Authentication (Primary - Required)
-        if config.oidc_issuer:
-            from oidc_auth import get_user_info_from_oidc_token
-            user_info = get_user_info_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
-            if user_info:
-                # Convert OIDC subject to UUID for database compatibility
-                oidc_sub = user_info.get("id")
-                if oidc_sub:
-                    user_info["oidc_sub"] = oidc_sub  # Keep original for reference
-                    user_info["id"] = oidc_sub_to_uuid(oidc_sub)  # Convert to UUID
-                logger.debug(f"✅ Got user info from OIDC token: {user_info.get('id')}")
-                return user_info
-            else:
-                logger.warning("⚠️ OIDC token verification failed")
-                return None
+        # OIDC Authentication (Required)
+        if not config.oidc_issuer:
+            logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+            return None
 
-        # No OIDC issuer configured - check for Supabase fallback (deprecated)
-        if config.supabase_url or config.supabase_jwt_secret:
-            logger.warning("⚠️ Using deprecated Supabase auth fallback. Please configure OIDC_ISSUER.")
-            return _get_user_info_from_supabase_token(token)
-
-        # No auth provider configured
-        logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
-        return None
+        from oidc_auth import get_user_info_from_oidc_token
+        user_info = get_user_info_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
+        if user_info:
+            # Convert OIDC subject to UUID for database compatibility
+            oidc_sub = user_info.get("id")
+            if oidc_sub:
+                user_info["oidc_sub"] = oidc_sub  # Keep original for reference
+                user_info["id"] = oidc_sub_to_uuid(oidc_sub)  # Convert to UUID
+            logger.debug(f"✅ Got user info from OIDC token: {user_info.get('id')}")
+            return user_info
+        else:
+            logger.warning("⚠️ OIDC token verification failed")
+            return None
 
     except Exception as e:
         logger.error(f"❌ Unexpected error getting user info: {type(e).__name__}: {e}")
-        return None
-
-
-def _get_user_info_from_supabase_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract user info from Supabase JWT token (deprecated, fallback only).
-
-    Args:
-        token: JWT token string (without Bearer prefix)
-
-    Returns:
-        User info dictionary or None
-    """
-    try:
-        # First verify the token
-        user_id = _extract_user_id_from_supabase_token(token)
-        if not user_id:
-            return None
-
-        # Decode without verification (we just verified above)
-        decoded = jwt.decode(token, options={"verify_signature": False})
-
-        # Extract user info
-        user_metadata = decoded.get("user_metadata", {})
-        app_metadata = decoded.get("app_metadata", {})
-
-        # Build name from various sources
-        name = (
-            user_metadata.get("full_name") or
-            user_metadata.get("name") or
-            app_metadata.get("full_name") or
-            app_metadata.get("name") or
-            decoded.get("email", "").split("@")[0]  # Use email prefix as fallback
-        )
-
-        user_info = {
-            "id": user_id,
-            "email": decoded.get("email"),
-            "name": name,
-            "email_verified": decoded.get("email_verified", False),
-            "preferred_username": user_metadata.get("preferred_username"),
-        }
-
-        logger.debug(f"✅ Got user info from Supabase token: {user_id}")
-        return user_info
-
-    except Exception as e:
-        logger.error(f"❌ Error extracting user info from Supabase token: {e}")
         return None
 
 
@@ -795,13 +479,6 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
             {"type": "local", "path": "/path/to/plugin1"},
             {"type": "local", "path": "/path/to/plugin2"}
         ]
-
-    Example:
-        plugins = load_user_plugins(user_id)
-        options = ClaudeAgentOptions(
-            plugins=plugins,
-            max_turns=3
-        )
     """
     from claude_agent_sdk import SdkPluginConfig
     if not user_id:
@@ -829,7 +506,6 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
                 continue
 
             # Build absolute path from install_path
-            # install_path is relative to workspace root (e.g., ".claude/plugins/marketplaces/anthropics-skills/document-skills/xlsx")
             # We use resolve() and is_relative_to() to satisfy security scans (CodeQL)
             try:
                 plugin_absolute_path = (workspace_path / install_path).resolve()
@@ -847,14 +523,13 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
                 continue
 
             # Add plugin config using SdkPluginConfig
-            # Path should be relative to workspace (install_path), not absolute
             plugin_config = SdkPluginConfig(
                 type="local",
                 path=str(install_path)
             )
             plugin_configs.append(plugin_config)
 
-            logger.debug(f"✅ Loaded plugin: {plugin_name} from {install_path} (path: {install_path})")
+            logger.debug(f"✅ Loaded plugin: {plugin_name} from {install_path}")
 
         logger.info(f"📦 Loaded {len(plugin_configs)} plugins for user {user_id}")
         return plugin_configs
@@ -862,121 +537,6 @@ def load_user_plugins(user_id: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"❌ Failed to load plugins for user {user_id}: {e}")
         return []
-
-
-# ============================================================
-# SKILL STORAGE FUNCTIONS
-# ============================================================
-# All skills are now stored in .claude/skills/ directory in Supabase bucket.
-# This follows the Claude Code workspace structure:
-# user_id/
-#   .mcp.json
-#   .claude/
-#     skills/
-#       skill1.skill
-#       skill2.skill
-#     plugins/
-#       installed_plugins.json
-#       marketplaces/
-# ============================================================
-
-
-async def list_skill_files(user_id: str) -> List[Dict[str, Any]]:
-    """
-    List all skill files in user's Supabase Storage bucket from .claude/skills/.
-
-    Args:
-        user_id: User's UUID (bucket name)
-
-    Returns:
-        List of skill file metadata dictionaries
-
-    Example:
-        [
-            {
-                "name": "my-skill.skill",
-                "id": "abc123",
-                "created_at": "2025-11-03T00:00:00Z",
-                "size": 1024
-            },
-            {
-                "name": "skill-bundle.zip",
-                "id": "def456",
-                "created_at": "2025-11-03T00:00:00Z",
-                "size": 8192
-            }
-        ]
-    """
-    if not user_id:
-        logger.warning("No user_id provided for listing skill files")
-        return []
-
-    try:
-        logger.info(f"📋 Listing skill files from .claude/skills/ for user: {user_id}")
-
-        # Create Supabase client
-        supabase = get_supabase_client()
-
-        # List files in .claude/skills/ directory
-        response = supabase.storage.from_(user_id).list(CLAUDE_SKILLS_DIR, {
-            "limit": 100,
-            "offset": 0,
-            "sortBy": {"column": "created_at", "order": "desc"}
-        })
-
-        if not response:
-            logger.info(f"⚠️  No .claude/skills/ directory found for user: {user_id}")
-            return []
-
-        # Filter only .skill and .zip files
-        skill_files = [
-            file for file in response
-            if file.get("name", "").endswith((".skill", ".zip", ".md"))
-        ]
-
-        logger.info(f"✅ Found {len(skill_files)} skill files in .claude/skills/ for user: {user_id}")
-        return skill_files
-
-    except Exception as e:
-        logger.error(f"❌ Failed to list skill files for user {user_id}: {e}")
-        return []
-
-
-async def download_skill_file(user_id: str, skill_filename: str) -> Optional[bytes]:
-    """
-    Download a single skill file from user's Supabase Storage bucket (.claude/skills/).
-
-    Args:
-        user_id: User's UUID (bucket name)
-        skill_filename: Name of the skill file
-
-    Returns:
-        File content as bytes or None if download fails
-    """
-    if not user_id or not skill_filename:
-        logger.warning("Missing user_id or skill_filename for download")
-        return None
-
-    try:
-        logger.info(f"📥 Downloading skill file from .claude/skills/: {skill_filename} for user: {user_id}")
-
-        # Create Supabase client
-        supabase = get_supabase_client()
-
-        # Download file from .claude/skills/ directory
-        skill_path = f"{CLAUDE_SKILLS_DIR}/{skill_filename}"
-        response = supabase.storage.from_(user_id).download(skill_path)
-
-        if not response:
-            logger.warning(f"⚠️  Skill file not found: {skill_path}")
-            return None
-
-        logger.info(f"✅ Successfully downloaded skill file: {skill_filename}")
-        return response
-
-    except Exception as e:
-        logger.error(f"❌ Failed to download skill file {skill_filename} for user {user_id}: {e}")
-        return None
 
 
 def ensure_claude_skills_dir(workspace_path: Path) -> Path:
@@ -1008,259 +568,14 @@ def ensure_claude_skills_dir(workspace_path: Path) -> Path:
     return claude_skills_path
 
 
-def extract_skill_file(skill_content: bytes, skill_filename: str, target_dir: Path) -> bool:
-    """
-    Extract or copy skill file to target directory.
-
-    - .zip files: Extract contents (handles nested .claude directories)
-    - .skill files: Copy directly
-
-    Args:
-        skill_content: File content as bytes
-        skill_filename: Name of the skill file
-        target_dir: Target directory (.claude/skills)
-
-    Returns:
-        True if extraction/copy succeeded, False otherwise
-    """
-    try:
-        if skill_filename.endswith(".zip"):
-            # Extract zip file
-            logger.info(f"📦 Extracting zip file: {skill_filename}")
-
-            # Create a temporary extraction directory
-            temp_extract_dir = target_dir / f"_temp_extract_{skill_filename.replace('.zip', '')}"
-            temp_extract_dir.mkdir(parents=True, exist_ok=True)
-
-            # Write zip to temp file
-            temp_zip = target_dir / f"_temp_{skill_filename}"
-            temp_zip.write_bytes(skill_content)
-
-            # Extract all files to temp directory
-            with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
-                zip_ref.extractall(temp_extract_dir)
-
-            # Check if extracted content has a nested .claude directory
-            nested_claude = temp_extract_dir / ".claude"
-            if nested_claude.exists() and nested_claude.is_dir():
-                logger.info(f"📁 Found nested .claude directory, moving contents up")
-
-                # Move contents from nested .claude to target_dir
-                # Check for both commands/ and skills/ subdirectories
-                nested_commands = nested_claude / "commands"
-                nested_skills = nested_claude / "skills"
-
-                if nested_commands.exists():
-                    # Move commands to parent .claude/commands (not .claude/skills/commands)
-                    parent_claude = target_dir.parent
-                    target_commands = parent_claude / "commands"
-                    target_commands.mkdir(parents=True, exist_ok=True)
-
-                    for item in nested_commands.iterdir():
-                        dest = target_commands / item.name
-                        if dest.exists():
-                            if dest.is_dir():
-                                shutil.rmtree(dest)
-                            else:
-                                dest.unlink()
-                        shutil.move(str(item), str(dest))
-                    logger.info(f"✅ Moved commands to {target_commands}")
-
-                if nested_skills.exists():
-                    # Move skills to target_dir (which is .claude/skills)
-                    for item in nested_skills.iterdir():
-                        dest = target_dir / item.name
-                        if dest.exists():
-                            if dest.is_dir():
-                                shutil.rmtree(dest)
-                            else:
-                                dest.unlink()
-                        shutil.move(str(item), str(dest))
-                    logger.info(f"✅ Moved skills to {target_dir}")
-            else:
-                # No nested .claude, move all contents directly
-                for item in temp_extract_dir.iterdir():
-                    if item.name.startswith("_temp"):
-                        continue
-                    dest = target_dir / item.name
-                    if dest.exists():
-                        if dest.is_dir():
-                            shutil.rmtree(dest)
-                        else:
-                            dest.unlink()
-                    shutil.move(str(item), str(dest))
-
-            # Clean up temp files
-            try:
-                if temp_zip.exists():
-                    temp_zip.unlink()
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to delete temp zip: {e}")
-
-            try:
-                if temp_extract_dir.exists():
-                    shutil.rmtree(temp_extract_dir)
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to delete temp extract dir: {e}")
-
-            logger.info(f"✅ Extracted {skill_filename} to {target_dir}")
-
-        elif skill_filename.endswith(".skill"):
-            # Copy .skill file directly
-            logger.info(f"📄 Copying skill file: {skill_filename}")
-
-            skill_file = target_dir / skill_filename
-            skill_file.write_bytes(skill_content)
-
-            logger.info(f"✅ Copied {skill_filename} to {target_dir}")
-
-        else:
-            logger.warning(f"⚠️  Unknown skill file format: {skill_filename}")
-            return False
-
-        return True
-
-    except zipfile.BadZipFile as e:
-        logger.error(f"❌ Invalid zip file {skill_filename}: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Failed to extract/copy skill file {skill_filename}: {e}")
-        return False
-
-
-async def sync_user_skills(auth_token: str) -> Dict[str, Any]:
-    """
-    Sync all skill files from Supabase Storage (.claude/skills/) to user's workspace.
-
-    This is the main function to sync skills. It handles:
-    1. Extract user_id from auth token
-    2. List all skill files in .claude/skills/ directory in Supabase bucket
-    3. Download each skill file from .claude/skills/
-    4. Extract/copy to workspace .claude/skills/ directory
-
-    Note: Skills are stored in .claude/skills/ in both bucket and workspace.
-    This follows Claude Code workspace structure.
-
-    Args:
-        auth_token: Supabase JWT token
-
-    Returns:
-        Dictionary with sync results:
-        {
-            "success": True/False,
-            "synced_count": 3,
-            "failed_count": 0,
-            "skills": ["skill1.skill", "skill2.skill", "bundle.zip"],
-            "errors": []
-        }
-
-    Example usage:
-        result = await sync_user_skills(auth_token)
-        if result["success"]:
-            logger.info(f"Synced {result['synced_count']} skills")
-    """
-    # Extract user ID from token
-    user_id = extract_user_id_from_token(auth_token)
-
-    if not user_id:
-        logger.warning("Could not extract user_id from auth token for skill sync")
-        return {
-            "success": False,
-            "synced_count": 0,
-            "failed_count": 0,
-            "skills": [],
-            "errors": ["Invalid auth token"]
-        }
-
-    logger.info(f"🔄 Starting skill sync for user: {user_id}")
-
-    # Get user's workspace path
-    workspace_path = get_user_workspace_path(user_id)
-
-    # Ensure .claude/skills directory exists
-    skills_dir = ensure_claude_skills_dir(workspace_path)
-
-    # List all skill files in Supabase Storage
-    skill_files = await list_skill_files(user_id)
-
-    if not skill_files:
-        logger.info(f"ℹ️  No skill files found for user: {user_id}")
-        return {
-            "success": True,
-            "synced_count": 0,
-            "failed_count": 0,
-            "skills": [],
-            "errors": []
-        }
-
-    # Download and extract each skill file
-    synced_count = 0
-    failed_count = 0
-    synced_skills = []
-    errors = []
-
-    for skill_file in skill_files:
-        skill_filename = skill_file.get("name", "")
-        if not skill_filename:
-            continue
-
-        try:
-            # Download skill file
-            skill_content = await download_skill_file(user_id, skill_filename)
-
-            if not skill_content:
-                failed_count += 1
-                errors.append(f"Failed to download: {skill_filename}")
-                continue
-
-            # Extract/copy to workspace
-            if extract_skill_file(skill_content, skill_filename, skills_dir):
-                synced_count += 1
-                synced_skills.append(skill_filename)
-                logger.info(f"✅ Synced skill: {skill_filename}")
-            else:
-                failed_count += 1
-                errors.append(f"Failed to extract: {skill_filename}")
-
-        except Exception as e:
-            failed_count += 1
-            error_msg = f"Error syncing {skill_filename}: {str(e)}"
-            errors.append(error_msg)
-            logger.error(f"❌ {error_msg}")
-
-    logger.info(
-        f"🏁 Skill sync completed for user {user_id}: "
-        f"{synced_count} synced, {failed_count} failed"
-    )
-
-    return {
-        "success": failed_count == 0,
-        "synced_count": synced_count,
-        "failed_count": failed_count,
-        "skills": synced_skills,
-        "errors": errors
-    }
-
-
-# ============================================================
-# PLUGIN VERIFICATION (Git-based approach)
-# ============================================================
-# NOTE: Plugins are now cloned via git, not synced from bucket.
-# Use unzip_installed_plugins() to verify plugins exist in workspace.
-
-
 async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
     """
     Verify installed plugins exist in workspace, auto-cloning marketplaces if missing.
 
-    Git-based approach (v2):
+    Git-based approach:
     - Plugin files are already in workspace from git clone
     - If marketplace not cloned, automatically clone it from repository_url
     - Re-verify plugin after cloning
-
-    Legacy ZIP support:
-    - Falls back to ZIP extraction if marketplace has zip_path
-    - For backwards compatibility with old installations
 
     Args:
         user_id: User's UUID
@@ -1451,7 +766,6 @@ async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[s
         # Determine target path based on scope
         if scope == "user":
             # User memory: ~/.claude/CLAUDE.md (global)
-            import os
             home_dir = Path(os.path.expanduser("~"))
             claude_dir = home_dir / ".claude"
             claude_dir.mkdir(parents=True, exist_ok=True)
@@ -1500,10 +814,7 @@ async def get_user_allowed_tools(user_id: str) -> List[str]:
         return []
 
     try:
-        from database_util import execute_query
-
         # Query user_allowed_tools table using raw SQL
-        # Schema: id, user_id, tool_name, created_at
         result = execute_query(
             "SELECT tool_name FROM user_allowed_tools WHERE user_id = %s",
             (user_id,),
@@ -1537,10 +848,7 @@ async def add_user_allowed_tool(user_id: str, tool_name: str) -> bool:
         return False
 
     try:
-        from database_util import execute_query
-
         # Use UPSERT pattern - INSERT with ON CONFLICT DO NOTHING
-        # This handles both new inserts and existing records in one query
         execute_query(
             """
             INSERT INTO user_allowed_tools (user_id, tool_name)
@@ -1574,8 +882,6 @@ async def delete_user_allowed_tool(user_id: str, tool_name: str) -> bool:
         return False
 
     try:
-        from database_util import execute_query
-
         # Delete record using raw SQL
         execute_query(
             "DELETE FROM user_allowed_tools WHERE user_id = %s AND tool_name = %s",
@@ -1590,3 +896,57 @@ async def delete_user_allowed_tool(user_id: str, tool_name: str) -> bool:
         logger.error(f"❌ Failed to remove allowed tool {tool_name} for user {user_id}: {e}")
         return False
 
+
+async def sync_user_skills(auth_token: str) -> Dict[str, Any]:
+    """
+    Sync user skills from git repositories to workspace.
+
+    Skills are now managed via git repositories (marketplaces), not Supabase Storage.
+    This function ensures the .claude/skills directory exists.
+
+    Args:
+        auth_token: JWT token
+
+    Returns:
+        Dictionary with sync results
+    """
+    user_id = extract_user_id_from_token(auth_token)
+    if not user_id:
+        return {
+            "success": False,
+            "synced_count": 0,
+            "failed_count": 0,
+            "skills": [],
+            "errors": ["Invalid auth token"]
+        }
+
+    try:
+        workspace_path = get_user_workspace_path(user_id)
+        skills_dir = ensure_claude_skills_dir(workspace_path)
+
+        # List existing skills in workspace
+        skill_files = []
+        if skills_dir.exists():
+            for item in skills_dir.iterdir():
+                if item.suffix in [".skill", ".md"]:
+                    skill_files.append(item.name)
+
+        logger.info(f"✅ Skills directory ready: {skills_dir} ({len(skill_files)} skills)")
+
+        return {
+            "success": True,
+            "synced_count": len(skill_files),
+            "failed_count": 0,
+            "skills": skill_files,
+            "errors": []
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to sync skills for user: {e}")
+        return {
+            "success": False,
+            "synced_count": 0,
+            "failed_count": 1,
+            "skills": [],
+            "errors": [str(e)]
+        }

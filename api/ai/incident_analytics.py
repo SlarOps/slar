@@ -168,21 +168,14 @@ Keep it practical and action-oriented for on-call engineers.
         # Load configuration dynamically from environment
         config = self.get_analytics_config()
 
-        # 🔑 Set Auth Context BEFORE creating MCP server
-        api_key = os.getenv("SLAR_API_KEY", "")
-        if api_key:
-            set_auth_token(api_key)
-            logger.info(f"🔑 Auth token set for incident analysis (len={len(api_key)})")
-        else:
-            logger.warning("⚠️ SLAR_API_KEY not set - API calls may fail")
-
         # Set tenant context from incident data (ReBAC tenant isolation)
+        # Note: incident_tools now uses direct DB access, no API key needed
         org_id = incident.get("organization_id") or incident.get("org_id")
         if org_id:
             set_org_id(org_id)
             logger.info(f"🏢 Org context set for incident analysis: {org_id}")
         else:
-            logger.warning("⚠️ No organization_id in incident data - API calls may fail")
+            logger.warning("⚠️ No organization_id in incident data - queries may return no results")
 
         project_id = incident.get("project_id")
         if project_id:
@@ -202,7 +195,7 @@ Keep it practical and action-oriented for on-call engineers.
             setting_sources=config["setting_sources"],
             allowed_tools=config["allowed_tools"],
             mcp_servers=mcp_servers,
-            max_turns=10
+            max_turns=5
         )
 
         full_response = ""

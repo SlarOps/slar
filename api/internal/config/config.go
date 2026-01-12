@@ -10,9 +10,8 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	DatabaseURL       string `mapstructure:"database_url"`
-	RedisURL          string `mapstructure:"redis_url"`
-	Port              string `mapstructure:"port"`
+	DatabaseURL string `mapstructure:"database_url"`
+	Port        string `mapstructure:"port"`
 	AutoMigrate       bool   `mapstructure:"auto_migrate"`
 	MigrateBaseline   bool   `mapstructure:"migrate_baseline"` // Mark all migrations as applied without running them
 	SlarAPIURL        string `mapstructure:"slar_api_url"`
@@ -101,7 +100,6 @@ func LoadConfig(path string) error {
 	// Bind standard environment variables (Docker/deploy compatibility)
 	// This allows using standard keys like DATABASE_URL instead of SLAR_DATABASE_URL
 	v.BindEnv("database_url", "DATABASE_URL")
-	v.BindEnv("redis_url", "REDIS_URL")
 	v.BindEnv("port", "PORT")
 
 	// Bind OIDC Env Vars
@@ -158,7 +156,6 @@ func LoadConfig(path string) error {
 	// Many existing services (FCM, Router, etc.) still use os.Getenv()
 	// This ensures they work without refactoring the entire codebase immediately.
 	setEnvIfEmpty("DATABASE_URL", App.DatabaseURL)
-	setEnvIfEmpty("REDIS_URL", App.RedisURL)
 	setEnvIfEmpty("PORT", App.Port)
 
 	// OIDC

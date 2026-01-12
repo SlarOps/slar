@@ -1,122 +1,18 @@
 'use client';
 
-import { useState } from 'react';
-import { Tab } from '@headlessui/react';
-import {
-  CubeIcon,
-  ShoppingBagIcon,
-  ServerIcon,
-  DocumentTextIcon,
-  CheckCircleIcon,
-  GlobeAltIcon
-} from '@heroicons/react/24/outline';
-
-import InstalledPluginsTab from '../../components/integrations/InstalledPluginsTab';
-import MarketplaceTab from '../../components/integrations/MarketplaceTab';
-import MCPServersTab from '../../components/integrations/MCPServersTab';
-import LocalMemoryTab from '../../components/integrations/LocalMemoryTab';
-import UserMemoryTab from '../../components/integrations/UserMemoryTab';
-import AllowedToolsTab from '../../components/integrations/AllowedToolsTab';
-
-const tabs = [
-  {
-    name: 'Installed',
-    icon: CubeIcon,
-    component: InstalledPluginsTab,
-    description: 'Manage your installed plugins and extensions'
-  },
-  {
-    name: 'Marketplace',
-    icon: ShoppingBagIcon,
-    component: MarketplaceTab,
-    description: 'Browse and install plugins from the marketplace'
-  },
-  {
-    name: 'MCP Servers',
-    icon: ServerIcon,
-    component: MCPServersTab,
-    description: 'Configure Model Context Protocol servers'
-  },
-  {
-    name: 'Allowed Tools',
-    icon: CheckCircleIcon,
-    component: AllowedToolsTab,
-    description: 'Manage tools that are always allowed to run'
-  },
-  {
-    name: 'Local Memory',
-    icon: DocumentTextIcon,
-    component: LocalMemoryTab,
-    description: 'Manage project-specific AI agent memory (./.claude/CLAUDE.md)'
-  },
-  {
-    name: 'User Memory',
-    icon: GlobeAltIcon,
-    component: UserMemoryTab,
-    description: 'Manage global user memory shared across all projects (~/.claude/CLAUDE.md)'
-  },
-];
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function IntegrationsPage() {
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace('/agent-config/installed');
+  }, [router]);
 
   return (
-    <div className="min-h-screen dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
-        {/* Header */}
-        <div className="mb-4 sm:mb-6 md:mb-8">
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">
-            Integrations
-          </h1>
-          <p className="mt-1 sm:mt-2 text-xs sm:text-sm text-gray-600 dark:text-gray-400">
-            Manage plugins, extensions, and MCP server configurations
-          </p>
-        </div>
-
-        {/* Tabs */}
-        <Tab.Group selectedIndex={selectedIndex} onChange={setSelectedIndex}>
-          <Tab.List className="flex flex-wrap sm:flex-nowrap gap-1 sm:space-x-1 rounded-lg sm:rounded-xl bg-white dark:bg-gray-800 p-1 mb-4 sm:mb-6 border border-gray-200 dark:border-gray-700 overflow-x-auto">
-            {tabs.map((tab) => (
-              <Tab
-                key={tab.name}
-                className={({ selected }) =>
-                  `flex-1 min-w-[calc(50%-0.25rem)] sm:min-w-0 rounded-md sm:rounded-lg py-2 sm:py-3 px-2 sm:px-4 text-xs sm:text-sm font-medium leading-5 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800
-                  ${selected
-                    ? 'bg-blue-600 text-white shadow'
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  }`
-                }
-              >
-                {({ selected }) => (
-                  <div className="flex items-center justify-center gap-1 sm:gap-2">
-                    <tab.icon className={`h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0 ${selected ? 'text-white' : ''}`} />
-                    <span className="truncate">{tab.name}</span>
-                  </div>
-                )}
-              </Tab>
-            ))}
-          </Tab.List>
-
-          <Tab.Panels>
-            {tabs.map((tab, idx) => (
-              <Tab.Panel
-                key={tab.name}
-                className="rounded-lg sm:rounded-xl focus:outline-none"
-              >
-                {/* Tab Description */}
-                <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <p className="text-xs sm:text-sm text-blue-800 dark:text-blue-200">
-                    {tab.description}
-                  </p>
-                </div>
-
-                {/* Tab Content */}
-                <tab.component />
-              </Tab.Panel>
-            ))}
-          </Tab.Panels>
-        </Tab.Group>
-      </div>
+    <div className="min-h-screen dark:bg-gray-900 flex items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
     </div>
   );
 }

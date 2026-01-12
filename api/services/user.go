@@ -7,18 +7,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
 )
 
 type UserService struct {
-	PG    *sql.DB
-	Redis *redis.Client
+	PG *sql.DB
 }
 
-func NewUserService(pg *sql.DB, redis *redis.Client) *UserService {
-	return &UserService{PG: pg, Redis: redis}
+func NewUserService(pg *sql.DB) *UserService {
+	return &UserService{PG: pg}
 }
 
 // User CRUD operations

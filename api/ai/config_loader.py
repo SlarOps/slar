@@ -46,16 +46,6 @@ def load_config():
         env_mapping = {
             "database_url": "DATABASE_URL",
 
-            # API Connections
-            "slar_api_url": "SLAR_API_URL",
-            "backend_url": "SLAR_BACKEND_URL",
-            "slar_api_key": "SLAR_API_KEY",
-
-            # Supabase
-            "supabase_url": "SUPABASE_URL",
-            "supabase_service_role_key": "SUPABASE_SERVICE_ROLE_KEY",
-            "supabase_jwt_secret": "SUPABASE_JWT_SECRET",
-
             # AI Agent Security
             "ai_allowed_origins": "AI_ALLOWED_ORIGINS",
             "ai_rate_limit": "AI_RATE_LIMIT",

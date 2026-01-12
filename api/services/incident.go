@@ -1,21 +1,18 @@
 package services
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
 )
 
 type IncidentService struct {
 	PG                 *sql.DB
-	Redis              *redis.Client
 	FCMService         *FCMService
 	NotificationWorker NotificationSender // Interface for sending notifications
 }
@@ -28,10 +25,9 @@ type NotificationSender interface {
 	SendIncidentResolvedNotification(userID, incidentID string) error
 }
 
-func NewIncidentService(pg *sql.DB, redis *redis.Client, fcmService *FCMService) *IncidentService {
+func NewIncidentService(pg *sql.DB, fcmService *FCMService) *IncidentService {
 	return &IncidentService{
 		PG:         pg,
-		Redis:      redis,
 		FCMService: fcmService,
 	}
 }
@@ -690,7 +686,7 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 
 	// Auto-assign to current on-call user if not assigned
 	if incident.AssignedTo == "" {
-		userService := NewUserService(s.PG, s.Redis)
+		userService := NewUserService(s.PG)
 		onCallUser, err := userService.GetCurrentOnCallUser()
 		if err == nil {
 			incident.AssignedTo = onCallUser.ID
@@ -861,12 +857,6 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 		}
 
 		s.createIncidentEvent(incident.ID, db.IncidentEventAssigned, eventData, "")
-	}
-
-	// Add to Redis queue for processing
-	if s.Redis != nil {
-		b, _ := json.Marshal(incident)
-		s.Redis.RPush(context.Background(), "incidents:queue", b)
 	}
 
 	// Send incident assignment notification

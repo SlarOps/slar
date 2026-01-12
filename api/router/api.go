@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 
 	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/handlers"
@@ -15,7 +14,7 @@ import (
 	"github.com/vanchonlee/slar/services"
 )
 
-func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
+func NewGinRouter(pg *sql.DB) *gin.Engine {
 	r := gin.Default()
 
 	// Add CORS middleware
@@ -36,18 +35,18 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	// Initialize services
 	fcmService, _ := services.NewFCMService(pg)
 	slackService, _ := services.NewSlackService(pg)
-	alertService := services.NewAlertService(pg, redis, fcmService)
-	incidentService := services.NewIncidentService(pg, redis, fcmService) // NEW: Incident service
+	alertService := services.NewAlertService(pg, fcmService)
+	incidentService := services.NewIncidentService(pg, fcmService)
 
 	// Create lightweight notification sender for API server
 	notificationSender := services.NewLightweightNotificationSender(pg)
 	incidentService.SetNotificationWorker(notificationSender)
-	userService := services.NewUserService(pg, redis)
-	uptimeService := services.NewUptimeService(pg, redis)
+	userService := services.NewUserService(pg)
+	uptimeService := services.NewUptimeService(pg)
 	alertManagerService := services.NewAlertManagerService(pg, alertService)
 	apiKeyService := services.NewAPIKeyService(pg)
 	groupService := services.NewGroupService(pg)
-	escalationService := services.NewEscalationService(pg, redis, groupService, fcmService)
+	escalationService := services.NewEscalationService(pg, groupService, fcmService)
 	onCallService := services.NewOnCallService(pg)
 	rotationService := services.NewRotationService(pg)
 	schedulerService := services.NewSchedulerService(pg)                                  // NEW: Service scheduling

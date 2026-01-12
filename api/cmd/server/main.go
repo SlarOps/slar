@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	_ "github.com/lib/pq"
 
 	"github.com/vanchonlee/slar/internal/config"
@@ -84,42 +83,12 @@ func main() {
 		log.Println("Auto-migration disabled (set AUTO_MIGRATE=true to enable)")
 	}
 
-	// Initialize Redis connection (optional)
-	var redisClient *redis.Client
-	if config.App.RedisURL != "" {
-		opt, err := redis.ParseURL(config.App.RedisURL)
-		if err != nil {
-			log.Printf("Failed to parse Redis URL: %v", err)
-		} else {
-			redisClient = redis.NewClient(opt)
-			// Test the connection
-			if _, err := redisClient.Ping(redisClient.Context()).Result(); err != nil {
-				log.Printf("Redis connection failed: %v", err)
-				redisClient = nil
-			} else {
-				log.Println("Connected to Redis successfully")
-			}
-		}
-	} else {
-		// Try to connect to local Redis (optional)
-		testClient := redis.NewClient(&redis.Options{
-			Addr: "localhost:6379",
-		})
-		if _, err := testClient.Ping(testClient.Context()).Result(); err != nil {
-			log.Printf("Redis not available (localhost:6379): %v", err)
-			log.Println("Running without Redis - some features may be disabled")
-		} else {
-			redisClient = testClient
-			log.Println("Connected to local Redis successfully")
-		}
-	}
-
 	// Initialize router
-	r := router.NewGinRouter(db, redisClient)
+	r := router.NewGinRouter(db)
 
 	// Initialize services for workers
 	fcmService, _ := services.NewFCMService(db)
-	incidentService := services.NewIncidentService(db, redisClient, fcmService)
+	incidentService := services.NewIncidentService(db, fcmService)
 
 	// Initialize workers
 	notificationWorker := workers.NewNotificationWorker(db, fcmService)

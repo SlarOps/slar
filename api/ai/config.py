@@ -69,17 +69,10 @@ class Config:
         # Core settings
         self.database_url: Optional[str] = None
         self.port: str = "8002"
-        self.redis_url: Optional[str] = None
 
         # OIDC Authentication
         self.oidc_issuer: Optional[str] = None
         self.oidc_client_id: Optional[str] = None
-
-        # Supabase (Deprecated - for migration period only)
-        self.supabase_url: Optional[str] = None
-        self.supabase_anon_key: Optional[str] = None
-        self.supabase_service_role_key: Optional[str] = None
-        self.supabase_jwt_secret: Optional[str] = None
 
         # External services
         self.anthropic_api_key: Optional[str] = None
@@ -136,17 +129,10 @@ class Config:
         # Core settings (env var overrides config file)
         self.database_url = os.getenv("DATABASE_URL") or config_dict.get("database_url")
         self.port = os.getenv("AI_PORT") or os.getenv("PORT") or config_dict.get("port", "8002")
-        self.redis_url = os.getenv("REDIS_URL") or config_dict.get("redis_url")
 
         # OIDC Authentication
         self.oidc_issuer = os.getenv("OIDC_ISSUER") or config_dict.get("oidc_issuer")
         self.oidc_client_id = os.getenv("OIDC_CLIENT_ID") or config_dict.get("oidc_client_id")
-
-        # Supabase (Deprecated - for migration period only)
-        self.supabase_url = os.getenv("SUPABASE_URL") or config_dict.get("supabase_url")
-        self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY") or config_dict.get("supabase_anon_key")
-        self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or config_dict.get("supabase_service_role_key")
-        self.supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET") or config_dict.get("supabase_jwt_secret")
 
         # External services
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY") or config_dict.get("anthropic_api_key")
@@ -164,9 +150,7 @@ class Config:
         logger.info("📋 Configuration loaded:")
         logger.info(f"  • Database: {'✅' if self.database_url else '❌'}")
         logger.info(f"  • Port: {self.port}")
-        logger.info(f"  • Redis: {'✅' if self.redis_url else '❌'}")
         logger.info(f"  • OIDC: {'✅' if self.oidc_issuer else '❌'} ({self.oidc_issuer or 'not configured'})")
-        logger.info(f"  • Supabase (deprecated): {'✅' if self.supabase_url else '❌'}")
         logger.info(f"  • Anthropic API: {'✅' if self.anthropic_api_key else '❌'}")
         logger.info(f"  • AI Analytics: enabled={self.ai_analytics.enabled}, model={self.ai_analytics.model}")
 
@@ -175,8 +159,6 @@ class Config:
             logger.warning("⚠️  OIDC_ISSUER not configured - authentication will fail!")
             logger.warning("   Set OIDC_ISSUER environment variable to your OIDC provider URL")
             logger.warning("   Example: OIDC_ISSUER=https://auth.your-domain.com")
-            if self.supabase_url or self.supabase_jwt_secret:
-                logger.warning("   (Supabase auth is deprecated and will be removed)")
 
 
 # Global singleton instance

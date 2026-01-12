@@ -1,100 +1,68 @@
 """
 SLAR Incident Management Tools for Claude Agent SDK
 
-Tools for fetching and managing incidents from the SLAR backend API.
+Tools for fetching and managing incidents directly from the database.
+This is an internal service - no API authentication required.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
-
-import aiohttp
-from claude_agent_sdk import create_sdk_mcp_server, tool
-
-# Configuration
-API_BASE_URL = os.getenv("SLAR_API_URL", "http://localhost:8080")
-# API_TOKEN_KEY should be set to Supabase Service Role key for system access
-API_TOKEN_KEY = os.getenv("SLAR_API_KEY", "")
-
 from contextvars import ContextVar
 
-# Dynamic token storage (set per WebSocket session, async-safe)
-_auth_token_ctx: ContextVar[Optional[str]] = ContextVar("auth_token", default=None)
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from claude_agent_sdk import create_sdk_mcp_server, tool
+
+from config import config
+
+# Context variables for tenant isolation (ReBAC)
 _org_id_ctx: ContextVar[Optional[str]] = ContextVar("org_id", default=None)
 _project_id_ctx: ContextVar[Optional[str]] = ContextVar("project_id", default=None)
 
 
-def set_auth_token(token: str) -> None:
-    """
-    Set the authentication token to use for API requests.
-    This should be called at the start of each WebSocket session.
-
-    Args:
-        token: The JWT authentication token from the frontend
-    """
-    _auth_token_ctx.set(token)
-    print(f"🔑 Auth token set for incident_tools (length: {len(token) if token else 0})")
-
-
-def get_auth_token() -> str:
-    """
-    Get the current authentication token.
-    Prioritizes dynamic token over environment variable.
-
-    Returns:
-        The authentication token to use for API requests
-    """
-    return _auth_token_ctx.get() or API_TOKEN_KEY
-
-
 def set_org_id(org_id: str) -> None:
-    """
-    Set the organization ID for tenant isolation.
-    This should be called at the start of each WebSocket session.
-
-    Args:
-        org_id: The organization ID from the frontend context
-    """
+    """Set the organization ID for tenant isolation."""
     _org_id_ctx.set(org_id)
-    # print(f"🏢 Org ID set for incident_tools: {org_id}")
 
 
 def get_org_id() -> str:
-    """
-    Get the current organization ID.
-
-    Returns:
-        The organization ID for tenant isolation
-    """
-    return _org_id_ctx.get() or ""
+    """Get the current organization ID."""
+    return _org_id_ctx.get() or os.getenv("SLAR_ORG_ID", "")
 
 
 def set_project_id(project_id: str) -> None:
-    """
-    Set the project ID for optional filtering.
-    This should be called at the start of each WebSocket session.
-
-    Args:
-        project_id: The project ID from the frontend context
-    """
+    """Set the project ID for optional filtering."""
     _project_id_ctx.set(project_id)
-    # print(f"📁 Project ID set for incident_tools: {project_id}")
 
 
 def get_project_id() -> str:
-    """
-    Get the current project ID.
-
-    Returns:
-        The project ID for optional filtering
-    """
+    """Get the current project ID."""
     return _project_id_ctx.get() or ""
 
 
-# Implementation functions (callable directly)
+# Deprecated - kept for backward compatibility but no longer needed
+def set_auth_token(token: str) -> None:
+    """Deprecated: Auth token not needed for direct DB access."""
+    pass
+
+
+def get_auth_token() -> str:
+    """Deprecated: Auth token not needed for direct DB access."""
+    return ""
+
+
+def _get_db_connection():
+    """Get database connection using centralized config."""
+    db_url = config.database_url
+    if not db_url:
+        raise Exception("DATABASE_URL not configured")
+    return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
+
 async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     """
-    Fetch incidents within a time range.
+    Fetch incidents within a time range directly from database.
 
     Args:
         start_time: Start time in ISO 8601 format (e.g., "2024-01-01T00:00:00Z")
@@ -112,8 +80,8 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
 
     # Validate inputs
     try:
-        datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
     except (ValueError, AttributeError) as e:
         return {
             "content": [
@@ -134,123 +102,80 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
             "isError": True,
         }
 
-    # Build query parameters
-    params = {"start_time": start_time, "end_time": end_time, "limit": limit}
-
-    if status != "all":
-        params["status"] = status
-
-    # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-    # Priority: 1. Argument 2. Context 3. Environment Variable
-    org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
+    # ReBAC: Get org_id for tenant isolation
+    org_id = args.get("org_id") or get_org_id()
     project_id = args.get("project_id") or get_project_id()
-    if org_id:
-        params["org_id"] = org_id
-    if project_id:
-        params["project_id"] = project_id
 
-    # Make API request
     try:
-        headers = {
-            "Authorization": f"Bearer {get_auth_token()}",
-            "Content-Type": "application/json",
-        }
-        # Also add org_id/project_id as headers for redundancy
-        if org_id:
-            headers["X-Org-ID"] = org_id
-        if project_id:
-            headers["X-Project-ID"] = project_id
+        conn = _get_db_connection()
+        with conn.cursor() as cursor:
+            # Build query with ReBAC filtering
+            query = """
+                SELECT
+                    i.id, i.title, i.description, i.status, i.severity, i.urgency,
+                    i.created_at, i.updated_at, i.acknowledged_at, i.resolved_at,
+                    i.assigned_to, i.service_id,
+                    u.name as assigned_to_name,
+                    s.name as service_name
+                FROM incidents i
+                LEFT JOIN users u ON i.assigned_to = u.id
+                LEFT JOIN services s ON i.service_id = s.id
+                WHERE i.created_at >= %s AND i.created_at <= %s
+            """
+            params = [start_dt, end_dt]
 
-        async with aiohttp.ClientSession() as session:
-            url = f"{API_BASE_URL}/incidents"
+            # Add status filter
+            if status != "all":
+                query += " AND i.status = %s"
+                params.append(status)
 
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    incidents = data.get("incidents", [])
+            # Add ReBAC filters
+            if org_id:
+                query += " AND i.organization_id = %s"
+                params.append(org_id)
+            if project_id:
+                query += " AND i.project_id = %s"
+                params.append(project_id)
 
-                    # Format the response
-                    if not incidents:
-                        result_text = (
-                            f"📭 No incidents found between {start_time} and {end_time}"
-                        )
-                        if status != "all":
-                            result_text += f" with status '{status}'"
-                    else:
-                        result_text = f"📊 Found {len(incidents)} incident(s) between {start_time} and {end_time}\n\n"
+            query += " ORDER BY i.created_at DESC LIMIT %s"
+            params.append(limit)
 
-                        for idx, incident in enumerate(incidents, 1):
-                            result_text += f"**Incident #{idx}**\n"
-                            result_text += f"• ID: {incident.get('id', 'N/A')}\n"
-                            result_text += (
-                                f"•Title: {incident.get('title', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"•Status: {incident.get('status', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"•Severity: {incident.get('severity', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"•Service: {incident.get('service_name', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"•Created: {incident.get('created_at', 'N/A')}\n"
-                            )
-                            result_text += f"•Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
+            cursor.execute(query, params)
+            incidents = cursor.fetchall()
 
-                            if incident.get("acknowledged_at"):
-                                result_text += f"  • Acknowledged: {incident.get('acknowledged_at')}\n"
-                            if incident.get("resolved_at"):
-                                result_text += (
-                                    f"  • Resolved: {incident.get('resolved_at')}\n"
-                                )
+        conn.close()
 
-                            result_text += "\n"
+        # Format the response
+        if not incidents:
+            result_text = f"No incidents found between {start_time} and {end_time}"
+            if status != "all":
+                result_text += f" with status '{status}'"
+        else:
+            result_text = f"Found {len(incidents)} incident(s) between {start_time} and {end_time}\n\n"
 
-                    return {"content": [{"type": "text", "text": result_text}]}
+            for idx, incident in enumerate(incidents, 1):
+                result_text += f"**Incident #{idx}**\n"
+                result_text += f"  - ID: {incident['id']}\n"
+                result_text += f"  - Title: {incident['title']}\n"
+                result_text += f"  - Status: {incident['status']}\n"
+                result_text += f"  - Severity: {incident['severity']}\n"
+                result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
+                result_text += f"  - Created: {incident['created_at']}\n"
+                result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
 
-                elif response.status == 401:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "❌ Error: Authentication failed. Please check your API token.",
-                            }
-                        ],
-                        "isError": True,
-                    }
+                if incident['acknowledged_at']:
+                    result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
+                if incident['resolved_at']:
+                    result_text += f"  - Resolved: {incident['resolved_at']}\n"
 
-                else:
-                    error_text = await response.text()
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"❌ Error: API request failed with status {response.status}\n{error_text}",
-                            }
-                        ],
-                        "isError": True,
-                    }
+                result_text += "\n"
 
-    except aiohttp.ClientError as e:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"❌ Error: Network error occurred: {str(e)}\nPlease check if the SLAR API is running at {API_BASE_URL}",
-                }
-            ],
-            "isError": True,
-        }
+        return {"content": [{"type": "text", "text": result_text}]}
 
     except Exception as e:
         return {
             "content": [
-                {
-                    "type": "text",
-                    "text": f"❌ Error: Unexpected error occurred: {str(e)}",
-                }
+                {"type": "text", "text": f"Error querying database: {str(e)}"}
             ],
             "isError": True,
         }
@@ -270,119 +195,98 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
 
     if not incident_id:
         return {
-            "content": [{"type": "text", "text": "❌ Error: incident_id is required"}],
+            "content": [{"type": "text", "text": "Error: incident_id is required"}],
             "isError": True,
         }
 
+    # ReBAC: Get org_id for tenant isolation
+    org_id = args.get("org_id") or get_org_id()
+    project_id = args.get("project_id") or get_project_id()
+
     try:
-        headers = {
-            "Authorization": f"Bearer {get_auth_token()}",
-            "Content-Type": "application/json",
-        }
+        conn = _get_db_connection()
+        with conn.cursor() as cursor:
+            query = """
+                SELECT
+                    i.id, i.title, i.description, i.status, i.severity, i.urgency,
+                    i.created_at, i.updated_at, i.acknowledged_at, i.resolved_at,
+                    i.assigned_to, i.acknowledged_by, i.resolved_by,
+                    i.service_id, i.alert_key, i.escalation_policy_id,
+                    i.organization_id, i.project_id,
+                    u1.name as assigned_to_name,
+                    u2.name as acknowledged_by_name,
+                    u3.name as resolved_by_name,
+                    s.name as service_name
+                FROM incidents i
+                LEFT JOIN users u1 ON i.assigned_to = u1.id
+                LEFT JOIN users u2 ON i.acknowledged_by = u2.id
+                LEFT JOIN users u3 ON i.resolved_by = u3.id
+                LEFT JOIN services s ON i.service_id = s.id
+                WHERE i.id = %s
+            """
+            params = [incident_id]
 
-        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        # Priority: 1. Argument 2. Context 3. Environment Variable
-        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
-        project_id = args.get("project_id") or get_project_id()
-        params = {}
-        if org_id:
-            params["org_id"] = org_id
-            headers["X-Org-ID"] = org_id
-        if project_id:
-            params["project_id"] = project_id
-            headers["X-Project-ID"] = project_id
+            # Add ReBAC filters
+            if org_id:
+                query += " AND i.organization_id = %s"
+                params.append(org_id)
+            if project_id:
+                query += " AND i.project_id = %s"
+                params.append(project_id)
 
-        async with aiohttp.ClientSession() as session:
-            url = f"{API_BASE_URL}/incidents/{incident_id}"
+            cursor.execute(query, params)
+            incident = cursor.fetchone()
 
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    incident = await response.json()
+        conn.close()
 
-                    # Format detailed response
-                    result_text = f"🔍 **Incident Details**\n\n"
-                    result_text += f"**Basic Information:**\n"
-                    result_text += f"  • ID: {incident.get('id', 'N/A')}\n"
-                    result_text += f"  • Title: {incident.get('title', 'N/A')}\n"
-                    result_text += (
-                        f"  • Description: {incident.get('description', 'N/A')}\n"
-                    )
-                    result_text += f"  • Status: {incident.get('status', 'N/A')}\n"
-                    result_text += f"  • Severity: {incident.get('severity', 'N/A')}\n"
-                    result_text += f"  • Urgency: {incident.get('urgency', 'N/A')}\n\n"
+        if not incident:
+            return {
+                "content": [
+                    {"type": "text", "text": f"Error: Incident with ID '{incident_id}' not found"}
+                ],
+                "isError": True,
+            }
 
-                    result_text += f"**Service:**\n"
-                    result_text += (
-                        f"  • Service: {incident.get('service_name', 'N/A')}\n"
-                    )
-                    result_text += (
-                        f"  • Service ID: {incident.get('service_id', 'N/A')}\n\n"
-                    )
+        # Format detailed response
+        result_text = f"**Incident Details**\n\n"
+        result_text += f"**Basic Information:**\n"
+        result_text += f"  - ID: {incident['id']}\n"
+        result_text += f"  - Title: {incident['title']}\n"
+        result_text += f"  - Description: {incident['description'] or 'N/A'}\n"
+        result_text += f"  - Status: {incident['status']}\n"
+        result_text += f"  - Severity: {incident['severity']}\n"
+        result_text += f"  - Urgency: {incident['urgency']}\n\n"
 
-                    result_text += f"**Assignment:**\n"
-                    result_text += f"  • Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
-                    result_text += (
-                        f"  • Assigned to ID: {incident.get('assigned_to', 'N/A')}\n\n"
-                    )
+        result_text += f"**Service:**\n"
+        result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
+        result_text += f"  - Service ID: {incident['service_id'] or 'N/A'}\n\n"
 
-                    result_text += f"**Timeline:**\n"
-                    result_text += f"  • Created: {incident.get('created_at', 'N/A')}\n"
+        result_text += f"**Assignment:**\n"
+        result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
+        result_text += f"  - Assigned to ID: {incident['assigned_to'] or 'N/A'}\n\n"
 
-                    if incident.get("acknowledged_at"):
-                        result_text += (
-                            f"  • Acknowledged: {incident.get('acknowledged_at')}\n"
-                        )
-                        result_text += f"  • Acknowledged by: {incident.get('acknowledged_by_name', 'N/A')}\n"
+        result_text += f"**Timeline:**\n"
+        result_text += f"  - Created: {incident['created_at']}\n"
 
-                    if incident.get("resolved_at"):
-                        result_text += f"  • Resolved: {incident.get('resolved_at')}\n"
-                        result_text += f"  • Resolved by: {incident.get('resolved_by_name', 'N/A')}\n"
+        if incident['acknowledged_at']:
+            result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
+            result_text += f"  - Acknowledged by: {incident['acknowledged_by_name'] or 'N/A'}\n"
 
-                    result_text += f"\n**Metadata:**\n"
-                    if incident.get("alert_key"):
-                        result_text += f"  • Alert Key: {incident.get('alert_key')}\n"
-                    if incident.get("escalation_policy_id"):
-                        result_text += f"  • Escalation Policy: {incident.get('escalation_policy_id')}\n"
+        if incident['resolved_at']:
+            result_text += f"  - Resolved: {incident['resolved_at']}\n"
+            result_text += f"  - Resolved by: {incident['resolved_by_name'] or 'N/A'}\n"
 
-                    return {"content": [{"type": "text", "text": result_text}]}
+        result_text += f"\n**Metadata:**\n"
+        if incident['alert_key']:
+            result_text += f"  - Alert Key: {incident['alert_key']}\n"
+        if incident['escalation_policy_id']:
+            result_text += f"  - Escalation Policy: {incident['escalation_policy_id']}\n"
 
-                elif response.status == 404:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"❌ Error: Incident with ID '{incident_id}' not found",
-                            }
-                        ],
-                        "isError": True,
-                    }
-
-                elif response.status == 401:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "❌ Error: Authentication failed. Please check your API token.",
-                            }
-                        ],
-                        "isError": True,
-                    }
-
-                else:
-                    error_text = await response.text()
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"❌ Error: API request failed with status {response.status}\n{error_text}",
-                            }
-                        ],
-                        "isError": True,
-                    }
+        return {"content": [{"type": "text", "text": result_text}]}
 
     except Exception as e:
         return {
-            "content": [{"type": "text", "text": f"❌ Error: {str(e)}"}],
+            "content": [{"type": "text", "text": f"Error: {str(e)}"}],
             "isError": True,
         }
 
@@ -405,128 +309,116 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
             "content": [
                 {
                     "type": "text",
-                    "text": f"❌ Error: Invalid time_range. Must be one of: {', '.join(valid_ranges)}",
+                    "text": f"Error: Invalid time_range. Must be one of: {', '.join(valid_ranges)}",
                 }
             ],
             "isError": True,
         }
 
+    # Calculate time filter
+    now = datetime.utcnow()
+    if time_range == "24h":
+        start_time = now - timedelta(hours=24)
+    elif time_range == "7d":
+        start_time = now - timedelta(days=7)
+    elif time_range == "30d":
+        start_time = now - timedelta(days=30)
+    else:
+        start_time = None
+
+    # ReBAC: Get org_id for tenant isolation
+    org_id = args.get("org_id") or get_org_id()
+    project_id = args.get("project_id") or get_project_id()
+
     try:
-        headers = {
-            "Authorization": f"Bearer {get_auth_token()}",
-            "Content-Type": "application/json",
-        }
+        conn = _get_db_connection()
+        with conn.cursor() as cursor:
+            # Build base WHERE clause
+            where_clauses = []
+            params = []
 
-        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        # Priority: 1. Argument 2. Context 3. Environment Variable
-        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
-        project_id = args.get("project_id") or get_project_id()
-        if org_id:
-            headers["X-Org-ID"] = org_id
-        if project_id:
-            headers["X-Project-ID"] = project_id
-
-        async with aiohttp.ClientSession() as session:
-            url = f"{API_BASE_URL}/incidents/stats"
-            params = {"time_range": time_range}
+            if start_time:
+                where_clauses.append("created_at >= %s")
+                params.append(start_time)
             if org_id:
-                params["org_id"] = org_id
+                where_clauses.append("organization_id = %s")
+                params.append(org_id)
             if project_id:
-                params["project_id"] = project_id
+                where_clauses.append("project_id = %s")
+                params.append(project_id)
 
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    stats = await response.json()
+            where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-                    # Format stats response
-                    result_text = f"📈 **Incident Statistics ({time_range})**\n\n"
-                    result_text += f"**Overall:**\n"
-                    result_text += f"  • Total Incidents: {stats.get('total', 0)}\n"
-                    result_text += f"  • Triggered: {stats.get('triggered', 0)}\n"
-                    result_text += f"  • Acknowledged: {stats.get('acknowledged', 0)}\n"
-                    result_text += f"  • Resolved: {stats.get('resolved', 0)}\n\n"
+            # Get total counts by status
+            cursor.execute(f"""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status = 'triggered') as triggered,
+                    COUNT(*) FILTER (WHERE status = 'acknowledged') as acknowledged,
+                    COUNT(*) FILTER (WHERE status = 'resolved') as resolved
+                FROM incidents
+                WHERE {where_sql}
+            """, params)
+            counts = cursor.fetchone()
 
-                    if stats.get("by_severity"):
-                        result_text += f"**By Severity:**\n"
-                        for severity, count in stats["by_severity"].items():
-                            result_text += f"  • {severity}: {count}\n"
-                        result_text += "\n"
+            # Get counts by severity
+            cursor.execute(f"""
+                SELECT severity, COUNT(*) as count
+                FROM incidents
+                WHERE {where_sql}
+                GROUP BY severity
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'error' THEN 2
+                        WHEN 'warning' THEN 3
+                        WHEN 'info' THEN 4
+                        ELSE 5
+                    END
+            """, params)
+            severity_counts = cursor.fetchall()
 
-                    if stats.get("avg_resolution_time"):
-                        result_text += f"**Performance:**\n"
-                        result_text += f"  • Avg Resolution Time: {stats.get('avg_resolution_time')}\n"
-                        result_text += f"  • Avg Acknowledgment Time: {stats.get('avg_ack_time', 'N/A')}\n"
+            # Get average resolution time (for resolved incidents)
+            cursor.execute(f"""
+                SELECT
+                    AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))) as avg_resolution_seconds,
+                    AVG(EXTRACT(EPOCH FROM (acknowledged_at - created_at))) as avg_ack_seconds
+                FROM incidents
+                WHERE {where_sql} AND resolved_at IS NOT NULL
+            """, params)
+            timing = cursor.fetchone()
 
-                    return {"content": [{"type": "text", "text": result_text}]}
+        conn.close()
 
-                elif response.status == 401:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "❌ Error: Authentication failed. Please check your API token.",
-                            }
-                        ],
-                        "isError": True,
-                    }
+        # Format stats response
+        result_text = f"**Incident Statistics ({time_range})**\n\n"
+        result_text += f"**Overall:**\n"
+        result_text += f"  - Total Incidents: {counts['total']}\n"
+        result_text += f"  - Triggered: {counts['triggered']}\n"
+        result_text += f"  - Acknowledged: {counts['acknowledged']}\n"
+        result_text += f"  - Resolved: {counts['resolved']}\n\n"
 
-                else:
-                    error_text = await response.text()
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"❌ Error: API request failed with status {response.status}\n{error_text}",
-                            }
-                        ],
-                        "isError": True,
-                    }
+        if severity_counts:
+            result_text += f"**By Severity:**\n"
+            for row in severity_counts:
+                result_text += f"  - {row['severity']}: {row['count']}\n"
+            result_text += "\n"
+
+        if timing and timing['avg_resolution_seconds']:
+            avg_res = timedelta(seconds=int(timing['avg_resolution_seconds']))
+            result_text += f"**Performance:**\n"
+            result_text += f"  - Avg Resolution Time: {avg_res}\n"
+            if timing['avg_ack_seconds']:
+                avg_ack = timedelta(seconds=int(timing['avg_ack_seconds']))
+                result_text += f"  - Avg Acknowledgment Time: {avg_ack}\n"
+
+        return {"content": [{"type": "text", "text": result_text}]}
 
     except Exception as e:
         return {
-            "content": [{"type": "text", "text": f"❌ Error: {str(e)}"}],
+            "content": [{"type": "text", "text": f"Error: {str(e)}"}],
             "isError": True,
         }
-
-
-# Create tool wrappers for Claude Agent SDK
-@tool(
-    "get_incidents_by_time",
-    "Fetch incidents from SLAR within a specific time range. Use this to retrieve incidents that occurred between start_time and end_time.",
-    {
-        "start_time": str,  # ISO 8601 format: 2024-01-01T00:00:00Z
-        "end_time": str,  # ISO 8601 format: 2024-01-01T23:59:59Z
-        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
-        "limit": int,  # Optional: Max number of incidents to return (default: 50)
-    },
-)
-async def get_incidents_by_time(args: dict[str, Any]) -> dict[str, Any]:
-    """Wrapper for Claude Agent SDK"""
-    return await _get_incidents_by_time_impl(args)
-
-
-@tool(
-    "get_incident_by_id",
-    "Fetch detailed information about a specific incident by its ID",
-    {
-        "incident_id": str,  # The incident ID
-    },
-)
-async def get_incident_by_id(args: dict[str, Any]) -> dict[str, Any]:
-    """Wrapper for Claude Agent SDK"""
-    return await _get_incident_by_id_impl(args)
-
-
-@tool(
-    "get_incident_stats",
-    "Get statistics about incidents in the system",
-    {
-        "time_range": str,  # "24h", "7d", "30d", or "all"
-    },
-)
-async def get_incident_stats(args: dict[str, Any]) -> dict[str, Any]:
-    """Wrapper for Claude Agent SDK"""
-    return await _get_incident_stats_impl(args)
 
 
 async def _get_current_time_impl(args: dict[str, Any]) -> dict[str, Any]:
@@ -537,35 +429,15 @@ async def _get_current_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dictionary with current time and common time ranges
     """
-    from datetime import datetime, timedelta
-
-    # Get current time in UTC
     now = datetime.utcnow()
 
-    # Format response with common time ranges
-    result_text = f"🕐 **Current Time (UTC)**\n\n"
+    result_text = f"**Current Time (UTC)**\n\n"
     result_text += f"Current: {now.strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    result_text += (
-        f"1 hour ago: {(now - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    )
-    result_text += (
-        f"24 hours ago: {(now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    )
-    result_text += (
-        f"7 days ago: {(now - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    )
+    result_text += f"1 hour ago: {(now - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result_text += f"24 hours ago: {(now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result_text += f"7 days ago: {(now - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
 
     return {"content": [{"type": "text", "text": result_text}]}
-
-
-@tool(
-    "get_current_time",
-    "Get the current date and time in ISO 8601 format (UTC). Use this to determine time ranges for querying incidents.",
-    {},
-)
-async def get_current_time(args: dict[str, Any]) -> dict[str, Any]:
-    """Wrapper for Claude Agent SDK"""
-    return await _get_current_time_impl(args)
 
 
 async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
@@ -574,12 +446,12 @@ async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         query: Search query string (e.g., "CPU high", "database connection")
-        status: Optional filter by status - "triggered", "acknowledged", "resolved", or "all" (default: "all")
-        severity: Optional filter by severity - "critical", "error", "warning", "info"
+        status: Optional filter by status
+        severity: Optional filter by severity
         limit: Maximum number of incidents to return (default: 20, max: 100)
 
     Returns:
-        Dictionary with search results ranked by relevance
+        Dictionary with search results
     """
     query = args.get("query", "")
     status = args.get("status", "all")
@@ -589,162 +461,163 @@ async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
     if not query or query.strip() == "":
         return {
             "content": [
-                {"type": "text", "text": "❌ Error: Search query is required"}
+                {"type": "text", "text": "Error: Search query is required"}
             ],
             "isError": True,
         }
 
-    # Validate limit
     if limit < 1 or limit > 100:
         return {
             "content": [
-                {"type": "text", "text": "❌ Error: Limit must be between 1 and 100"}
+                {"type": "text", "text": "Error: Limit must be between 1 and 100"}
             ],
             "isError": True,
         }
+
+    # ReBAC: Get org_id for tenant isolation
+    org_id = args.get("org_id") or get_org_id()
+    project_id = args.get("project_id") or get_project_id()
 
     try:
-        headers = {
-            "Authorization": f"Bearer {get_auth_token()}",
-            "Content-Type": "application/json",
-        }
+        conn = _get_db_connection()
+        with conn.cursor() as cursor:
+            # Build search query with ILIKE for simple search
+            # Could use full-text search (tsvector) for better results
+            search_pattern = f"%{query}%"
 
-        # ReBAC: Add org_id for tenant isolation (MANDATORY) and project_id (OPTIONAL)
-        # Priority: 1. Argument 2. Context 3. Environment Variable
-        org_id = args.get("org_id") or get_org_id() or os.getenv("SLAR_ORG_ID")
-        project_id = args.get("project_id") or get_project_id()
-        if org_id:
-            headers["X-Org-ID"] = org_id
-        if project_id:
-            headers["X-Project-ID"] = project_id
+            sql = """
+                SELECT
+                    i.id, i.title, i.description, i.status, i.severity,
+                    i.created_at, i.acknowledged_at, i.resolved_at,
+                    i.assigned_to,
+                    u.name as assigned_to_name,
+                    s.name as service_name
+                FROM incidents i
+                LEFT JOIN users u ON i.assigned_to = u.id
+                LEFT JOIN services s ON i.service_id = s.id
+                WHERE (i.title ILIKE %s OR i.description ILIKE %s)
+            """
+            params = [search_pattern, search_pattern]
 
-        # Build query parameters
-        params = {"search": query, "limit": limit, "sort": "relevance"}
+            if status != "all":
+                sql += " AND i.status = %s"
+                params.append(status)
 
-        # ReBAC: Add org_id and project_id to params
-        if org_id:
-            params["org_id"] = org_id
-        if project_id:
-            params["project_id"] = project_id
+            if severity:
+                sql += " AND i.severity = %s"
+                params.append(severity)
 
-        if status != "all":
-            params["status"] = status
+            if org_id:
+                sql += " AND i.organization_id = %s"
+                params.append(org_id)
 
-        if severity:
-            params["severity"] = severity
+            if project_id:
+                sql += " AND i.project_id = %s"
+                params.append(project_id)
 
-        async with aiohttp.ClientSession() as session:
-            url = f"{API_BASE_URL}/incidents"
+            sql += " ORDER BY i.created_at DESC LIMIT %s"
+            params.append(limit)
 
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    incidents = data.get("incidents", [])
+            cursor.execute(sql, params)
+            incidents = cursor.fetchall()
 
-                    # Format the response
-                    if not incidents:
-                        result_text = f"📭 No incidents found matching '{query}'"
-                        if status != "all":
-                            result_text += f" with status '{status}'"
-                        if severity:
-                            result_text += f" and severity '{severity}'"
-                    else:
-                        result_text = f"🔍 Found {len(incidents)} incident(s) matching '{query}'\n"
-                        result_text += f"(Sorted by relevance)\n\n"
+        conn.close()
 
-                        for idx, incident in enumerate(incidents, 1):
-                            result_text += f"**Incident #{idx}**\n"
-                            result_text += f"  • ID: {incident.get('id', 'N/A')}\n"
-                            result_text += (
-                                f"  • Title: {incident.get('title', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"  • Status: {incident.get('status', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"  • Severity: {incident.get('severity', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"  • Service: {incident.get('service_name', 'N/A')}\n"
-                            )
-                            result_text += (
-                                f"  • Created: {incident.get('created_at', 'N/A')}\n"
-                            )
-                            result_text += f"  • Assigned to: {incident.get('assigned_to_name', 'Unassigned')}\n"
+        # Format the response
+        if not incidents:
+            result_text = f"No incidents found matching '{query}'"
+            if status != "all":
+                result_text += f" with status '{status}'"
+            if severity:
+                result_text += f" and severity '{severity}'"
+        else:
+            result_text = f"Found {len(incidents)} incident(s) matching '{query}'\n\n"
 
-                            if incident.get("acknowledged_at"):
-                                result_text += f"  • Acknowledged: {incident.get('acknowledged_at')}\n"
-                            if incident.get("resolved_at"):
-                                result_text += (
-                                    f"  • Resolved: {incident.get('resolved_at')}\n"
-                                )
+            for idx, incident in enumerate(incidents, 1):
+                result_text += f"**Incident #{idx}**\n"
+                result_text += f"  - ID: {incident['id']}\n"
+                result_text += f"  - Title: {incident['title']}\n"
+                result_text += f"  - Status: {incident['status']}\n"
+                result_text += f"  - Severity: {incident['severity']}\n"
+                result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
+                result_text += f"  - Created: {incident['created_at']}\n"
+                result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
 
-                            result_text += "\n"
+                if incident['acknowledged_at']:
+                    result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
+                if incident['resolved_at']:
+                    result_text += f"  - Resolved: {incident['resolved_at']}\n"
 
-                    return {"content": [{"type": "text", "text": result_text}]}
+                result_text += "\n"
 
-                elif response.status == 401:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "❌ Error: Authentication failed. Please check your API token.",
-                            }
-                        ],
-                        "isError": True,
-                    }
-
-                else:
-                    error_text = await response.text()
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"❌ Error: API request failed with status {response.status}\n{error_text}",
-                            }
-                        ],
-                        "isError": True,
-                    }
-
-    except aiohttp.ClientError as e:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"❌ Error: Network error occurred: {str(e)}\nPlease check if the SLAR API is running at {API_BASE_URL}",
-                }
-            ],
-            "isError": True,
-        }
+        return {"content": [{"type": "text", "text": result_text}]}
 
     except Exception as e:
         return {
             "content": [
-                {
-                    "type": "text",
-                    "text": f"❌ Error: Unexpected error occurred: {str(e)}",
-                }
+                {"type": "text", "text": f"Error: {str(e)}"}
             ],
             "isError": True,
         }
 
 
+# Tool decorators for Claude Agent SDK
+@tool(
+    "get_incidents_by_time",
+    "Fetch incidents from SLAR within a specific time range. Use this to retrieve incidents that occurred between start_time and end_time.",
+    {
+        "start_time": str,
+        "end_time": str,
+        "status": str,
+        "limit": int,
+    },
+)
+async def get_incidents_by_time(args: dict[str, Any]) -> dict[str, Any]:
+    return await _get_incidents_by_time_impl(args)
+
+
+@tool(
+    "get_incident_by_id",
+    "Fetch detailed information about a specific incident by its ID",
+    {"incident_id": str},
+)
+async def get_incident_by_id(args: dict[str, Any]) -> dict[str, Any]:
+    return await _get_incident_by_id_impl(args)
+
+
+@tool(
+    "get_incident_stats",
+    "Get statistics about incidents in the system",
+    {"time_range": str},
+)
+async def get_incident_stats(args: dict[str, Any]) -> dict[str, Any]:
+    return await _get_incident_stats_impl(args)
+
+
+@tool(
+    "get_current_time",
+    "Get the current date and time in ISO 8601 format (UTC). Use this to determine time ranges for querying incidents.",
+    {},
+)
+async def get_current_time(args: dict[str, Any]) -> dict[str, Any]:
+    return await _get_current_time_impl(args)
+
+
 @tool(
     "search_incidents",
-    "Search incidents using full-text search with semantic understanding. Use this to find incidents by keywords, phrases, or descriptions.",
+    "Search incidents using full-text search. Use this to find incidents by keywords, phrases, or descriptions.",
     {
-        "query": str,  # Search query (e.g., "CPU high", "database connection")
-        "status": str,  # Optional: "triggered", "acknowledged", "resolved", "all"
-        "severity": str,  # Optional: "critical", "error", "warning", "info"
-        "limit": int,  # Optional: Max number of results (default: 20)
+        "query": str,
+        "status": str,
+        "severity": str,
+        "limit": int,
     },
 )
 async def search_incidents(args: dict[str, Any]) -> dict[str, Any]:
-    """Wrapper for Claude Agent SDK"""
     return await _search_incidents_impl(args)
 
 
-# Export all tools as a list for easy registration
+# Export all tools as a list
 INCIDENT_TOOLS = [
     get_incidents_by_time,
     get_incident_by_id,
@@ -754,37 +627,22 @@ INCIDENT_TOOLS = [
 ]
 
 
-# Create MCP server for incident tools
 def create_incident_tools_server():
     """
     Create and return an MCP server with incident management tools.
-
-    This centralizes tool management - when you add new tools to INCIDENT_TOOLS,
-    they will automatically be included in the MCP server.
-
-    Returns:
-        MCP server instance configured with all incident tools
     """
     return create_sdk_mcp_server(
         name="incident_tools", version="1.0.0", tools=INCIDENT_TOOLS
     )
 
 
-# Export implementation functions for direct testing
 __all__ = [
     "INCIDENT_TOOLS",
     "create_incident_tools_server",
-    "_get_incidents_by_time_impl",
-    "_get_incident_by_id_impl",
-    "_get_incident_stats_impl",
-    "_get_current_time_impl",
-    "_search_incidents_impl",
-    "set_auth_token",
-    "get_auth_token",
     "set_org_id",
     "get_org_id",
     "set_project_id",
     "get_project_id",
-    "get_current_time",
-    "search_incidents",
+    "set_auth_token",  # Deprecated but kept for compatibility
+    "get_auth_token",  # Deprecated but kept for compatibility
 ]

@@ -3,7 +3,6 @@ Marketplace and plugins routes for AI Agent API.
 
 Handles:
 - POST /api/marketplace/install-plugin - Install plugin from marketplace
-- POST /api/plugins/install - Install plugin (legacy)
 - POST /api/marketplace/fetch-metadata - Fetch marketplace metadata from GitHub
 - POST /api/marketplace/clone - Clone marketplace repository (git clone)
 - POST /api/marketplace/update - Update marketplace repository (git fetch)
@@ -22,7 +21,6 @@ import logging
 import re
 import shutil
 from pathlib import Path
-from asyncio import Lock
 from datetime import datetime
 
 import httpx
@@ -30,7 +28,6 @@ from fastapi import APIRouter, Request
 
 from supabase_storage import (
     extract_user_id_from_token,
-    get_supabase_client,
     get_user_workspace_path,
     unzip_installed_plugins,
 )
@@ -48,9 +45,6 @@ from git_utils import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
-
-# Per-user locks to prevent race conditions when installing plugins
-user_plugin_locks = {}
 
 _MARKETPLACE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -244,138 +238,6 @@ async def install_plugin_from_marketplace(request: Request):
         return {
             "success": False,
             "error": sanitize_error_message(e, "installing plugin from marketplace")
-        }
-
-
-@router.post("/plugins/install")
-async def install_plugin(request: Request):
-    """
-    Install a plugin to user's installed_plugins.json.
-
-    Uses per-user lock to serialize access and prevent race conditions.
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "plugin": {
-                "name": "skill-name",
-                "marketplaceName": "anthropic-agent-skills",
-                "version": "1.0.0",
-                "installPath": "...",
-                "isLocal": false
-            }
-        }
-
-    Returns:
-        {"success": bool, "message": str, "pluginKey": str}
-    """
-    try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        plugin = body.get("plugin", {})
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not plugin or not plugin.get("name") or not plugin.get("marketplaceName"):
-            return {
-                "success": False,
-                "error": "Missing required plugin fields: name, marketplaceName",
-            }
-
-        if not plugin.get("marketplaceName") or not re.fullmatch(r"^[A-Za-z0-9_.-]+$", plugin.get("marketplaceName")):
-            return {
-                "success": False,
-                "error": f"Invalid marketplace name: {plugin.get('marketplaceName')}",
-            }
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        if user_id not in user_plugin_locks:
-            user_plugin_locks[user_id] = Lock()
-
-        user_lock = user_plugin_locks[user_id]
-
-        logger.info(f"Acquiring lock for user {user_id} to install plugin: {plugin['name']}")
-
-        async with user_lock:
-            logger.info(f"Lock acquired for user {user_id}")
-
-            supabase = get_supabase_client()
-            plugins_json_path = ".claude/plugins/installed_plugins.json"
-
-            try:
-                response = supabase.storage.from_(user_id).download(plugins_json_path)
-                current_data = json.loads(response)
-                plugins = current_data.get("plugins", {})
-            except Exception as e:
-                logger.info(f"No installed_plugins.json found, creating new: {e}")
-                plugins = {}
-
-            plugin_key = f"{plugin['name']}@{plugin['marketplaceName']}"
-            now = datetime.utcnow().isoformat() + "Z"
-
-            if plugin_key in plugins:
-                logger.info(f"Updating existing plugin: {plugin_key}")
-                plugins[plugin_key] = {
-                    **plugins[plugin_key],
-                    "version": plugin.get("version", plugins[plugin_key].get("version", "unknown")),
-                    "lastUpdated": now,
-                    "installPath": plugin.get("installPath", plugins[plugin_key].get("installPath", "")),
-                    "gitCommitSha": plugin.get("gitCommitSha", plugins[plugin_key].get("gitCommitSha")),
-                    "isLocal": plugin.get("isLocal", plugins[plugin_key].get("isLocal", False)),
-                }
-            else:
-                logger.info(f"Adding new plugin: {plugin_key}")
-                # Build default install path using Path object to avoid traversal strings
-                marketplace_name = plugin['marketplaceName']
-                plugin_name = plugin['name']
-                default_install_path = str(Path(".claude") / "plugins" / "marketplaces" / marketplace_name / plugin_name)
-                
-                plugins[plugin_key] = {
-                    "version": plugin.get("version", "unknown"),
-                    "installedAt": now,
-                    "lastUpdated": now,
-                    "installPath": plugin.get("installPath", default_install_path),
-                    "isLocal": plugin.get("isLocal", False),
-                }
-
-                if plugin.get("gitCommitSha"):
-                    plugins[plugin_key]["gitCommitSha"] = plugin["gitCommitSha"]
-
-            updated_data = {"version": 1, "plugins": plugins}
-            json_blob = json.dumps(updated_data, indent=2).encode("utf-8")
-
-            supabase.storage.from_(user_id).upload(
-                path=plugins_json_path,
-                file=json_blob,
-                file_options={"content-type": "application/json", "upsert": "true"},
-            )
-
-            logger.info(f"Plugin installed successfully: {plugin_key}")
-
-        logger.info(f"Lock released for user {user_id}")
-
-        logger.info(f"Unzipping plugin to local workspace for user {user_id}...")
-        unzip_result = await unzip_installed_plugins(user_id)
-
-        if unzip_result["success"]:
-            logger.info(f"Plugin unzipped to local: {unzip_result['message']}")
-        else:
-            logger.warning(f"Failed to unzip plugin: {unzip_result['message']}")
-
-        return {
-            "success": True,
-            "message": f"Plugin {plugin['name']} installed successfully",
-            "pluginKey": plugin_key,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "installing plugin")
         }
 
 

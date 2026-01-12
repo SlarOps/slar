@@ -61,15 +61,20 @@ export default function AuthWrapper({ children }) {
           router.push('/onboarding');
         }
       } catch (err) {
-        // Check if it's a 401 error (session invalid/expired)
-        if (err.status === 401) {
-          // Session is invalid - sign out and redirect to login
+        // Check if it's an auth-related error - sign out and redirect to login
+        // 401 = Unauthorized (token invalid/expired)
+        // 403 = Forbidden (token valid but user not authorized, often due to OIDC mismatch)
+        if (err.status === 401 || err.status === 403) {
+          console.log(`Auth error (${err.status}), signing out:`, err.message);
           await handleSessionInvalid();
           return;
         }
-        // For other errors, redirect to onboarding (user likely has no orgs)
-        console.log('Onboarding check failed, redirecting to onboarding:', err.message);
-        router.push('/onboarding');
+        // For other errors (network, server errors), log and let user retry
+        // Don't redirect to onboarding - that's only for users with no orgs
+        console.error('Onboarding check failed:', err.message);
+        // Mark as checked to prevent infinite retries, user can refresh to retry
+        lastCheckedUserIdRef.current = user.id;
+        setOnboardingChecked(true);
       } finally {
         isCheckingRef.current = false;
         setCheckingOnboarding(false);

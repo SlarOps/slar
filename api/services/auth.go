@@ -3,14 +3,12 @@ package services
 import (
 	"database/sql"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/vanchonlee/slar/db"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthService struct {
 	PG         *sql.DB
-	Redis      *redis.Client
 	JWTService *JWTService
 }
 
@@ -25,11 +23,10 @@ type LoginResponse struct {
 	Message string  `json:"message"`
 }
 
-func NewAuthService(pg *sql.DB, redis *redis.Client) *AuthService {
+func NewAuthService(pg *sql.DB) *AuthService {
 	jwtService := NewJWTService("") // Use default secret for now
 	return &AuthService{
 		PG:         pg,
-		Redis:      redis,
 		JWTService: jwtService,
 	}
 }

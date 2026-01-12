@@ -8,22 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
 )
 
 type EscalationService struct {
 	PG           *sql.DB
-	Redis        *redis.Client
 	GroupService *GroupService
 	FCMService   *FCMService
 }
 
-func NewEscalationService(pg *sql.DB, redis *redis.Client, groupService *GroupService, fcmService *FCMService) *EscalationService {
+func NewEscalationService(pg *sql.DB, groupService *GroupService, fcmService *FCMService) *EscalationService {
 	return &EscalationService{
 		PG:           pg,
-		Redis:        redis,
 		GroupService: groupService,
 		FCMService:   fcmService,
 	}

@@ -91,9 +91,9 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 
 	// Create Service with mocked DB
 	// Note: We need to initialize the service with dependencies.
-	// Since we can't easily mock the internal fields of IncidentService (like Redis/FCM),
+	// Since we can't easily mock the internal fields of IncidentService (like FCM),
 	// we'll pass nil for them as they shouldn't be used in GetIncident (read-only).
-	incidentService := services.NewIncidentService(db, nil, nil)
+	incidentService := services.NewIncidentService(db, nil)
 	serviceService := services.NewServiceService(db) // For routing_key lookup
 
 	// Create Handler

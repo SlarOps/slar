@@ -51,8 +51,8 @@ export function useSyncBucket(authToken) {
       });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Session expired. Please login again.');
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Session expired or invalid. Please login again.');
         }
         throw new Error(`Server error: ${response.status}`);
       }
