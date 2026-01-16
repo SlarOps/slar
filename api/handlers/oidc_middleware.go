@@ -38,11 +38,14 @@ type OIDCAuthMiddleware struct {
 }
 
 // NewOIDCAuthMiddleware creates a new OIDC auth middleware
-// Reads configuration from environment variable OIDC_ISSUER (optional)
+// Reads configuration from environment variables:
+// - OIDC_ISSUER: The OIDC issuer URL (required)
+// - OIDC_CLIENT_ID: Default client ID (optional, used as fallback)
+// - OIDC_WEB_CLIENT_ID: Client ID for web frontend (optional)
+// - OIDC_MOBILE_CLIENT_ID: Client ID for mobile app (optional)
 // Returns nil if OIDC is not configured - API will start but protected endpoints will be disabled
 func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *services.APIKeyService) *OIDCAuthMiddleware {
 	oidcIssuer := os.Getenv("OIDC_ISSUER")
-	oidcClientID := os.Getenv("OIDC_CLIENT_ID")
 
 	if oidcIssuer == "" {
 		log.Println("⚠️  WARNING: OIDC_ISSUER not configured. Protected endpoints will be disabled.")
@@ -50,19 +53,54 @@ func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *ser
 		return nil
 	}
 
-	oidcAuth, err := services.NewOIDCAuthService(oidcIssuer, oidcClientID)
+	// Collect all configured client IDs (web, mobile, and default)
+	// Backend will accept tokens from any of these client IDs
+	clientIDs := []string{}
+
+	// Add default client ID
+	if defaultClientID := os.Getenv("OIDC_CLIENT_ID"); defaultClientID != "" {
+		clientIDs = append(clientIDs, defaultClientID)
+	}
+
+	// Add web-specific client ID
+	if webClientID := os.Getenv("OIDC_WEB_CLIENT_ID"); webClientID != "" {
+		// Only add if different from default
+		if !contains(clientIDs, webClientID) {
+			clientIDs = append(clientIDs, webClientID)
+		}
+	}
+
+	// Add mobile-specific client ID
+	if mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID"); mobileClientID != "" {
+		// Only add if different from others
+		if !contains(clientIDs, mobileClientID) {
+			clientIDs = append(clientIDs, mobileClientID)
+		}
+	}
+
+	oidcAuth, err := services.NewOIDCAuthServiceWithClientIDs(oidcIssuer, clientIDs)
 	if err != nil {
 		log.Printf("⚠️  WARNING: OIDC discovery failed: %v", err)
 		log.Println("   Protected endpoints will be disabled until OIDC provider is available.")
 		return nil
 	}
 
-	log.Printf("✅ OIDC authentication configured: %s", oidcIssuer)
+	log.Printf("✅ OIDC authentication configured: %s (client IDs: %v)", oidcIssuer, clientIDs)
 	return &OIDCAuthMiddleware{
 		OIDCAuth:      oidcAuth,
 		UserService:   userService,
 		APIKeyService: apiKeyService,
 	}
+}
+
+// contains checks if a string slice contains a specific string
+func contains(slice []string, str string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
 }
 
 // OIDCAuthMiddleware validates OIDC JWT tokens

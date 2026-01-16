@@ -33,26 +33,30 @@ func NewMobileHandler(pg *sql.DB, identityService *services.IdentityService) *Mo
 }
 
 // MobileConnectQR represents the QR code payload for mobile app connection
+// V3: Simplified - removed user_id and connect_token (use OIDC for auth)
 // NOTE: Field order matters for signature verification!
 type MobileConnectQR struct {
 	Type         string `json:"type"`
 	Version      int    `json:"version"`
 	BackendURL   string `json:"backend_url"`
-	GatewayURL   string `json:"gateway_url"`
+	GatewayURL   string `json:"gateway_url,omitempty"`
 	InstanceID   string `json:"instance_id"`
 	InstanceName string `json:"instance_name"`
-	UserID       string `json:"user_id"`
-	ConnectToken string `json:"connect_token"`
 	Nonce        string `json:"nonce"`
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
 // AuthConfig contains auth configuration for a self-hosted instance
 // Returned separately from signed_token to avoid signature issues
+// NOTE: Migrated from Supabase to OIDC standard authentication
 type AuthConfig struct {
-	SupabaseURL     string `json:"supabase_url,omitempty"`
-	SupabaseAnonKey string `json:"supabase_anon_key,omitempty"`
-	AgentURL        string `json:"agent_url,omitempty"` // AI Agent URL (separate domain)
+	// OIDC Configuration (standard authentication)
+	OIDCIssuer   string `json:"oidc_issuer,omitempty"`   // OIDC IdP issuer URL (e.g., https://auth.example.com)
+	OIDCClientID string `json:"oidc_client_id,omitempty"` // OIDC client ID for mobile app
+	OIDCAudience string `json:"oidc_audience,omitempty"` // OIDC audience (required for Zitadel to return JWT tokens)
+
+	// AI Agent URL (separate domain for WebSocket connection)
+	AgentURL string `json:"agent_url,omitempty"`
 }
 
 // VerifyConnectRequest represents the request to verify a connect token
@@ -93,7 +97,9 @@ var connectTokenStore = make(map[string]*MobileConnectToken)
 
 // GenerateMobileConnectQR generates a QR code payload for mobile app connection
 // POST /api/mobile/connect/generate
+// V3: Simplified QR - no user_id/connect_token, uses OIDC for authentication
 func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
+	// User authentication is still required to generate QR (prevents abuse)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
@@ -121,13 +127,6 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		instanceName = "SLAR Instance"
 	}
 
-	// Generate connect token (expires in 5 minutes)
-	connectToken, err := generateConnectToken()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
-	}
-
 	// Generate unique nonce for replay attack prevention
 	nonce, err := generateNonce()
 	if err != nil {
@@ -135,25 +134,18 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		return
 	}
 
-	expiresAt := time.Now().Add(5 * time.Minute)
+	// QR valid for 10 minutes (longer than before since no sensitive data)
+	expiresAt := time.Now().Add(10 * time.Minute)
 
-	// Store token in memory (in production, use Redis with TTL)
-	connectTokenStore[connectToken] = &MobileConnectToken{
-		Token:     connectToken,
-		UserID:    userID,
-		ExpiresAt: expiresAt,
-	}
-
-	// Build QR payload
+	// Build simplified QR payload (V3)
+	// No user_id or connect_token - mobile uses OIDC to authenticate
 	qrPayload := MobileConnectQR{
 		Type:         "slar_mobile_connect",
-		Version:      2, // Bump version for nonce support
+		Version:      3, // V3: Simplified OIDC-only flow
 		BackendURL:   backendURL,
 		GatewayURL:   gatewayURL,
 		InstanceID:   instanceID,
 		InstanceName: instanceName,
-		UserID:       userID,
-		ConnectToken: connectToken,
 		Nonce:        nonce,
 		ExpiresAt:    expiresAt.Unix(),
 	}
@@ -177,20 +169,20 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		return
 	}
 
-	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
-	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
-	if supabaseURL == "" {
-		supabaseURL = os.Getenv("SUPABASE_URL")
-	}
-
 	// Build auth config (for mobile to authenticate with self-hosted API)
-	// These are public values (anon key is safe to share)
 	// NOTE: auth_config is NOT included in QR to keep QR size small
 	// Mobile app fetches auth_config separately after device registration
+	// Migrated from Supabase to OIDC standard authentication
+	// Use mobile-specific client ID if configured, otherwise fallback to default
+	mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID")
+	if mobileClientID == "" {
+		mobileClientID = os.Getenv("OIDC_CLIENT_ID") // Fallback to default
+	}
 	authConfig := AuthConfig{
-		SupabaseURL:     supabaseURL,
-		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
-		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
+		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),   // e.g., https://auth.example.com
+		OIDCClientID: mobileClientID,             // e.g., slar-mobile (mobile-specific)
+		OIDCAudience: os.Getenv("OIDC_AUDIENCE"), // Required for Zitadel to return JWT tokens (use Project ID)
+		AgentURL:     os.Getenv("AGENT_URL"),     // AI Agent URL (separate domain)
 	}
 
 	// Return QR content - frontend should encode the signed_token as QR
@@ -595,23 +587,24 @@ func generateNonce() (string, error) {
 
 // GetAuthConfig returns auth configuration for mobile app after device registration
 // GET /api/mobile/auth-config
-// This is called by mobile app after QR scan to get Supabase credentials and AI agent URL
+// This is called by mobile app after QR scan to get OIDC credentials and AI agent URL
 // (not included in QR to keep it small and scannable)
 func (h *MobileHandler) GetAuthConfig(c *gin.Context) {
 	// This endpoint can be public - it only returns public config
-	// (anon key is safe to share, it's in the frontend anyway)
+	// (OIDC issuer and client_id are safe to share)
 	instanceID := os.Getenv("SLAR_INSTANCE_ID")
 
-	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
-	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
-	if supabaseURL == "" {
-		supabaseURL = os.Getenv("SUPABASE_URL")
+	// Use mobile-specific client ID if configured, otherwise fallback to default
+	mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID")
+	if mobileClientID == "" {
+		mobileClientID = os.Getenv("OIDC_CLIENT_ID") // Fallback to default
 	}
 
 	authConfig := AuthConfig{
-		SupabaseURL:     supabaseURL,
-		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
-		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
+		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),   // e.g., https://auth.example.com
+		OIDCClientID: mobileClientID,             // e.g., slar-mobile (mobile-specific)
+		OIDCAudience: os.Getenv("OIDC_AUDIENCE"), // Required for Zitadel to return JWT tokens (use Project ID)
+		AgentURL:     os.Getenv("AGENT_URL"),     // AI Agent URL (separate domain)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

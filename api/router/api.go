@@ -141,10 +141,16 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 		c.Header("x-slar-env", env)
 
 		// Return OIDC config for frontend authentication
+		// Use web-specific client ID if configured, otherwise fallback to default
+		webClientID := config.App.OIDCWebClientID
+		if webClientID == "" {
+			webClientID = config.App.OIDCClientID // Fallback to default
+		}
+
 		// Only standard OIDC fields - provider name not needed (use generic "SSO")
 		c.JSON(200, gin.H{
 			"oidc_issuer":    config.App.OIDCIssuer,
-			"oidc_client_id": config.App.OIDCClientID,
+			"oidc_client_id": webClientID,
 			"api_url":        config.App.BackendURL,
 		})
 	})

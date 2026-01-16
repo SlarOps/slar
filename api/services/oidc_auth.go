@@ -20,7 +20,8 @@ import (
 // Supports: Keycloak, Auth0, Okta, Azure AD, Google, etc.
 type OIDCAuthService struct {
 	Issuer       string
-	ClientID     string
+	ClientID     string   // Primary client ID (for backward compatibility)
+	ClientIDs    []string // All valid client IDs (web, mobile, etc.)
 	rsaKeys      map[string]*rsa.PublicKey
 	keysMutex    sync.RWMutex
 	lastKeyFetch time.Time
@@ -71,6 +72,18 @@ type OIDCDiscovery struct {
 // issuer: The OIDC issuer URL (e.g., "https://auth.example.com" or "https://accounts.google.com")
 // clientID: The client ID for audience validation (optional, pass "" to skip audience check)
 func NewOIDCAuthService(issuer, clientID string) (*OIDCAuthService, error) {
+	clientIDs := []string{}
+	if clientID != "" {
+		clientIDs = append(clientIDs, clientID)
+	}
+	return NewOIDCAuthServiceWithClientIDs(issuer, clientIDs)
+}
+
+// NewOIDCAuthServiceWithClientIDs creates a new OIDC auth service with multiple client IDs
+// issuer: The OIDC issuer URL (e.g., "https://auth.example.com" or "https://accounts.google.com")
+// clientIDs: List of valid client IDs for audience validation (web, mobile, etc.)
+// Tokens with audience matching ANY of these client IDs will be accepted
+func NewOIDCAuthServiceWithClientIDs(issuer string, clientIDs []string) (*OIDCAuthService, error) {
 	// Ensure issuer has protocol
 	if !strings.HasPrefix(issuer, "http://") && !strings.HasPrefix(issuer, "https://") {
 		issuer = "https://" + issuer
@@ -78,10 +91,25 @@ func NewOIDCAuthService(issuer, clientID string) (*OIDCAuthService, error) {
 	// Remove trailing slash
 	issuer = strings.TrimSuffix(issuer, "/")
 
+	// Filter out empty client IDs
+	validClientIDs := []string{}
+	for _, id := range clientIDs {
+		if id != "" {
+			validClientIDs = append(validClientIDs, id)
+		}
+	}
+
+	// Set primary ClientID for backward compatibility
+	primaryClientID := ""
+	if len(validClientIDs) > 0 {
+		primaryClientID = validClientIDs[0]
+	}
+
 	service := &OIDCAuthService{
-		Issuer:   issuer,
-		ClientID: clientID,
-		rsaKeys:  make(map[string]*rsa.PublicKey),
+		Issuer:    issuer,
+		ClientID:  primaryClientID,
+		ClientIDs: validClientIDs,
+		rsaKeys:   make(map[string]*rsa.PublicKey),
 	}
 
 	// Fetch OIDC discovery document to get JWKS URI
@@ -157,9 +185,11 @@ func (o *OIDCAuthService) ValidateToken(tokenString string) (*OIDCClaims, error)
 	// Add issuer validation
 	parserOpts = append(parserOpts, jwt.WithIssuer(o.Issuer))
 
-	// Add audience validation if client ID is configured
-	if o.ClientID != "" {
-		parserOpts = append(parserOpts, jwt.WithAudience(o.ClientID))
+	// Add audience validation if client IDs are configured
+	// Token audience must match at least one of the configured client IDs
+	if len(o.ClientIDs) > 0 {
+		// jwt.WithAudience only accepts one audience, so we validate manually after parsing
+		// We'll validate audience after the token is parsed
 	}
 
 	token, err = jwt.ParseWithClaims(tokenString, &OIDCClaims{}, func(token *jwt.Token) (interface{}, error) {
@@ -178,6 +208,15 @@ func (o *OIDCAuthService) ValidateToken(tokenString string) (*OIDCClaims, error)
 		if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
 			return nil, errors.New("token has expired")
 		}
+
+		// Validate audience if client IDs are configured
+		// Token audience must match at least one of the configured client IDs
+		if len(o.ClientIDs) > 0 {
+			if !o.validateAudience(claims.Audience) {
+				return nil, fmt.Errorf("token audience %v does not match any configured client ID", claims.Audience)
+			}
+		}
+
 		return claims, nil
 	}
 
@@ -252,6 +291,22 @@ func (o *OIDCAuthService) fetchJWKS() (*JWKSResponse, error) {
 	}
 
 	return &jwks, nil
+}
+
+// validateAudience checks if token audience matches any configured client ID
+func (o *OIDCAuthService) validateAudience(tokenAudience []string) bool {
+	if len(o.ClientIDs) == 0 {
+		return true // No client IDs configured, skip validation
+	}
+
+	for _, tokenAud := range tokenAudience {
+		for _, clientID := range o.ClientIDs {
+			if tokenAud == clientID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseRSAPublicKey creates RSA public key from JWK parameters
