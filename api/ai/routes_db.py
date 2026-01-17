@@ -42,13 +42,14 @@ def _get_user_id_from_request(request: Request) -> tuple[str | None, dict | None
     """
     Extract user_id from request. Returns (user_id, error_response).
     If error, user_id is None and error_response contains the error dict.
+
+    SECURITY: Only accepts token from Authorization header, not URL query params.
     """
-    auth_token = request.query_params.get("auth_token") or request.headers.get(
-        "authorization", ""
-    )
+    # SECURITY: Only accept token from Authorization header, not URL query params
+    auth_token = request.headers.get("authorization", "")
 
     if not auth_token:
-        return None, {"success": False, "error": "Missing auth_token"}
+        return None, {"success": False, "error": "Missing Authorization header"}
 
     user_id = extract_user_id_from_token(auth_token)
     if not user_id:

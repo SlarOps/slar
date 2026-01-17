@@ -81,10 +81,11 @@ async def get_allowed_tools(request: Request):
         {"success": bool, "tools": [str]}
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
+            return {"success": False, "error": "Missing Authorization header"}
 
         user_id = extract_user_id_from_token(auth_token)
 
@@ -111,11 +112,12 @@ async def remove_allowed_tool(request: Request):
         {"success": bool, "message": str}
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
         tool_name = request.query_params.get("tool_name")
 
         if not auth_token:
-            return {"success": False, "message": "Missing auth_token"}
+            return {"success": False, "message": "Missing Authorization header"}
 
         if not tool_name:
             return {"success": False, "message": "Missing tool_name"}

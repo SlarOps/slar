@@ -39,14 +39,14 @@ export function useSyncBucket(authToken) {
 
       const startTime = performance.now();
 
+      // SECURITY: Send token via Authorization header, not in request body
       const response = await fetch(`${DEFAULT_AI_API_URL}/api/sync-bucket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
         },
-        body: JSON.stringify({
-          auth_token: authToken
-        }),
+        body: JSON.stringify({}),
         signal: AbortSignal.timeout(30000) // 30 second timeout
       });
 

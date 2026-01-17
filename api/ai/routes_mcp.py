@@ -49,12 +49,11 @@ async def get_mcp_servers(request: Request):
         }
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
+            return {"success": False, "error": "Missing Authorization header"}
 
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:
@@ -234,12 +233,11 @@ async def delete_mcp_server(server_name: str, request: Request):
         {"success": bool, "message": str}
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
+            return {"success": False, "error": "Missing Authorization header"}
 
         user_id = extract_user_id_from_token(auth_token)
         if not user_id:

@@ -235,12 +235,41 @@ async def lifespan(app: FastAPI):
     # - heartbeat_task is per-connection (called in websocket endpoint)
     # - marketplace cleanup is now synchronous (no worker needed)
 
+    # Start Slack Worker
+    import threading
+    from workers.slack_worker import SlackWorker
+    
+    slack_stop_event = threading.Event()
+    slack_worker_thread = None
+    
+    try:
+        slack_worker = SlackWorker()
+        if slack_worker.enabled:
+            logger.info("🔌 Starting Slack Worker thread...")
+            # Pass stop_event to run method
+            slack_worker_thread = threading.Thread(
+                target=slack_worker.run, 
+                args=(slack_stop_event,),
+                daemon=True
+            )
+            slack_worker_thread.start()
+            logger.info("✅ Slack Worker thread started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Slack Worker: {e}")
+
     logger.info("✅ Application started")
 
     yield
 
     # Shutdown
     logger.info("🛑 Stopping application...")
+
+    # Stop Slack Worker
+    if slack_worker_thread and slack_worker_thread.is_alive():
+        logger.info("🛑 Stopping Slack Worker...")
+        slack_stop_event.set()
+        slack_worker_thread.join(timeout=5.0)
+        logger.info("✅ Slack Worker stopped")
 
     # Stop PGMQ consumer
     await stop_pgmq_consumer()
@@ -266,7 +295,7 @@ app = FastAPI(
 # SECURITY: Using "*" with allow_credentials=True is a security vulnerability
 ALLOWED_ORIGINS = os.getenv(
     "AI_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:8000"
+    "http://localhost:3000,http://localhost:8000,http://localhost:3001"
 ).split(",")
 
 # Strip whitespace from origins

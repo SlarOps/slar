@@ -92,8 +92,7 @@ class IncidentAnalyticsPGMQ:
         labels = incident.get("labels", {})
         raw_data = incident.get("raw_data", {})
 
-        prompt = f"""Analyze this production incident and provide actionable insights make sumary is simple and clean, use your tools:
-You can find related incident in 10 minutes before or after this incident to help you analyze this incident.
+        prompt = f"""You are SRE, analyze this incident 
 # Incident Details
 - **Title**: {title}
 - **Source**: {source}

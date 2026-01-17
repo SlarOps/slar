@@ -1134,29 +1134,29 @@ class APIClient {
   // NOTIFICATION CONFIGURATION APIs
   // ===========================
 
-  // Get user notification configuration
-  async getUserNotificationConfig(userId) {
-    return this.request(`/users/${userId}/notifications/config`);
+  // Get current user's notification configuration
+  async getUserNotificationConfig() {
+    return this.request('/users/me/notifications/config');
   }
 
-  // Update user notification configuration
-  async updateUserNotificationConfig(userId, configData) {
-    return this.request(`/users/${userId}/notifications/config`, {
+  // Update current user's notification configuration
+  async updateUserNotificationConfig(configData) {
+    return this.request('/users/me/notifications/config', {
       method: 'PUT',
       body: JSON.stringify(configData)
     });
   }
 
-  // Test Slack notification
-  async testSlackNotification(userId) {
-    return this.request(`/users/${userId}/notifications/test/slack`, {
+  // Test Slack notification for current user
+  async testSlackNotification() {
+    return this.request('/users/me/notifications/test/slack', {
       method: 'POST'
     });
   }
 
-  // Get notification statistics
-  async getUserNotificationStats(userId) {
-    return this.request(`/users/${userId}/notifications/stats`);
+  // Get notification statistics for current user
+  async getUserNotificationStats() {
+    return this.request('/users/me/notifications/stats');
   }
 
   // Get current user info

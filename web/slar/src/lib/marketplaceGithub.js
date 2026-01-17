@@ -407,14 +407,15 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
     }
 
     // Call AI service endpoint to git clone
+    // SECURITY: Send token via Authorization header, not in request body
     const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
     const response = await fetch(`${aiServiceUrl}/api/marketplace/clone`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         owner,
         repo,
         branch: branch || 'main',
@@ -484,14 +485,15 @@ export async function updateMarketplace(marketplaceName, authToken, onProgress) 
       });
     }
 
+    // SECURITY: Send token via Authorization header, not in request body
     const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
     const response = await fetch(`${aiServiceUrl}/api/marketplace/update`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         marketplace_name: marketplaceName,
       }),
     });
@@ -623,15 +625,16 @@ export async function fetchMarketplaceMetadata(owner, repo, branch = 'main', aut
   try {
     console.log('[marketplaceGithub] 🌐 Fetching marketplace metadata (lightweight):', { owner, repo, branch });
 
+    // SECURITY: Send token via Authorization header, not in request body
     const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/fetch-metadata`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         owner,
         repo,
         branch,
@@ -689,15 +692,16 @@ export async function installPluginFromMarketplace(
       version
     });
 
+    // SECURITY: Send token via Authorization header, not in request body
     const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/install-plugin`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         marketplace_name: marketplaceName,
         plugin_name: pluginName,
         version

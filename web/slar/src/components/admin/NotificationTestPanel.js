@@ -4,32 +4,31 @@ import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import apiClient from '../../lib/api';
 import { toast } from 'react-hot-toast';
-import { 
-  FlaskIcon, 
-  LoadingSpinner, 
-  CheckCircleIcon, 
+import {
+  FlaskIcon,
+  LoadingSpinner,
+  CheckCircleIcon,
   AlertCircleIcon,
-  InfoIcon 
+  InfoIcon
 } from '../ui/Icons';
-import { Input } from '../ui';
 
 export default function NotificationTestPanel() {
   const { session } = useAuth();
   const [testing, setTesting] = useState(false);
-  const [testUserId, setTestUserId] = useState('');
   const [testResults, setTestResults] = useState(null);
 
   const handleTestNotifications = async () => {
-    if (!testUserId.trim()) {
-      toast.error('Please enter a user ID to test');
+    if (!session?.access_token) {
+      toast.error('Please sign in to test notifications');
       return;
     }
 
     setTesting(true);
     setTestResults(null);
+    apiClient.setToken(session.access_token);
 
     try {
-      // Test notification endpoints
+      // Test notification endpoints for current user
       const results = {
         config: null,
         slackTest: null,
@@ -39,7 +38,7 @@ export default function NotificationTestPanel() {
 
       // 1. Get user notification config
       try {
-        results.config = await apiClient.getUserNotificationConfig(testUserId);
+        results.config = await apiClient.getUserNotificationConfig();
         toast.success('✓ User config loaded');
       } catch (error) {
         results.errors.push(`Config Error: ${error.message}`);
@@ -48,7 +47,7 @@ export default function NotificationTestPanel() {
 
       // 2. Test Slack notification
       try {
-        await apiClient.testSlackNotification(testUserId);
+        await apiClient.testSlackNotification();
         results.slackTest = { success: true };
         toast.success('✓ Slack test sent');
       } catch (error) {
@@ -59,7 +58,7 @@ export default function NotificationTestPanel() {
 
       // 3. Get notification stats
       try {
-        results.stats = await apiClient.getUserNotificationStats(testUserId);
+        results.stats = await apiClient.getUserNotificationStats();
         toast.success('✓ Stats loaded');
       } catch (error) {
         results.errors.push(`Stats Error: ${error.message}`);
@@ -94,27 +93,14 @@ export default function NotificationTestPanel() {
           </h3>
         </div>
         <p className="text-sm text-gray-600">
-          Test notification functionality for any user in the system.
+          Test notification functionality for your account.
         </p>
       </div>
 
       <div className="space-y-4">
-        <Input
-          label="Test User ID"
-          type="text"
-          value={testUserId}
-          onChange={(e) => setTestUserId(e.target.value)}
-          placeholder="Enter user ID to test notifications"
-          required
-          leftIcon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-          </svg>}
-          helperText="Enter the user ID to test all notification functionality"
-        />
-
         <button
           onClick={handleTestNotifications}
-          disabled={testing || !testUserId.trim()}
+          disabled={testing}
           className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {testing ? (
@@ -269,11 +255,10 @@ export default function NotificationTestPanel() {
           <h5 className="font-medium text-blue-800">Test Guide</h5>
         </div>
         <ul className="text-sm text-blue-700 space-y-1">
-          <li>• Enter any valid user ID from your system</li>
-          <li>• Test will check configuration, send Slack notification, and load stats</li>
+          <li>• Test will check your notification configuration</li>
+          <li>• A test Slack notification will be sent if configured</li>
           <li>• Green checkmarks indicate successful operations</li>
           <li>• Red X marks show failures with detailed error messages</li>
-          <li>• User will receive actual test notification if Slack is configured</li>
         </ul>
       </div>
     </div>

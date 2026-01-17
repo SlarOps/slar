@@ -34,7 +34,7 @@ const timezoneOptions = [
   { value: 'Australia/Sydney', label: 'Australian Eastern Time (Sydney)' }
 ];
 
-export default function NotificationSettings({ userId }) {
+export default function NotificationSettings() {
   const { session } = useAuth();
   const [config, setConfig] = useState({
     slack_user_id: '',
@@ -50,16 +50,16 @@ export default function NotificationSettings({ userId }) {
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
-    if (session?.access_token && userId) {
+    if (session?.access_token) {
       apiClient.setToken(session.access_token);
       loadNotificationConfig();
       loadNotificationStats();
     }
-  }, [session, userId]);
+  }, [session]);
 
   const loadNotificationConfig = async () => {
     try {
-      const response = await apiClient.getUserNotificationConfig(userId);
+      const response = await apiClient.getUserNotificationConfig();
       setConfig({
         slack_user_id: response.slack_user_id || '',
         slack_channel_id: response.slack_channel_id || '',
@@ -78,7 +78,7 @@ export default function NotificationSettings({ userId }) {
 
   const loadNotificationStats = async () => {
     try {
-      const response = await apiClient.getUserNotificationStats(userId);
+      const response = await apiClient.getUserNotificationStats();
       setStats(response);
     } catch (error) {
       console.error('Failed to load notification stats:', error);
@@ -86,11 +86,9 @@ export default function NotificationSettings({ userId }) {
   };
 
   const handleSave = async () => {
-    if (!userId) return;
-
     setSaving(true);
     try {
-      await apiClient.updateUserNotificationConfig(userId, config);
+      await apiClient.updateUserNotificationConfig(config);
       toast.success('Notification settings saved successfully!');
       
       // Reload stats after save
@@ -104,11 +102,9 @@ export default function NotificationSettings({ userId }) {
   };
 
   const handleTestSlack = async () => {
-    if (!userId) return;
-
     setTesting(true);
     try {
-      await apiClient.testSlackNotification(userId);
+      await apiClient.testSlackNotification();
       toast.success('Test notification sent! Check your Slack.');
     } catch (error) {
       console.error('Failed to send test notification:', error);

@@ -212,8 +212,10 @@ async def list_conversations(request: Request):
     """
     List user's conversations for resume functionality.
 
+    Headers:
+        Authorization: Bearer token (required)
+
     Query params:
-        auth_token: Bearer token
         limit: Number of conversations to return (default: 20)
         offset: Pagination offset (default: 0)
         archived: Include archived conversations (default: false)
@@ -237,7 +239,8 @@ async def list_conversations(request: Request):
         }
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
         limit = int(request.query_params.get("limit", "20"))
         offset = int(request.query_params.get("offset", "0"))
         include_archived = request.query_params.get("archived", "false").lower() == "true"
@@ -310,8 +313,8 @@ async def get_conversation(conversation_id: str, request: Request):
     Path params:
         conversation_id: Claude conversation ID
 
-    Query params:
-        auth_token: Bearer token
+    Headers:
+        Authorization: Bearer token (required)
 
     Returns:
         {
@@ -320,7 +323,8 @@ async def get_conversation(conversation_id: str, request: Request):
         }
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -361,8 +365,10 @@ async def get_messages(conversation_id: str, request: Request):
     Path params:
         conversation_id: Claude conversation ID
 
+    Headers:
+        Authorization: Bearer token (required)
+
     Query params:
-        auth_token: Bearer token
         limit: Max messages to return (default: 100)
 
     Returns:
@@ -380,7 +386,8 @@ async def get_messages(conversation_id: str, request: Request):
         }
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
         limit = int(request.query_params.get("limit", "100"))
 
         if not auth_token:
@@ -488,14 +495,15 @@ async def delete_conversation(conversation_id: str, request: Request):
     Path params:
         conversation_id: Claude conversation ID
 
-    Query params:
-        auth_token: Bearer token
+    Headers:
+        Authorization: Bearer token (required)
 
     Returns:
         {"success": bool, "message": str}
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}

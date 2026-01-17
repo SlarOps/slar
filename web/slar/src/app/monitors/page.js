@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { apiClient } from '../../lib/api';
 import UptimeStatusBar from '../../components/monitors/UptimeStatusBar';
-import ResponseTimeChart from '../../components/monitors/ResponseTimeChart';
+import ResponseTimeChart from '../../components/monitors/ResponseTimeChartLazy';
 import MonitorModal from '../../components/monitors/MonitorModal';
 import DeploymentModal from '../../components/monitors/DeploymentModal';
 import DeleteDeploymentModal from '../../components/monitors/DeleteDeploymentModal';

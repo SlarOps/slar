@@ -336,11 +336,11 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 			userRoutes.POST("/fcm-token", userHandler.UpdateFCMToken)
 			userRoutes.GET("/fcm-token", userHandler.GetFCMToken)
 
-			// Notification configuration endpoints
-			userRoutes.GET("/:id/notifications/config", notificationHandler.GetNotificationConfig)
-			userRoutes.PUT("/:id/notifications/config", notificationHandler.UpdateNotificationConfig)
-			userRoutes.POST("/:id/notifications/test/slack", notificationHandler.TestSlackNotification)
-			userRoutes.GET("/:id/notifications/stats", notificationHandler.GetNotificationStats)
+			// Notification configuration endpoints (uses authenticated user from context)
+			userRoutes.GET("/me/notifications/config", notificationHandler.GetNotificationConfig)
+			userRoutes.PUT("/me/notifications/config", notificationHandler.UpdateNotificationConfig)
+			userRoutes.POST("/me/notifications/test/slack", notificationHandler.TestSlackNotification)
+			userRoutes.GET("/me/notifications/stats", notificationHandler.GetNotificationStats)
 		}
 
 		// ON-CALL MANAGEMENT
