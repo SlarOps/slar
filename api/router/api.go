@@ -611,12 +611,13 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 		}
 	}
 
-	// PUBLIC MOBILE ENDPOINTS (no Supabase auth - token verified internally)
+	// PUBLIC MOBILE ENDPOINTS (no auth - used during QR connection flow)
 	mobilePublicRoutes := r.Group("/mobile")
 	{
-		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)
+		mobilePublicRoutes.GET("/connect/:code", mobileHandler.GetMobileConnectConfig) // V4: Fetch config by code
+		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)  // Legacy V1-V3
 		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
-		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get Supabase config after QR scan
+		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get OIDC config after QR scan
 	}
 
 	// PUBLIC SHARED CONVERSATION VIEW (no auth - anyone with link can view)
