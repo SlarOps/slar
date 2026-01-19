@@ -536,6 +536,55 @@ export async function updateMarketplace(marketplaceName, authToken, onProgress) 
 }
 
 /**
+ * Refresh skills for a marketplace (re-scan without git fetch)
+ *
+ * Use this to update skills metadata for marketplaces that were cloned
+ * before skill auto-discovery was implemented.
+ */
+export async function refreshMarketplaceSkills(marketplaceName, authToken) {
+  try {
+    console.log('[marketplaceGithub] Refreshing skills for marketplace:', { marketplaceName });
+
+    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const response = await fetch(`${aiServiceUrl}/api/marketplace/refresh-skills`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        marketplace_name: marketplaceName,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Backend returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to refresh skills');
+    }
+
+    console.log(`[marketplaceGithub] ✅ ${data.message}`);
+
+    return {
+      success: true,
+      message: data.message,
+      plugins: data.plugins
+    };
+  } catch (error) {
+    console.error('[marketplaceGithub] Error refreshing marketplace skills:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
  * Add custom marketplace repository
  */
 export function addMarketplaceRepo(owner, repo, branch = 'main', type = 'skills') {

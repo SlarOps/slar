@@ -77,6 +77,48 @@ async def run_git_command(
         return False, "", str(e)
 
 
+from typing import Optional, Tuple, Callable, Any
+
+async def execute_git_operation_with_fallback(
+    repo_url: str,
+    initial_branch: str,
+    operation: Callable[[str], Any]
+) -> Tuple[bool, str, Any]:
+    """
+    Execute a git operation with automatic default branch detection fallback.
+
+    Args:
+        repo_url: Repository URL
+        initial_branch: Initial branch to try
+        operation: Async callback taking (branch_name) -> (success, stdout, stderr)
+
+    Returns:
+        Tuple of (success, final_branch, result_from_operation)
+    """
+    # Attempt 1: Try with requested branch
+    success, stdout, stderr = await operation(initial_branch)
+    
+    if success:
+        return True, initial_branch, (success, stdout, stderr)
+
+    logger.warning(f"⚠️ Git operation with branch '{initial_branch}' failed: {stderr}")
+
+    # Attempt 2: Detect default branch and retry if different
+    try:
+        default_branch = await get_remote_default_branch(repo_url)
+        
+        if default_branch and default_branch != initial_branch:
+            logger.info(f"🔄 Retrying with detected default branch: '{default_branch}'")
+            success, stdout, stderr = await operation(default_branch)
+            
+            if success:
+                return True, default_branch, (success, stdout, stderr)
+    except Exception as e:
+        logger.error(f"❌ Error during branch fallback: {e}")
+
+    return False, initial_branch, (success, stdout, stderr)
+
+
 async def clone_repository(
     repo_url: str,
     target_dir: Path,
@@ -103,17 +145,24 @@ async def clone_repository(
         logger.warning(f"⚠️ Removing existing directory: {target_dir}")
         shutil.rmtree(target_dir)
 
-    # Clone with shallow depth
-    args = [
-        "clone",
-        "--depth", str(depth),
-        "--branch", branch,
-        "--single-branch",
-        repo_url,
-        str(target_dir)
-    ]
+    # Define operation callback
+    async def _try_clone(b: str) -> Tuple[bool, str, str]:
+        cmd_args = [
+            "clone",
+            "--depth", str(depth),
+            "--branch", b,
+            "--single-branch",
+            repo_url,
+            str(target_dir)
+        ]
+        return await run_git_command(cmd_args)
 
-    success, stdout, stderr = await run_git_command(args)
+    # Execute with fallback
+    success, used_branch, result = await execute_git_operation_with_fallback(
+        repo_url, branch, _try_clone
+    )
+    
+    _, _, stderr = result
 
     if not success:
         return False, f"Clone failed: {stderr}"
@@ -121,9 +170,39 @@ async def clone_repository(
     # Get current commit SHA
     commit_sha = await get_current_commit(target_dir)
 
-    logger.info(f"✅ Cloned {repo_url} @ {branch} -> {target_dir} (commit: {commit_sha[:8] if commit_sha else 'unknown'})")
+    logger.info(f"✅ Cloned {repo_url} @ {used_branch} -> {target_dir} (commit: {commit_sha[:8] if commit_sha else 'unknown'})")
 
     return True, commit_sha or "unknown"
+
+
+async def get_remote_default_branch(repo_url: str) -> Optional[str]:
+    """
+    Detect the default branch of a remote repository.
+    
+    Args:
+        repo_url: Repository URL
+        
+    Returns:
+        Default branch name (e.g. 'main', 'master') or None if detection fails
+    """
+    # Use git ls-remote --symref to get HEAD reference
+    success, stdout, _ = await run_git_command(
+        ["ls-remote", "--symref", repo_url, "HEAD"]
+    )
+    
+    if success and stdout:
+        # Output format example:
+        # ref: refs/heads/main	HEAD
+        # 5f... HEAD
+        for line in stdout.splitlines():
+            if line.startswith("ref: refs/heads/"):
+                # Extract branch name
+                parts = line.split("\t")
+                if parts:
+                    ref_part = parts[0]
+                    return ref_part.replace("ref: refs/heads/", "").strip()
+    
+    return None
 
 
 async def fetch_and_reset(
@@ -149,18 +228,35 @@ async def fetch_and_reset(
     # Get current commit before fetch
     old_commit = await get_current_commit(repo_dir)
 
-    # Fetch from origin
-    success, _, stderr = await run_git_command(
-        ["fetch", "origin", branch],
+    # Get remote URL for fallback
+    success_url, remote_url, _ = await run_git_command(
+        ["remote", "get-url", "origin"],
         cwd=repo_dir
     )
+    
+    if not success_url or not remote_url:
+        return False, "Could not determine remote URL", False
+
+    # Define operation callback
+    async def _try_fetch(b: str) -> Tuple[bool, str, str]:
+        return await run_git_command(
+            ["fetch", "origin", b],
+            cwd=repo_dir
+        )
+
+    # Execute with fallback
+    success, used_branch, result = await execute_git_operation_with_fallback(
+        remote_url.strip(), branch, _try_fetch
+    )
+    
+    _, _, stderr = result
 
     if not success:
         return False, f"Fetch failed: {stderr}", False
 
     # Hard reset to origin/branch
     success, _, stderr = await run_git_command(
-        ["reset", "--hard", f"origin/{branch}"],
+        ["reset", "--hard", f"origin/{used_branch}"],
         cwd=repo_dir
     )
 
@@ -172,9 +268,9 @@ async def fetch_and_reset(
     had_changes = old_commit != new_commit
 
     if had_changes:
-        logger.info(f"📦 Updated: {old_commit[:8] if old_commit else '?'} -> {new_commit[:8] if new_commit else '?'}")
+        logger.info(f"📦 Updated: {old_commit[:8] if old_commit else '?'} -> {new_commit[:8] if new_commit else '?'} (branch: {used_branch})")
     else:
-        logger.info(f"✅ Already up to date: {new_commit[:8] if new_commit else '?'}")
+        logger.info(f"✅ Already up to date: {new_commit[:8] if new_commit else '?'} (branch: {used_branch})")
 
     return True, new_commit or "unknown", had_changes
 

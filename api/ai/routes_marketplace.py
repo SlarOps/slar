@@ -20,8 +20,10 @@ import json
 import logging
 import re
 import shutil
+import yaml
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request
@@ -48,6 +50,141 @@ router = APIRouter(prefix="/api", tags=["marketplace"])
 
 _MARKETPLACE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
+
+# =============================================================================
+# SKILL DISCOVERY FUNCTIONS
+# =============================================================================
+
+def parse_yaml_frontmatter(file_path: Path) -> Optional[dict]:
+    """
+    Parse YAML frontmatter from a SKILL.md file.
+
+    SKILL.md format:
+    ---
+    name: skill-name
+    description: Skill description...
+    ---
+    # Content...
+
+    Returns:
+        dict with frontmatter fields, or None if parsing fails
+    """
+    try:
+        content = file_path.read_text(encoding='utf-8')
+
+        # Check for YAML frontmatter markers
+        if not content.startswith('---'):
+            return None
+
+        # Find the closing ---
+        end_marker = content.find('---', 3)
+        if end_marker == -1:
+            return None
+
+        # Extract and parse YAML
+        yaml_content = content[3:end_marker].strip()
+        frontmatter = yaml.safe_load(yaml_content)
+
+        if not isinstance(frontmatter, dict):
+            return None
+
+        return frontmatter
+    except Exception as e:
+        logger.warning(f"Failed to parse YAML frontmatter from {file_path}: {e}")
+        return None
+
+
+def discover_skills_in_plugin(plugin_dir: Path) -> list:
+    """
+    Discover all skills in a plugin directory by scanning for SKILL.md files.
+
+    Expected structure:
+        plugin_dir/
+        ├── skills/
+        │   ├── skill-name-1/SKILL.md
+        │   └── skill-name-2/SKILL.md
+
+    Returns:
+        List of skill metadata dicts: [{"name": "...", "description": "...", "path": "..."}]
+    """
+    skills = []
+    skills_dir = plugin_dir / "skills"
+
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        logger.debug(f"No skills directory found in {plugin_dir}")
+        return skills
+
+    # Scan for SKILL.md files in subdirectories
+    for skill_md_path in skills_dir.glob("*/SKILL.md"):
+        frontmatter = parse_yaml_frontmatter(skill_md_path)
+
+        skill_folder_name = skill_md_path.parent.name
+
+        if frontmatter:
+            skill_info = {
+                "name": frontmatter.get("name", skill_folder_name),
+                "description": frontmatter.get("description", ""),
+                "path": f"skills/{skill_folder_name}/SKILL.md"
+            }
+        else:
+            # Fallback: use folder name if no frontmatter
+            skill_info = {
+                "name": skill_folder_name,
+                "description": "",
+                "path": f"skills/{skill_folder_name}/SKILL.md"
+            }
+
+        skills.append(skill_info)
+        logger.debug(f"Discovered skill: {skill_info['name']} in {plugin_dir}")
+
+    logger.info(f"Discovered {len(skills)} skill(s) in {plugin_dir.name}")
+    return skills
+
+
+def enrich_plugins_with_skills(marketplace_dir: Path, plugins: list) -> list:
+    """
+    Enrich plugin metadata with discovered skills.
+
+    For each plugin in the list, scan its directory for SKILL.md files
+    and add the skills array to the plugin metadata.
+
+    Args:
+        marketplace_dir: Root directory of the cloned marketplace
+        plugins: List of plugin metadata from marketplace.json
+
+    Returns:
+        Enriched list of plugins with skills arrays
+    """
+    enriched_plugins = []
+
+    for plugin in plugins:
+        plugin_copy = dict(plugin)
+        source = plugin.get("source", "./")
+
+        # Normalize source path
+        source_clean = source.replace("./", "").strip("/")
+
+        if source_clean:
+            plugin_dir = marketplace_dir / source_clean
+        else:
+            plugin_dir = marketplace_dir
+
+        if plugin_dir.exists() and plugin_dir.is_dir():
+            discovered_skills = discover_skills_in_plugin(plugin_dir)
+            plugin_copy["skills"] = discovered_skills
+            logger.info(f"Plugin '{plugin.get('name')}': {len(discovered_skills)} skill(s) discovered")
+        else:
+            plugin_copy["skills"] = []
+            logger.warning(f"Plugin directory not found: {plugin_dir}")
+
+        enriched_plugins.append(plugin_copy)
+
+    return enriched_plugins
+
+
+# =============================================================================
+# VALIDATION FUNCTIONS
+# =============================================================================
 
 def _is_valid_marketplace_name(name: str) -> bool:
     """
@@ -483,6 +620,12 @@ async def clone_marketplace(request: Request):
                 "plugins": [],
             }
 
+        # Auto-discover skills for each plugin
+        raw_plugins = marketplace_metadata.get("plugins", [])
+        enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+        marketplace_metadata["plugins"] = enriched_plugins
+        logger.info(f"Enriched {len(enriched_plugins)} plugin(s) with skills")
+
         # Save to PostgreSQL
         logger.info("Saving marketplace metadata to PostgreSQL...")
 
@@ -543,6 +686,122 @@ async def clone_marketplace(request: Request):
         return {
             "success": False,
             "error": sanitize_error_message(e, "cloning repository")
+        }
+
+
+@router.post("/marketplace/refresh-skills")
+async def refresh_marketplace_skills(request: Request):
+    """
+    Re-scan and refresh skills for an already cloned marketplace.
+
+    Use this to update skills metadata without pulling new changes from git.
+    Useful when marketplace was cloned before skill discovery was implemented.
+
+    Request body:
+        {
+            "auth_token": "Bearer ...",
+            "marketplace_name": "anthropic-agent-skills"
+        }
+
+    Returns:
+        {"success": bool, "message": str, "plugins": [...]}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+        marketplace_name = body.get("marketplace_name")
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        if not marketplace_name:
+            return {"success": False, "error": "Missing required field: marketplace_name"}
+
+        if not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
+
+        user_id = extract_user_id_from_token(auth_token)
+        logger.info(f"User {user_id}: Refreshing skills for marketplace '{marketplace_name}'")
+
+        # Get marketplace from DB
+        def get_marketplace_sync():
+            return execute_query(
+                "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+                (user_id, marketplace_name),
+                fetch="one"
+            )
+
+        marketplace = await asyncio.get_event_loop().run_in_executor(
+            None, get_marketplace_sync
+        )
+
+        if not marketplace:
+            return {
+                "success": False,
+                "error": f"Marketplace '{marketplace_name}' not found",
+            }
+
+        # Get marketplace directory
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+
+        if not marketplace_dir.exists():
+            return {
+                "success": False,
+                "error": f"Marketplace directory not found. Please re-clone the marketplace.",
+            }
+
+        # Read marketplace.json
+        marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
+        if not marketplace_json_path.exists():
+            return {
+                "success": False,
+                "error": "marketplace.json not found in repository",
+            }
+
+        try:
+            marketplace_metadata = json.loads(marketplace_json_path.read_text())
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to parse marketplace.json: {str(e)}",
+            }
+
+        # Re-discover skills for all plugins
+        raw_plugins = marketplace_metadata.get("plugins", [])
+        enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+
+        total_skills = sum(len(p.get("skills", [])) for p in enriched_plugins)
+        logger.info(f"Refreshed {len(enriched_plugins)} plugin(s) with {total_skills} total skill(s)")
+
+        # Update database
+        def update_db_sync():
+            execute_query(
+                """
+                UPDATE marketplaces SET
+                    plugins = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s AND name = %s
+                """,
+                (json.dumps(enriched_plugins), user_id, marketplace_name),
+                fetch="none"
+            )
+
+        await asyncio.get_event_loop().run_in_executor(None, update_db_sync)
+
+        return {
+            "success": True,
+            "message": f"Refreshed skills for {len(enriched_plugins)} plugin(s), found {total_skills} skill(s)",
+            "plugins": enriched_plugins,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "refreshing marketplace skills")
         }
 
 
@@ -625,14 +884,22 @@ async def update_marketplace(request: Request):
         new_commit_sha = result
         old_commit_sha = marketplace.get("git_commit_sha", "unknown")
 
-        # Re-read marketplace.json if changed
+        # Always re-read marketplace.json and re-scan skills (even if no git changes)
+        # This ensures skills are discovered for marketplaces cloned before skill discovery
         marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
         marketplace_metadata = None
 
-        if had_changes and marketplace_json_path.exists():
+        if marketplace_json_path.exists():
             try:
                 marketplace_metadata = json.loads(marketplace_json_path.read_text())
-                logger.info(f"Updated marketplace.json: {marketplace_metadata.get('name')}")
+                logger.info(f"Read marketplace.json: {marketplace_metadata.get('name')}")
+
+                # Always re-discover skills for each plugin
+                raw_plugins = marketplace_metadata.get("plugins", [])
+                enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+                marketplace_metadata["plugins"] = enriched_plugins
+                total_skills = sum(len(p.get("skills", [])) for p in enriched_plugins)
+                logger.info(f"Enriched {len(enriched_plugins)} plugin(s) with {total_skills} total skill(s)")
             except Exception as e:
                 logger.warning(f"Failed to parse marketplace.json: {e}")
 

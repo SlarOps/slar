@@ -421,6 +421,13 @@ async def message_router(
                     "[!] Routing permission response to permission_response_queue"
                 )
                 await permission_response_queue.put(data)
+            elif msg_type == "fetch_capabilities":
+                # Special request to fetch available commands (sends "/" to SDK)
+                # This is a silent request - won't show in chat, just returns capabilities
+                logger.info("[!] Routing fetch_capabilities to agent_queue")
+                data["prompt"] = "/"  # SDK returns commands list for "/"
+                data["silent"] = True  # Mark as silent - don't save to conversation
+                await agent_queue.put(data)
             else:
                 logger.info("[!] Routing agent message to agent_queue")
                 await agent_queue.put(data)
@@ -633,23 +640,25 @@ async def agent_task_streaming(
                     context["user_id"] = extract_user_id_from_token(context["auth_token"]) or ""
 
                 prompt = data.get("prompt", "")
+                is_silent = data.get("silent", False)  # Silent mode for fetch_capabilities
+
                 if not prompt:
                     logger.warning("⚠️ Empty prompt received, skipping")
                     continue
 
-                # Store first prompt (for new conversation)
-                if not context["first_prompt"] and not context["is_resuming"]:
+                # Store first prompt (for new conversation) - skip for silent requests
+                if not context["first_prompt"] and not context["is_resuming"] and not is_silent:
                     context["first_prompt"] = prompt
 
                 # Reset per-message state
                 assistant_text_buffer = []
-                user_message_saved = False
+                user_message_saved = is_silent  # Skip saving user message for silent requests
                 current_prompt = prompt
 
-                logger.info(f"📤 Yielding message to SDK: {prompt[:50]}...")
+                logger.info(f"📤 Yielding message to SDK: {prompt[:50]}... (silent={is_silent})")
 
-                # Audit log
-                if context["user_id"]:
+                # Audit log - skip for silent requests
+                if context["user_id"] and not is_silent:
                     audit = get_audit_service()
                     await audit.log_chat_message(
                         user_id=context["user_id"],
@@ -737,7 +746,15 @@ async def agent_task_streaming(
                             was_interrupted = True
                         continue  # Skip processing, keep draining
 
-                    logger.info(f"📨 Received: {type(message).__name__}")
+                    # Log loaded plugins from init message
+                    if isinstance(message, SystemMessage) and isinstance(message.data, dict):
+                        if message.data.get("subtype") == "init":
+                            loaded_plugins = message.data.get("plugins")
+                            slash_commands = message.data.get("slash_commands")
+                            logger.info(f"🔌 Loaded plugins: {loaded_plugins}")
+                            logger.info(f"📜 Available commands: {slash_commands}")
+
+                    logger.info(f"📨 Received: {message}")
 
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
@@ -823,6 +840,22 @@ async def agent_task_streaming(
                                         "type": "conversation_started",
                                         "conversation_id": claude_session_id
                                     })
+
+                                # Send available commands/plugins to frontend (for autocomplete)
+                                slash_commands = message.data.get("slash_commands", [])
+                                plugins = message.data.get("plugins", [])
+                                skills = message.data.get("skills", [])
+                                agents = message.data.get("agents", [])
+
+                                if slash_commands or plugins or skills or agents:
+                                    await output_queue.put({
+                                        "type": "capabilities",
+                                        "slash_commands": slash_commands,
+                                        "plugins": plugins,
+                                        "skills": skills,
+                                        "agents": agents
+                                    })
+                                    logger.info(f"📤 Sent capabilities: {len(slash_commands)} commands, {len(plugins)} plugins")
 
                     elif isinstance(message, ResultMessage):
                         await output_queue.put({
@@ -952,15 +985,15 @@ async def agent_task_streaming(
         user_plugins = []
         if context["user_id"]:
             user_plugins = load_user_plugins(context["user_id"])
-            if user_plugins:
-                logger.info(f"📦 Loaded {len(user_plugins)} plugins")
+            logger.info(f"📦 Loaded {len(user_plugins)} plugins: {user_plugins}")
 
         # Load allowed tools
         allowed_tools = [
             "mcp__incident_tools__get_incidents_by_time",
             "mcp__incident_tools__get_incidents_by_id",
             "mcp__incident_tools__get_current_time",
-            "mcp__incident_tools__get_incident_stats"
+            "mcp__incident_tools__get_incident_stats",
+            "Skill"
         ]
         if context["user_id"]:
             user_allowed = await get_user_allowed_tools(context["user_id"])
@@ -1364,10 +1397,8 @@ async def agent_task(
                             logger.info("🛑 Receive loop - interrupted, waiting for SDK to finish")
                             continue  # Let SDK complete naturally after interrupt
 
-                        logger.info(f"Message: {message}")
 
                         # Process message normally
-                        logger.debug(f"Received message: {message}")
                         if isinstance(message, AssistantMessage):
                             for block in message.content:
                                 if isinstance(block, ThinkingBlock):
@@ -1474,6 +1505,22 @@ async def agent_task(
                                         "session_id": session_id,  # Zero-Trust session (unchanged)
                                         "conversation_id": claude_session_id,  # Claude conversation (NEW!)
                                     })
+
+                                # Send available commands/plugins to frontend (for autocomplete)
+                                slash_commands = message.data.get("slash_commands", [])
+                                plugins = message.data.get("plugins", [])
+                                skills = message.data.get("skills", [])
+                                agents = message.data.get("agents", [])
+
+                                if slash_commands or plugins or skills or agents:
+                                    await output_queue.put({
+                                        "type": "capabilities",
+                                        "slash_commands": slash_commands,
+                                        "plugins": plugins,
+                                        "skills": skills,
+                                        "agents": agents
+                                    })
+                                    logger.info(f"📤 Sent capabilities: {len(slash_commands)} commands, {len(plugins)} plugins")
 
                         if isinstance(message, ResultMessage):
                             await output_queue.put(

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { TodoList } from '../ai-agent/TodoList';
 import { ShareModal } from './ShareModal';
@@ -20,9 +20,95 @@ const ChatInput = ({
   syncStatus = 'idle',
   todos = [],
   conversationId = null,
-  hasMessages = false
+  hasMessages = false,
+  capabilities = { slash_commands: [], plugins: [], skills: [], agents: [] },
+  onFetchCapabilities = null
 }) => {
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [isFetchingCapabilities, setIsFetchingCapabilities] = useState(false);
+  const inputRef = useRef(null);
+  const suggestionsRef = useRef(null);
+  const prevValueRef = useRef(value);
+
+  // Auto-fetch capabilities when user types "/"
+  useEffect(() => {
+    const prevValue = prevValueRef.current;
+    prevValueRef.current = value;
+
+    // Detect when "/" is first typed (transition from empty or non-/ to /)
+    if (value === '/' && prevValue !== '/' && !prevValue.startsWith('/')) {
+      // No commands cached yet - fetch them
+      if (capabilities.slash_commands.length === 0 && onFetchCapabilities && !isFetchingCapabilities) {
+        console.log('Auto-fetching capabilities...');
+        setIsFetchingCapabilities(true);
+        onFetchCapabilities();
+        // Reset fetching state after a delay
+        setTimeout(() => setIsFetchingCapabilities(false), 3000);
+      }
+    }
+  }, [value, capabilities.slash_commands.length, onFetchCapabilities, isFetchingCapabilities]);
+
+  // Filter commands based on input - show ALL when just "/"
+  const filteredCommands = useMemo(() => {
+    if (!value.startsWith('/')) return [];
+    const query = value.slice(1).toLowerCase().trim();
+    // If just "/" show all commands, otherwise filter
+    if (query === '') {
+      return capabilities.slash_commands; // Show ALL commands
+    }
+    return capabilities.slash_commands.filter(cmd =>
+      cmd.toLowerCase().includes(query)
+    );
+  }, [value, capabilities.slash_commands]);
+
+  // Show suggestions when typing /
+  useEffect(() => {
+    if (value.startsWith('/')) {
+      // Show if we have commands OR if we're fetching
+      if (filteredCommands.length > 0 || isFetchingCapabilities) {
+        setShowCommandSuggestions(true);
+        setSelectedIndex(0);
+      } else if (capabilities.slash_commands.length === 0) {
+        // No commands yet but user typed / - show loading state
+        setShowCommandSuggestions(true);
+      } else {
+        setShowCommandSuggestions(false);
+      }
+    } else {
+      setShowCommandSuggestions(false);
+    }
+  }, [value, filteredCommands, isFetchingCapabilities, capabilities.slash_commands.length]);
+
+  // Handle keyboard navigation
+  const handleKeyDown = (e) => {
+    if (!showCommandSuggestions) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.min(prev + 1, filteredCommands.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.max(prev - 1, 0));
+    } else if (e.key === 'Tab' || e.key === 'Enter') {
+      if (filteredCommands[selectedIndex]) {
+        e.preventDefault();
+        const selectedCommand = filteredCommands[selectedIndex];
+        onChange({ target: { value: `/${selectedCommand} ` } });
+        setShowCommandSuggestions(false);
+      }
+    } else if (e.key === 'Escape') {
+      setShowCommandSuggestions(false);
+    }
+  };
+
+  // Select command on click
+  const selectCommand = (cmd) => {
+    onChange({ target: { value: `/${cmd} ` } });
+    setShowCommandSuggestions(false);
+    inputRef.current?.focus();
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -160,13 +246,75 @@ const ChatInput = ({
                 </Menu>
               )}
 
-              {/* Input Field */}
-              <input
-                value={value}
-                onChange={onChange}
-                placeholder={placeholder}
-                className="flex-1 bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
-              />
+              {/* Input Field with Command Suggestions */}
+              <div className="flex-1 relative">
+                <input
+                  ref={inputRef}
+                  value={value}
+                  onChange={onChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder={placeholder}
+                  className="w-full bg-transparent px-2 py-3 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
+                />
+
+                {/* Command Suggestions Dropdown */}
+                {showCommandSuggestions && (
+                  <div
+                    ref={suggestionsRef}
+                    className="absolute bottom-full left-0 right-0 mb-2 max-h-96 overflow-y-auto bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+                  >
+                    <div className="p-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+                      <span>Slash Commands {filteredCommands.length > 0 && `(${filteredCommands.length})`}</span>
+                      {isFetchingCapabilities && (
+                        <span className="flex items-center text-blue-500">
+                          <svg className="animate-spin h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Loading...
+                        </span>
+                      )}
+                    </div>
+                    {filteredCommands.length === 0 && isFetchingCapabilities ? (
+                      <div className="p-4 text-center text-gray-500 dark:text-gray-400">
+                        <svg className="animate-spin h-5 w-5 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Fetching available commands...
+                      </div>
+                    ) : filteredCommands.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500 dark:text-gray-400">
+                        No commands found
+                      </div>
+                    ) : (
+                      filteredCommands.map((cmd, index) => (
+                        <button
+                          key={cmd}
+                          type="button"
+                          onClick={() => selectCommand(cmd)}
+                          className={`w-full px-3 py-2 text-left text-sm flex items-center space-x-2 transition-colors ${
+                            index === selectedIndex
+                              ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                              : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          <span className="text-gray-400 dark:text-gray-500">/</span>
+                          <span className="font-medium">{cmd}</span>
+                          {cmd.includes(':') && (
+                            <span className="ml-auto text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
+                              plugin
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                    <div className="p-2 text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700">
+                      Tab/Enter to select, Esc to close
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Stop Button - Show when streaming/sending */}
               {onStop && isSending && (

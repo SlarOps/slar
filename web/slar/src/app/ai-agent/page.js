@@ -64,6 +64,8 @@ function AIAgentContent() {
     approveToolAlways,
     denyTool,
     todos,
+    capabilities,
+    fetchCapabilities,
     connect: connectWebSocket,
   } = useClaudeWebSocket(authToken, {
     autoConnect: false,
@@ -253,7 +255,7 @@ function AIAgentContent() {
             value={input}
             onChange={handleInputChange}
             onSubmit={handleSubmit}
-            placeholder="Ask anything about incidents..."
+            placeholder="Ask anything about incidents... (type / for commands)"
             statusColor={statusColor}
             severityColor={severityColor}
             showModeSelector={false}
@@ -265,6 +267,8 @@ function AIAgentContent() {
             todos={todos}
             conversationId={conversationId}
             hasMessages={messages.length > 0}
+            capabilities={capabilities}
+            onFetchCapabilities={fetchCapabilities}
           />
         </>
       )}

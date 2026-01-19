@@ -38,6 +38,12 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const [conversationId, setConversationId] = useState(null); // Claude conversation ID for resume
   const [pendingApprovals, setPendingApprovals] = useState([]); // Changed to array for multiple approvals
   const [todos, setTodos] = useState([]);
+  const [capabilities, setCapabilities] = useState({
+    slash_commands: [],
+    plugins: [],
+    skills: [],
+    agents: []
+  });
 
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -420,6 +426,22 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               setTodos(data.todos || []);
               break;
 
+            case 'capabilities':
+              // Available commands, plugins, skills, agents from SDK init
+              console.log('Capabilities received:', {
+                commands: data.slash_commands?.length || 0,
+                plugins: data.plugins?.length || 0,
+                skills: data.skills?.length || 0,
+                agents: data.agents?.length || 0
+              });
+              setCapabilities({
+                slash_commands: data.slash_commands || [],
+                plugins: data.plugins || [],
+                skills: data.skills || [],
+                agents: data.agents || []
+              });
+              break;
+
             default:
               console.log('Unknown message type:', data.type);
           }
@@ -751,6 +773,26 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, [sessionId]);
 
+  // Fetch capabilities (available commands) - silent request
+  const fetchCapabilities = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('WebSocket not connected, cannot fetch capabilities');
+      return;
+    }
+
+    try {
+      console.log('Fetching capabilities...');
+      wsRef.current.send(JSON.stringify({
+        type: 'fetch_capabilities',
+        auth_token: authTokenRef.current || "",
+        org_id: orgIdRef.current || "",
+        project_id: projectIdRef.current || ""
+      }));
+    } catch (error) {
+      console.error('Error fetching capabilities:', error);
+    }
+  }, []);
+
   // Stop streaming (using interrupt)
   const stopStreaming = useCallback(() => {
     if (isSending) {
@@ -818,6 +860,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     approveToolAlways,
     denyTool,
     todos,
+    capabilities, // Available slash_commands, plugins, skills, agents
+    fetchCapabilities, // Fetch available commands (silent)
     connect,
     disconnect
   };

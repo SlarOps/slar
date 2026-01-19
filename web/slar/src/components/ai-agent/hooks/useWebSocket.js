@@ -6,6 +6,12 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [sessionId, setSessionId] = useState(null);
   const [pendingApproval, setPendingApproval] = useState(null);
+  const [capabilities, setCapabilities] = useState({
+    slash_commands: [],
+    plugins: [],
+    skills: [],
+    agents: []
+  });
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -98,6 +104,15 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
                 timestamp: new Date().toISOString(),
                 isStreaming: false
               }]);
+            } else if (data.type === 'capabilities') {
+              // Available commands, plugins, skills, agents from SDK init
+              console.log('🔌 Capabilities received:', data);
+              setCapabilities({
+                slash_commands: data.slash_commands || [],
+                plugins: data.plugins || [],
+                skills: data.skills || [],
+                agents: data.agents || []
+              });
             } else if (data.type === 'error') {
               // Error message
               console.error('❌ Error from server:', data.error);
@@ -194,5 +209,5 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
     };
   }, [session, setMessages, setIsSending]);
 
-  return { wsConnection, connectionStatus, sessionId, pendingApproval, setPendingApproval };
+  return { wsConnection, connectionStatus, sessionId, pendingApproval, setPendingApproval, capabilities };
 };

@@ -639,7 +639,7 @@ export default function MarketplaceTab() {
                       onClick={() => handleUpdateMarketplace(marketplaceUrl)}
                       disabled={updatingMarketplaces.has(marketplaceUrl)}
                       className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors disabled:opacity-50"
-                      title="Update marketplace (git fetch)"
+                      title="Refresh marketplace (sync & re-scan skills)"
                     >
                       <ArrowPathIcon className={`h-4 w-4 ${updatingMarketplaces.has(marketplaceUrl) ? 'animate-spin' : ''}`} />
                     </button>
@@ -715,21 +715,29 @@ export default function MarketplaceTab() {
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                               Skills included in this plugin:
                             </p>
-                            {plugin.skills.map((skillPath) => {
-                              const skillName = skillPath.split('/').pop();
-                              // Clean ./ prefix for display
-                              const displayPath = skillPath.replace(/^\.\//, '');
+                            {plugin.skills.map((skill) => {
+                              // Support both object format (new) and string format (legacy)
+                              const isObject = typeof skill === 'object' && skill !== null;
+                              const skillName = isObject ? skill.name : skill.split('/').pop();
+                              const skillPath = isObject ? skill.path : skill;
+                              const skillDescription = isObject ? skill.description : '';
+                              const displayPath = skillPath?.replace(/^\.\//, '') || '';
 
                               return (
                                 <div
-                                  key={skillPath}
+                                  key={skillPath || skillName}
                                   className="flex items-center justify-between p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
                                 >
                                   <div className="flex-1 min-w-0">
                                     <p className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white truncate">
                                       {skillName}
                                     </p>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5 truncate">
+                                    {skillDescription && (
+                                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                                        {skillDescription}
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5 truncate">
                                       {displayPath}
                                     </p>
                                   </div>
