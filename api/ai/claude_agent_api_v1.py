@@ -2153,6 +2153,16 @@ async def websocket_secure_chat(websocket: WebSocket):
                     if signed_message.get("type") == "pong":
                         continue
 
+                    # Handle fetch_capabilities (not signed - read-only capability query)
+                    if signed_message.get("type") == "fetch_capabilities":
+                        logger.info("[!] Secure: Routing fetch_capabilities to agent_queue")
+                        signed_message["prompt"] = "/"  # SDK returns commands list for "/"
+                        signed_message["silent"] = True  # Mark as silent
+                        signed_message["session_id"] = session_id
+                        signed_message["user_id"] = session.user_id
+                        await agent_queue.put(signed_message)
+                        continue
+
                     # Verify signature on every message
                     is_valid, error_msg, data = verifier.verify_message(
                         signed_message, session_id
