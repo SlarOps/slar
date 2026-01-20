@@ -87,15 +87,15 @@ func (a *SimpleAuthorizer) CanAccessProject(ctx context.Context, userID, project
 // Previously required 4-5 queries, now reduced to 1
 //
 // Access logic:
-// 1. Explicit project membership → use that role
-// 2. Org owner/admin → always has access (mapped to project admin)
-// 3. Org member → inherit access only if project has no explicit members (is "open")
+// Role priority for projects (ReBAC Model):
+// 1. Org owner/admin → ALWAYS has admin access on all projects in org (highest priority)
+// 2. Explicit project membership → use that role
+// 3. Org member/viewer → inherit access ONLY if project is "open" (no explicit members)
 func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID string) Role {
-	// Single optimized query that handles all cases:
-	// 1. Check explicit project membership
-	// 2. Org owner/admin always inherit access (regardless of explicit members)
-	// 3. Org member inherit only if project has no explicit members (is "open")
-	// 4. Returns both role and whether it's inherited for proper role mapping
+	// Single optimized query that handles all cases with correct priority:
+	// Priority 0: Org owner/admin - ALWAYS have admin access (highest)
+	// Priority 1: Explicit project membership
+	// Priority 2: Org member/viewer - inherit ONLY if project has no explicit members (is "open")
 	var role sql.NullString
 	var isInherited bool
 	err := a.db.QueryRowContext(ctx, `
@@ -110,27 +110,34 @@ func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID
 			FROM projects p
 			WHERE p.id = $2
 		),
-		explicit_role AS (
-			-- Check for explicit project membership
-			SELECT role, 0 AS priority, false AS is_inherited FROM memberships
-			WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
-		),
-		inherited_role AS (
-			-- Check org membership for inheritance
-			-- Org owner/admin always inherit, org member only inherit if no explicit project members
-			SELECT m.role, 1 AS priority, true AS is_inherited FROM memberships m
+		org_owner_admin_role AS (
+			-- Org owner/admin ALWAYS have highest priority (admin on all projects)
+			SELECT m.role, 0 AS priority, true AS is_inherited FROM memberships m
 			JOIN project_info pi ON m.resource_id = pi.organization_id
 			WHERE m.user_id = $1
 			AND m.resource_type = 'org'
-			AND (
-				m.role IN ('owner', 'admin')  -- Owner/admin always have access
-				OR NOT pi.has_explicit_members  -- Member only if project is "open"
-			)
+			AND m.role IN ('owner', 'admin')
+		),
+		explicit_role AS (
+			-- Check for explicit project membership (second priority)
+			SELECT role, 1 AS priority, false AS is_inherited FROM memberships
+			WHERE user_id = $1 AND resource_type = 'project' AND resource_id = $2
+		),
+		inherited_member_role AS (
+			-- Org member/viewer inherit ONLY if project has no explicit members (is "open")
+			SELECT m.role, 2 AS priority, true AS is_inherited FROM memberships m
+			JOIN project_info pi ON m.resource_id = pi.organization_id
+			WHERE m.user_id = $1
+			AND m.resource_type = 'org'
+			AND m.role NOT IN ('owner', 'admin')
+			AND NOT pi.has_explicit_members
 		),
 		all_roles AS (
+			SELECT role, priority, is_inherited FROM org_owner_admin_role
+			UNION ALL
 			SELECT role, priority, is_inherited FROM explicit_role
 			UNION ALL
-			SELECT role, priority, is_inherited FROM inherited_role
+			SELECT role, priority, is_inherited FROM inherited_member_role
 		)
 		SELECT role, is_inherited FROM all_roles ORDER BY priority LIMIT 1
 	`, userID, projectID).Scan(&role, &isInherited)
@@ -146,7 +153,7 @@ func (a *SimpleAuthorizer) GetProjectRole(ctx context.Context, userID, projectID
 		return ""
 	}
 
-	// If inherited from org, map the role
+	// If inherited from org, map the role (owner/admin -> admin)
 	if isInherited {
 		return MapOrgRoleToProjectRole(Role(role.String))
 	}
