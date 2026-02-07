@@ -150,6 +150,44 @@ export default function OnboardingPage() {
     setCurrentStep(3); // Skip to complete
   };
 
+  // Quick start: auto-create org (username's) + project (Default)
+  const handleQuickStart = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      apiClient.setToken(session.access_token);
+
+      // Derive org name from user's name or email
+      const displayName = user?.name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'My';
+      const orgName = `${displayName}'s`;
+      const orgSlug = generateSlug(displayName);
+
+      const newOrg = await apiClient.createOrganization({
+        name: orgName,
+        slug: orgSlug,
+        description: '',
+      });
+      setCreatedOrg(newOrg);
+
+      // Auto-create default project
+      const newProject = await apiClient.createProject(newOrg.id, {
+        name: 'Default',
+        slug: 'default',
+        description: '',
+      });
+      setCreatedProject(newProject);
+
+      setCurrentStep(3); // Jump to complete
+    } catch (err) {
+      console.error('Quick start error:', err);
+      setError(err.message || 'Quick start failed. Please set up manually.');
+      setLoading(false);
+      setCurrentStep(1); // Fall back to manual org creation
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFinish = () => {
     router.push('/incidents');
   };
@@ -228,11 +266,38 @@ export default function OnboardingPage() {
               <p className="text-gray-600 dark:text-gray-400 mb-8">
                 Let&apos;s get you set up with your first organization and project. This will only take a minute.
               </p>
+
+              {error && (
+                <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-red-700 dark:text-red-300 text-sm">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {error}
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={() => setCurrentStep(1)}
-                className="w-full px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors"
+                disabled={loading}
+                className="w-full px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors"
               >
                 Get Started
+              </button>
+              <button
+                onClick={handleQuickStart}
+                disabled={loading}
+                className="w-full mt-3 px-6 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    Setting up...
+                  </>
+                ) : (
+                  'Skip — set up automatically'
+                )}
               </button>
             </div>
           )}

@@ -101,8 +101,8 @@ class MCPConfigManager:
         if not auth_token:
             return None
 
-        from supabase_storage import extract_user_id_from_token
-        return extract_user_id_from_token(auth_token)
+        from database_util import resolve_user_id_from_token
+        return resolve_user_id_from_token(auth_token)
 
     def get_user_workspace(self, user_id: str) -> str:
         """

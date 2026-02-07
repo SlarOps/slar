@@ -15,8 +15,7 @@ import json
 import logging
 from fastapi import APIRouter, Request
 
-from database_util import execute_query
-from supabase_storage import extract_user_id_from_token
+from database_util import execute_query, resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +247,7 @@ async def list_conversations(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -329,7 +328,7 @@ async def get_conversation(conversation_id: str, request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -393,7 +392,7 @@ async def get_messages(conversation_id: str, request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -447,7 +446,7 @@ async def update_conversation(conversation_id: str, request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -508,7 +507,7 @@ async def delete_conversation(conversation_id: str, request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 

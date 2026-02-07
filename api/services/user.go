@@ -47,6 +47,66 @@ func (s *UserService) GetUser(id string) (db.User, error) {
 	return u, err
 }
 
+// GetUserByEmail finds a user by their email address
+// Returns nil, nil if user not found (not an error)
+// This enables email-based user lookup for multi-provider authentication
+func (s *UserService) GetUserByEmail(email string) (*db.User, error) {
+	var u db.User
+	err := s.PG.QueryRow(`
+		SELECT id, provider, provider_id, name, email, 
+		       COALESCE(phone, '') as phone, role, team, 
+		       COALESCE(fcm_token, '') as fcm_token, 
+		       is_active, created_at, updated_at 
+		FROM users 
+		WHERE email = $1 AND is_active = true`, email).
+		Scan(&u.ID, &u.Provider, &u.ProviderID, &u.Name, &u.Email,
+			&u.Phone, &u.Role, &u.Team, &u.FCMToken,
+			&u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil // User not found, not an error
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// LinkUserIdentity records a new identity provider for an existing user
+// This is used when a user logs in with a different provider (e.g., CF Access after Google)
+func (s *UserService) LinkUserIdentity(userID, provider, providerSub, email string) error {
+	_, err := s.PG.Exec(`
+		INSERT INTO user_identities (user_id, provider, provider_sub, email_at_link, last_used_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (provider, provider_sub) DO UPDATE SET
+			last_used_at = NOW()`,
+		userID, provider, providerSub, email)
+	return err
+}
+
+// GetUserByProviderSub finds a user by their provider and provider_sub
+// This is a fallback lookup if email lookup fails
+func (s *UserService) GetUserByProviderSub(provider, providerSub string) (*db.User, error) {
+	var userID string
+	err := s.PG.QueryRow(`
+		SELECT user_id FROM user_identities 
+		WHERE provider = $1 AND provider_sub = $2`, provider, providerSub).
+		Scan(&userID)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.GetUser(userID)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (s *UserService) CreateUser(c *gin.Context) (db.User, error) {
 	var user db.User
 	if err := c.ShouldBindJSON(&user); err != nil {

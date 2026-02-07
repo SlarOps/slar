@@ -4,6 +4,7 @@ import MobileNav from "../components/MobileNav";
 import Sidebar from "../components/Sidebar";
 import MainContent from "../components/MainContent";
 import PWAInstallPrompt from "../components/PWAInstallPrompt";
+import ConfigInitializer from "../components/ConfigInitializer";
 import { AuthProvider } from "../contexts/AuthContext";
 import { SidebarProvider } from "../contexts/SidebarContext";
 import { OrgProvider } from "../contexts/OrgContext";
@@ -42,6 +43,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className="font-sans antialiased bg-gray-50 dark:bg-gray-950" suppressHydrationWarning={true}>
+        <ConfigInitializer>
         <AuthProvider>
           <SidebarProvider>
             <OrgProvider>
@@ -86,6 +88,7 @@ export default function RootLayout({ children }) {
             />
           </SidebarProvider>
         </AuthProvider>
+        </ConfigInitializer>
       </body>
     </html>
   );

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
+import { getConfigSync } from '../../lib/config';
 import { toast, ConfirmationModal, Alert } from '../ui';
 import IntegrationModal from '../integrations/IntegrationModal';
 import IntegrationDetailModal from '../integrations/IntegrationDetailModal';
@@ -188,7 +189,8 @@ export default function IntegrationsTab({ groupId }) {
       toast.success('Skill file uploaded successfully!');
 
       // Call backend API to sync skills to workspace
-      const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_AI_API_URL}/api/sync-skills`, {
+      const aiApiUrl = getConfigSync().aiApiUrl;
+      const syncResponse = await fetch(`${aiApiUrl}/api/sync-skills`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -13,8 +13,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from database_util import execute_query
-from supabase_storage import extract_user_id_from_token
+from database_util import execute_query, resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def _get_user_id_from_request(request: Request) -> tuple[str | None, dict | None
     if auth_token.lower().startswith("bearer "):
         auth_token = auth_token[7:]
 
-    user_id = extract_user_id_from_token(auth_token)
+    user_id = resolve_user_id_from_token(auth_token)
     if not user_id:
         return None, {"success": False, "error": "Invalid or expired authentication token"}
 

@@ -45,6 +45,7 @@ def load_config():
         # This allows existing code using os.getenv to work without changes
         env_mapping = {
             "database_url": "DATABASE_URL",
+            "backend_url": "SLAR_BACKEND_URL",  # Zero-Trust verifier URL
 
             # AI Agent Security
             "ai_allowed_origins": "AI_ALLOWED_ORIGINS",

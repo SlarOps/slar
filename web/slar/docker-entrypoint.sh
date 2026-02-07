@@ -1,29 +1,29 @@
 #!/bin/sh
 set -e
 
-# Runtime environment variable injection for Next.js
-# This script replaces placeholder values in the built JS files with actual runtime values
+# Next.js Runtime Configuration Entrypoint
+#
+# Environment variables are now exposed via /api/config endpoint
+# No more sed replacement needed - the same Docker image works everywhere!
+#
+# Required environment variables:
+#   - NEXT_PUBLIC_API_URL: Backend API URL (e.g., https://api.slar.io)
+#   - NEXT_PUBLIC_AI_API_URL: AI service URL (e.g., https://ai.slar.io)
+#   - NEXT_PUBLIC_AI_WS_URL: WebSocket URL (e.g., wss://ai.slar.io/ws/chat)
+#
+# Optional:
+#   - NEXT_PUBLIC_SUPABASE_URL: Supabase URL (for storage features)
+#   - NEXT_PUBLIC_SUPABASE_ANON_KEY: Supabase anon key
 
-# Function to replace placeholder in files
-replace_env() {
-  local VAR_NAME="$1"
-  local VAR_VALUE="$2"
-  local PLACEHOLDER="__${VAR_NAME}__"
+echo "=== SLAR Web Starting ==="
+echo "Runtime config will be served via /api/config"
+echo ""
+echo "Environment:"
+echo "  API_URL: ${NEXT_PUBLIC_API_URL:-<not set>}"
+echo "  AI_API_URL: ${NEXT_PUBLIC_AI_API_URL:-<not set>}"
+echo "  AI_WS_URL: ${NEXT_PUBLIC_AI_WS_URL:-<not set>}"
+echo "  NODE_ENV: ${NODE_ENV:-production}"
+echo ""
 
-  if [ -n "$VAR_VALUE" ]; then
-    echo "Injecting $VAR_NAME..."
-    find /app/.next -type f -name "*.js" -exec sed -i "s|${PLACEHOLDER}|${VAR_VALUE}|g" {} \; 2>/dev/null || true
-  fi
-}
-
-# Inject NEXT_PUBLIC_* variables at runtime
-replace_env "NEXT_PUBLIC_API_URL" "${NEXT_PUBLIC_API_URL}"
-replace_env "NEXT_PUBLIC_AI_API_URL" "${NEXT_PUBLIC_AI_API_URL}"
-replace_env "NEXT_PUBLIC_AI_WS_URL" "${NEXT_PUBLIC_AI_WS_URL}"
-replace_env "NEXT_PUBLIC_SUPABASE_URL" "${NEXT_PUBLIC_SUPABASE_URL}"
-replace_env "NEXT_PUBLIC_SUPABASE_ANON_KEY" "${NEXT_PUBLIC_SUPABASE_ANON_KEY}"
-
-echo "Environment variables injected successfully"
-
-# Execute the main command
+# Execute the main command (node server.js)
 exec "$@"

@@ -130,9 +130,12 @@ class Config:
         self.database_url = os.getenv("DATABASE_URL") or config_dict.get("database_url")
         self.port = os.getenv("AI_PORT") or os.getenv("PORT") or config_dict.get("port", "8002")
 
-        # OIDC Authentication
+        # Authentication
+        # OIDC for backward compatibility (RS256 via JWKS)
         self.oidc_issuer = os.getenv("OIDC_ISSUER") or config_dict.get("oidc_issuer")
         self.oidc_client_id = os.getenv("OIDC_CLIENT_ID") or config_dict.get("oidc_client_id")
+        # Backend session token (HS256 - fast path, shared with Go backend)
+        self.session_secret = os.getenv("SESSION_SECRET") or config_dict.get("session_secret")
 
         # External services
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY") or config_dict.get("anthropic_api_key")
@@ -150,15 +153,16 @@ class Config:
         logger.info("📋 Configuration loaded:")
         logger.info(f"  • Database: {'✅' if self.database_url else '❌'}")
         logger.info(f"  • Port: {self.port}")
+        logger.info(f"  • Session Secret: {'✅' if self.session_secret else '❌'} (shared with Go backend)")
         logger.info(f"  • OIDC: {'✅' if self.oidc_issuer else '❌'} ({self.oidc_issuer or 'not configured'})")
         logger.info(f"  • Anthropic API: {'✅' if self.anthropic_api_key else '❌'}")
         logger.info(f"  • AI Analytics: enabled={self.ai_analytics.enabled}, model={self.ai_analytics.model}")
 
-        # Warn if OIDC is not configured (required for production)
-        if not self.oidc_issuer:
-            logger.warning("⚠️  OIDC_ISSUER not configured - authentication will fail!")
-            logger.warning("   Set OIDC_ISSUER environment variable to your OIDC provider URL")
-            logger.warning("   Example: OIDC_ISSUER=https://auth.your-domain.com")
+        # Warn if authentication is not configured
+        if not self.session_secret and not self.oidc_issuer:
+            logger.warning("⚠️  No authentication configured - all requests will fail!")
+            logger.warning("   Set SESSION_SECRET (for backend session tokens) or OIDC_ISSUER (for OIDC tokens)")
+            logger.warning("   Example: SESSION_SECRET=your-secret-key OIDC_ISSUER=https://auth.your-domain.com")
 
 
 # Global singleton instance

@@ -18,12 +18,9 @@ COPY . .
 # This will be set by docker-compose, but good to have a default
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Use placeholder values for NEXT_PUBLIC_* vars - they will be replaced at runtime
-ENV NEXT_PUBLIC_API_URL=__NEXT_PUBLIC_API_URL__
-ENV NEXT_PUBLIC_AI_API_URL=__NEXT_PUBLIC_AI_API_URL__
-ENV NEXT_PUBLIC_AI_WS_URL=__NEXT_PUBLIC_AI_WS_URL__
-ENV NEXT_PUBLIC_SUPABASE_URL=__NEXT_PUBLIC_SUPABASE_URL__
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=__NEXT_PUBLIC_SUPABASE_ANON_KEY__
+# NOTE: NEXT_PUBLIC_* vars are NOT needed at build time anymore
+# They are fetched at runtime via /api/config endpoint
+# This allows the same Docker image to work across all environments
 
 # Build the application
 RUN npm run build

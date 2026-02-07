@@ -14,14 +14,13 @@ import logging
 from fastapi import APIRouter, Request
 
 from supabase_storage import (
-    extract_user_id_from_token,
     get_user_mcp_servers,
     get_user_workspace_path,
     sync_memory_to_workspace,
     sync_user_skills,
     unzip_installed_plugins,
 )
-from database_util import execute_query
+from database_util import execute_query, resolve_user_id_from_token
 from git_utils import (
     fetch_and_reset,
     get_marketplace_dir,
@@ -84,7 +83,7 @@ async def sync_workspace(request: Request):
                 "message": "No auth token provided",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "message": "Invalid auth token"}
 
@@ -160,7 +159,7 @@ async def sync_marketplaces(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -270,7 +269,7 @@ async def sync_mcp_config(request: Request):
             logger.warning("No auth token provided for sync")
             return {"success": False, "message": "No auth token provided"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
 
         if not user_id:
             logger.warning("Could not extract user_id from token")

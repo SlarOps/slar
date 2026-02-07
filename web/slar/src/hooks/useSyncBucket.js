@@ -15,8 +15,7 @@
  */
 
 import { useState, useCallback } from 'react';
-
-const DEFAULT_AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
+import { getConfigSync } from '../lib/config';
 
 export function useSyncBucket(authToken) {
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'ready' | 'error'
@@ -40,7 +39,8 @@ export function useSyncBucket(authToken) {
       const startTime = performance.now();
 
       // SECURITY: Send token via Authorization header, not in request body
-      const response = await fetch(`${DEFAULT_AI_API_URL}/api/sync-bucket`, {
+      const aiApiUrl = getConfigSync().aiApiUrl;
+      const response = await fetch(`${aiApiUrl}/api/sync-bucket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

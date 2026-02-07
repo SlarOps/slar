@@ -2,10 +2,37 @@ import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_user_id_from_token(auth_token: str) -> Optional[str]:
+    """
+    Extract provider_id from token and resolve to actual DB user_id.
+
+    This is the preferred way to get user_id for DB operations.
+    Handles the case where Go API created user with different id than provider_id.
+
+    Args:
+        auth_token: JWT token (with or without 'Bearer ' prefix)
+
+    Returns:
+        Actual database user_id, or None on error
+    """
+    from supabase_storage import extract_user_id_from_token
+
+    provider_id = extract_user_id_from_token(auth_token)
+    if not provider_id:
+        return None
+
+    user_info = extract_user_info_from_token(auth_token)
+    return ensure_user_exists(
+        provider_id,
+        email=user_info.get("email") if user_info else None,
+        name=user_info.get("name") if user_info else None
+    )
 
 @contextmanager
 def get_db_connection():
@@ -60,37 +87,42 @@ def execute_query(query: str, params: tuple = None, fetch: str = "all"):
                 raise
 
 
-def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional[str] = None) -> bool:
+def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional[str] = None) -> Optional[str]:
     """
-    Ensure user exists in the users table.
+    Ensure user exists in the users table and return the actual DB user ID.
 
     If user doesn't exist, creates a minimal record.
     This is needed because Supabase Auth users may not have a corresponding
     record in the application's users table.
 
+    IMPORTANT: Go API may create users with different ID than provider_id.
+    This function returns the ACTUAL database user ID for foreign key references.
+
     Args:
-        user_id: User's UUID from Supabase Auth
+        user_id: User's UUID from OIDC provider (provider_id / sub claim)
         email: User's email (optional, from JWT token)
         name: User's name (optional, from JWT token or user_metadata)
 
     Returns:
-        True if user exists or was created, False on error
+        Actual database user ID (may differ from user_id param), or None on error
     """
     if not user_id:
         logger.warning("ensure_user_exists: No user_id provided")
-        return False
+        return None
 
     try:
-        # Check if user already exists
+        # Check if user already exists (by id, provider_id, OR email)
+        # This handles the case where Go API created user with different id
         existing = execute_query(
-            "SELECT id FROM users WHERE id = %s",
-            (user_id,),
+            "SELECT id FROM users WHERE id = %s OR provider_id = %s OR (email = %s AND %s != '')",
+            (user_id, user_id, email or '', email or ''),
             fetch="one"
         )
 
         if existing:
-            logger.debug(f"✅ User already exists: {user_id}")
-            return True
+            actual_id = existing.get('id')
+            logger.debug(f"✅ User already exists: provider_id={user_id} -> db_id={actual_id}")
+            return actual_id
 
         # User doesn't exist, create minimal record
         # Use email prefix as name if name not provided
@@ -115,11 +147,11 @@ def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional
         )
 
         logger.info(f"✅ Created user record: {user_id}")
-        return True
+        return user_id
 
     except Exception as e:
         logger.error(f"❌ Failed to ensure user exists: {e}")
-        return False
+        return None
 
 
 def extract_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:

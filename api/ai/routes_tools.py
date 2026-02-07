@@ -11,11 +11,11 @@ import logging
 from fastapi import APIRouter, Request
 
 from supabase_storage import (
-    extract_user_id_from_token,
     get_user_allowed_tools,
     add_user_allowed_tool,
     delete_user_allowed_tool,
 )
+from database_util import resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def add_allowed_tool(request: Request):
         if not tool_name:
             return {"success": False, "message": "Missing tool_name"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
 
         if not user_id:
             return {"success": False, "message": "Invalid auth_token"}
@@ -87,7 +87,7 @@ async def get_allowed_tools(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing Authorization header"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
 
         if not user_id:
             return {"success": False, "error": "Invalid auth_token"}
@@ -122,7 +122,7 @@ async def remove_allowed_tool(request: Request):
         if not tool_name:
             return {"success": False, "message": "Missing tool_name"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
 
         if not user_id:
             return {"success": False, "message": "Invalid auth_token"}

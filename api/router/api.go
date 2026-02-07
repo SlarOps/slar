@@ -110,9 +110,13 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 	deploymentHandler := monitor.NewDeploymentHandler(pg)
 	reportHandler := monitor.NewReportHandler(pg, incidentService)
 
+	// Initialize session token service for backend-issued JWT tokens
+	// This decouples API auth from OIDC provider's short-lived ID tokens (5 min)
+	sessionTokenService := services.NewSessionTokenService(config.App.SessionSecret)
+
 	// Initialize middleware (OIDC auth - replaces Supabase)
 	// Returns nil if OIDC is not configured
-	oidcAuthMiddleware := handlers.NewOIDCAuthMiddleware(userService, apiKeyService)
+	oidcAuthMiddleware := handlers.NewOIDCAuthMiddleware(userService, apiKeyService, sessionTokenService)
 
 	// Middleware that returns 503 when auth is not configured
 	authNotConfiguredMiddleware := func() gin.HandlerFunc {
@@ -159,6 +163,25 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 	// AI Agent needs this to verify device certificates without authentication
 	// Must be registered BEFORE protected routes to take precedence
 	r.GET("/identity/public-key", identityHandler.GetPublicKey)
+
+	// PUBLIC SESSION TOKEN ENDPOINTS (token exchange & refresh)
+	// Path is /session/* (NOT /auth/*) to avoid Kong routing conflict:
+	//   Kong routes /api/auth/* → Next.js (for NextAuth OAuth callbacks)
+	//   Kong routes /api/*      → Go backend (with strip_path)
+	// Using /session/* ensures these reach the Go backend correctly
+	if oidcAuthMiddleware != nil {
+		authTokenHandler := handlers.NewAuthTokenHandler(
+			oidcAuthMiddleware.OIDCAuth,
+			sessionTokenService,
+			userService,
+		)
+		sessionRoutes := r.Group("/session")
+		{
+			sessionRoutes.POST("/token", authTokenHandler.ExchangeToken)  // Exchange OIDC ID Token → Session Token
+			sessionRoutes.POST("/refresh", authTokenHandler.RefreshToken) // Refresh Session Token
+		}
+		log.Println("✅ Token exchange endpoints registered: POST /session/token, POST /session/refresh")
+	}
 
 	// PUBLIC WEBHOOK ENDPOINTS (no authentication - secured by integration secret)
 	webhookRoutes := r.Group("/webhook")

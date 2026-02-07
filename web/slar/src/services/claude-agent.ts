@@ -4,14 +4,13 @@
  */
 
 import type { ChatRequest, StreamEvent, SessionInfo, ChatResponse } from '@/types/claude-agent';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+import { getConfigSync } from '@/lib/config';
 
 export class ClaudeAgentService {
   private baseUrl: string;
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getConfigSync().aiApiUrl;
   }
 
   /**

@@ -1,12 +1,13 @@
 'use client';
 
 import { Modal, ModalFooter, ModalButton } from '../ui';
-
-// Get API base URL from environment
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.slar.io';
+import { getConfigSync } from '../../lib/config';
 
 export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, onDelete }) {
   if (!service) return null;
+
+  // Get API base URL from runtime config
+  const apiBaseUrl = getConfigSync().apiUrl;
 
   const getServiceType = (service) => {
     const name = service.name.toLowerCase();
@@ -27,8 +28,8 @@ export default function ServiceDetailsModal({ isOpen, onClose, service, onEdit, 
   const type = getServiceType(service);
 
   // Generate webhook URLs (prefer backend-provided, fallback to construction)
-  const genericWebhookUrl = service.generic_webhook_url || `${API_BASE_URL}/webhook/generic/${service.routing_key}`;
-  const prometheusWebhookUrl = service.prometheus_webhook_url || `${API_BASE_URL}/webhook/prometheus/${service.routing_key}`;
+  const genericWebhookUrl = service.generic_webhook_url || `${apiBaseUrl}/webhook/generic/${service.routing_key}`;
+  const prometheusWebhookUrl = service.prometheus_webhook_url || `${apiBaseUrl}/webhook/prometheus/${service.routing_key}`;
 
   return (
     <Modal

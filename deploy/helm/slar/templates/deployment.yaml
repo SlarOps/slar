@@ -112,6 +112,9 @@ spec:
             {{- toYaml $volumeMounts | nindent 12 }}
           {{- end }}
           {{- end }}
+        {{- with $comp.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- if eq $name "kong" }}
       {{- if and $comp.configMap $comp.configMap.enabled }}
       volumes:
@@ -131,6 +134,8 @@ spec:
             {{- $_ := set .persistentVolumeClaim "claimName" (printf "%s-data" (include "slar.componentFullname" (dict "root" $root "name" $name))) }}
           {{- else if and (eq .name "mcp-config") .configMap }}
             {{- $_ := set .configMap "name" (printf "%s-mcp-config" (include "slar.componentFullname" (dict "root" $root "name" $name))) }}
+          {{- else if and (eq .name "app-config") .secret }}
+            {{- $_ := set .secret "secretName" (include "slar.configSecretName" $root) }}
           {{- end }}
           {{- $volumes = append $volumes . }}
         {{- end }}

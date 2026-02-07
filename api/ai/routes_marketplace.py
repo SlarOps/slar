@@ -29,11 +29,10 @@ import httpx
 from fastapi import APIRouter, Request
 
 from supabase_storage import (
-    extract_user_id_from_token,
     get_user_workspace_path,
     unzip_installed_plugins,
 )
-from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
+from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
 from git_utils import (
     build_github_url,
     clone_repository,
@@ -250,16 +249,18 @@ async def install_plugin_from_marketplace(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
-        logger.info(f"User {user_id}: Installing plugin {plugin_name} from {marketplace_name}")
+        provider_id = extract_user_id_from_token(auth_token)
+        logger.info(f"User {provider_id}: Installing plugin {plugin_name} from {marketplace_name}")
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         # Get marketplace metadata from PostgreSQL
         def get_marketplace_metadata_sync():
@@ -416,18 +417,20 @@ async def fetch_marketplace_metadata(request: Request):
             }
 
         try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"User {user_id}: Fetching metadata for {owner}/{repo}@{branch}")
+            provider_id = extract_user_id_from_token(auth_token)
+            logger.info(f"User {provider_id}: Fetching metadata for {owner}/{repo}@{branch}")
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         marketplace_json_url = f"https://api.github.com/repos/{owner}/{repo}/contents/.claude-plugin/marketplace.json?ref={branch}"
         repository_url = f"https://github.com/{owner}/{repo}"
@@ -562,20 +565,21 @@ async def clone_marketplace(request: Request):
             }
 
         try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"User {user_id}: Cloning {owner}/{repo}@{branch}")
+            provider_id = extract_user_id_from_token(auth_token)
+            logger.info(f"User {provider_id}: Cloning {owner}/{repo}@{branch}")
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        if not ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
-        ):
-            logger.warning(f"Failed to ensure user exists: {user_id}")
-            # Continue anyway - the user might already exist
+        )
+        if not user_id:
+            logger.warning(f"Failed to resolve user: {provider_id}")
+            return {"success": False, "error": "Failed to resolve user"}
 
         # Build paths
         workspace_path = get_user_workspace_path(user_id)
@@ -723,7 +727,7 @@ async def refresh_marketplace_skills(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Refreshing skills for marketplace '{marketplace_name}'")
 
         # Get marketplace from DB
@@ -839,7 +843,7 @@ async def update_marketplace(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Updating marketplace '{marketplace_name}'")
 
         # Get marketplace metadata from PostgreSQL
@@ -983,7 +987,7 @@ async def update_all_marketplaces(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Updating all marketplaces")
 
         # Get all marketplaces
@@ -1089,7 +1093,7 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing Authorization header"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { getConfigSync } from '../../../lib/config';
 
 export const useWebSocket = (session, setMessages, setIsSending) => {
   const [wsConnection, setWsConnection] = useState(null);
@@ -32,13 +33,8 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
       setSessionId(currentSessionId);
 
       // Build WebSocket URL - Claude Agent API v1
-      let wsUrl;
-      if (process.env.NEXT_PUBLIC_AI_WS_URL) {
-        wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL;
-      } else {
-        // Default to localhost:8002
-        wsUrl = `/ws/chat`;
-      }
+      const config = getConfigSync();
+      let wsUrl = config.aiWsUrl || `/ws/chat`;
 
       console.log("Connecting to Claude Agent API:", wsUrl);
       setConnectionStatus("connecting");

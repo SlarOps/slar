@@ -5,6 +5,7 @@ Tools for fetching and managing incidents directly from the database.
 This is an internal service - no API authentication required.
 """
 
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -145,32 +146,23 @@ async def _get_incidents_by_time_impl(args: dict[str, Any]) -> dict[str, Any]:
 
         conn.close()
 
-        # Format the response
-        if not incidents:
-            result_text = f"No incidents found between {start_time} and {end_time}"
-            if status != "all":
-                result_text += f" with status '{status}'"
-        else:
-            result_text = f"Found {len(incidents)} incident(s) between {start_time} and {end_time}\n\n"
-
-            for idx, incident in enumerate(incidents, 1):
-                result_text += f"**Incident #{idx}**\n"
-                result_text += f"  - ID: {incident['id']}\n"
-                result_text += f"  - Title: {incident['title']}\n"
-                result_text += f"  - Status: {incident['status']}\n"
-                result_text += f"  - Severity: {incident['severity']}\n"
-                result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
-                result_text += f"  - Created: {incident['created_at']}\n"
-                result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
-
-                if incident['acknowledged_at']:
-                    result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
-                if incident['resolved_at']:
-                    result_text += f"  - Resolved: {incident['resolved_at']}\n"
-
-                result_text += "\n"
-
-        return {"content": [{"type": "text", "text": result_text}]}
+        # Return raw data - LLM handles formatting
+        # Convert datetime objects to strings for JSON serialization
+        incidents_data = []
+        for inc in incidents:
+            inc_dict = dict(inc)
+            for key, value in inc_dict.items():
+                if hasattr(value, 'isoformat'):
+                    inc_dict[key] = value.isoformat()
+            incidents_data.append(inc_dict)
+        
+        result = {
+            "query": {"start_time": start_time, "end_time": end_time, "status": status},
+            "count": len(incidents_data),
+            "incidents": incidents_data
+        }
+        
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]}
 
     except Exception as e:
         return {
@@ -211,7 +203,7 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
                     i.id, i.title, i.description, i.status, i.severity, i.urgency,
                     i.created_at, i.updated_at, i.acknowledged_at, i.resolved_at,
                     i.assigned_to, i.acknowledged_by, i.resolved_by,
-                    i.service_id, i.alert_key, i.escalation_policy_id,
+                    i.service_id, i.incident_key, i.escalation_policy_id,
                     i.organization_id, i.project_id,
                     u1.name as assigned_to_name,
                     u2.name as acknowledged_by_name,
@@ -247,42 +239,13 @@ async def _get_incident_by_id_impl(args: dict[str, Any]) -> dict[str, Any]:
                 "isError": True,
             }
 
-        # Format detailed response
-        result_text = f"**Incident Details**\n\n"
-        result_text += f"**Basic Information:**\n"
-        result_text += f"  - ID: {incident['id']}\n"
-        result_text += f"  - Title: {incident['title']}\n"
-        result_text += f"  - Description: {incident['description'] or 'N/A'}\n"
-        result_text += f"  - Status: {incident['status']}\n"
-        result_text += f"  - Severity: {incident['severity']}\n"
-        result_text += f"  - Urgency: {incident['urgency']}\n\n"
-
-        result_text += f"**Service:**\n"
-        result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
-        result_text += f"  - Service ID: {incident['service_id'] or 'N/A'}\n\n"
-
-        result_text += f"**Assignment:**\n"
-        result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
-        result_text += f"  - Assigned to ID: {incident['assigned_to'] or 'N/A'}\n\n"
-
-        result_text += f"**Timeline:**\n"
-        result_text += f"  - Created: {incident['created_at']}\n"
-
-        if incident['acknowledged_at']:
-            result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
-            result_text += f"  - Acknowledged by: {incident['acknowledged_by_name'] or 'N/A'}\n"
-
-        if incident['resolved_at']:
-            result_text += f"  - Resolved: {incident['resolved_at']}\n"
-            result_text += f"  - Resolved by: {incident['resolved_by_name'] or 'N/A'}\n"
-
-        result_text += f"\n**Metadata:**\n"
-        if incident['alert_key']:
-            result_text += f"  - Alert Key: {incident['alert_key']}\n"
-        if incident['escalation_policy_id']:
-            result_text += f"  - Escalation Policy: {incident['escalation_policy_id']}\n"
-
-        return {"content": [{"type": "text", "text": result_text}]}
+        # Return raw data - LLM handles formatting
+        inc_dict = dict(incident)
+        for key, value in inc_dict.items():
+            if hasattr(value, 'isoformat'):
+                inc_dict[key] = value.isoformat()
+        
+        return {"content": [{"type": "text", "text": json.dumps(inc_dict, indent=2, default=str)}]}
 
     except Exception as e:
         return {
@@ -390,29 +353,18 @@ async def _get_incident_stats_impl(args: dict[str, Any]) -> dict[str, Any]:
 
         conn.close()
 
-        # Format stats response
-        result_text = f"**Incident Statistics ({time_range})**\n\n"
-        result_text += f"**Overall:**\n"
-        result_text += f"  - Total Incidents: {counts['total']}\n"
-        result_text += f"  - Triggered: {counts['triggered']}\n"
-        result_text += f"  - Acknowledged: {counts['acknowledged']}\n"
-        result_text += f"  - Resolved: {counts['resolved']}\n\n"
-
-        if severity_counts:
-            result_text += f"**By Severity:**\n"
-            for row in severity_counts:
-                result_text += f"  - {row['severity']}: {row['count']}\n"
-            result_text += "\n"
-
-        if timing and timing['avg_resolution_seconds']:
-            avg_res = timedelta(seconds=int(timing['avg_resolution_seconds']))
-            result_text += f"**Performance:**\n"
-            result_text += f"  - Avg Resolution Time: {avg_res}\n"
-            if timing['avg_ack_seconds']:
-                avg_ack = timedelta(seconds=int(timing['avg_ack_seconds']))
-                result_text += f"  - Avg Acknowledgment Time: {avg_ack}\n"
-
-        return {"content": [{"type": "text", "text": result_text}]}
+        # Return raw data - LLM handles formatting
+        result = {
+            "time_range": time_range,
+            "counts": dict(counts),
+            "by_severity": [dict(row) for row in severity_counts],
+            "timing": {
+                "avg_resolution_seconds": timing['avg_resolution_seconds'],
+                "avg_ack_seconds": timing['avg_ack_seconds']
+            } if timing else None
+        }
+        
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]}
 
     except Exception as e:
         return {
@@ -431,13 +383,15 @@ async def _get_current_time_impl(args: dict[str, Any]) -> dict[str, Any]:
     """
     now = datetime.utcnow()
 
-    result_text = f"**Current Time (UTC)**\n\n"
-    result_text += f"Current: {now.strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    result_text += f"1 hour ago: {(now - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    result_text += f"24 hours ago: {(now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-    result_text += f"7 days ago: {(now - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+    result = {
+        "current": now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "1h_ago": (now - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "24h_ago": (now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "7d_ago": (now - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "30d_ago": (now - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
 
-    return {"content": [{"type": "text", "text": result_text}]}
+    return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
 
 async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
@@ -523,34 +477,23 @@ async def _search_incidents_impl(args: dict[str, Any]) -> dict[str, Any]:
 
         conn.close()
 
-        # Format the response
-        if not incidents:
-            result_text = f"No incidents found matching '{query}'"
-            if status != "all":
-                result_text += f" with status '{status}'"
-            if severity:
-                result_text += f" and severity '{severity}'"
-        else:
-            result_text = f"Found {len(incidents)} incident(s) matching '{query}'\n\n"
-
-            for idx, incident in enumerate(incidents, 1):
-                result_text += f"**Incident #{idx}**\n"
-                result_text += f"  - ID: {incident['id']}\n"
-                result_text += f"  - Title: {incident['title']}\n"
-                result_text += f"  - Status: {incident['status']}\n"
-                result_text += f"  - Severity: {incident['severity']}\n"
-                result_text += f"  - Service: {incident['service_name'] or 'N/A'}\n"
-                result_text += f"  - Created: {incident['created_at']}\n"
-                result_text += f"  - Assigned to: {incident['assigned_to_name'] or 'Unassigned'}\n"
-
-                if incident['acknowledged_at']:
-                    result_text += f"  - Acknowledged: {incident['acknowledged_at']}\n"
-                if incident['resolved_at']:
-                    result_text += f"  - Resolved: {incident['resolved_at']}\n"
-
-                result_text += "\n"
-
-        return {"content": [{"type": "text", "text": result_text}]}
+        # Return raw data - LLM handles formatting
+        incidents_data = []
+        for inc in incidents:
+            inc_dict = dict(inc)
+            for key, value in inc_dict.items():
+                if hasattr(value, 'isoformat'):
+                    inc_dict[key] = value.isoformat()
+            incidents_data.append(inc_dict)
+        
+        result = {
+            "query": query,
+            "filters": {"status": status, "severity": severity},
+            "count": len(incidents_data),
+            "incidents": incidents_data
+        }
+        
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]}
 
     except Exception as e:
         return {

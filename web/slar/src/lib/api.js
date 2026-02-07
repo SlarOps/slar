@@ -1,12 +1,36 @@
 // API client for SLAR backend
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-export const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
+import { getConfigSync, fetchConfig } from './config';
 
 class APIClient {
   constructor() {
-    this.baseURL = API_BASE_URL;
-    this.aiBaseURL = AI_BASE_URL;
+    this._configLoaded = false;
     this.token = null;
+  }
+
+  /**
+   * Get API base URL dynamically from runtime config
+   */
+  get baseURL() {
+    return getConfigSync().apiUrl;
+  }
+
+  /**
+   * Get AI API base URL dynamically from runtime config
+   */
+  get aiBaseURL() {
+    return getConfigSync().aiApiUrl;
+  }
+
+  /**
+   * Initialize API client - loads config async on client-side
+   * Call this early in your app lifecycle
+   */
+  async init() {
+    if (!this._configLoaded) {
+      await fetchConfig();
+      this._configLoaded = true;
+    }
+    return this;
   }
 
   setToken(token) {

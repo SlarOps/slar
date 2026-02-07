@@ -60,7 +60,7 @@ from supabase_storage import (
 
 # Import database routes (split for better organization)
 from routes_db import router as db_router
-from database_util import execute_query
+from database_util import execute_query, resolve_user_id_from_token
 
 # Import conversation routes and helper functions
 from routes_conversations import (
@@ -1710,19 +1710,20 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
             logger.warning("⚠️  WebSocket connection attempt with invalid token")
             return False, "Invalid authentication token"
 
-        user_id = user_info["id"]
+        provider_id = user_info["id"]
         email = user_info.get("email")
         name = user_info.get("name")
 
-        # Ensure user exists in database (sync from OIDC)
-        # This matches Go API's ensureUserExists behavior
-        logger.info(f"🔍 Ensuring user exists: {user_id} ({email}, {name})")
-        user_created = ensure_user_exists(user_id, email=email, name=name)
-        if user_created:
-            logger.info(f"✅ User synced to database: {user_id} ({email})")
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
+        # This matches Go API's ensureUserExistsByEmail behavior
+        logger.info(f"🔍 Ensuring user exists: provider_id={provider_id} ({email}, {name})")
+        user_id = ensure_user_exists(provider_id, email=email, name=name)
+        if user_id:
+            logger.info(f"✅ User resolved: provider_id={provider_id} -> db_id={user_id} ({email})")
         else:
-            logger.warning(f"⚠️  Failed to sync user to database: {user_id}")
-            # Continue anyway - user might already exist
+            logger.warning(f"⚠️  Failed to resolve user: {provider_id}")
+            # Continue with provider_id as fallback
+            user_id = provider_id
 
         logger.info(f"✅ WebSocket authenticated for user: {user_id} ({email})")
         return True, user_id

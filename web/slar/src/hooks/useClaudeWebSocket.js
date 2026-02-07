@@ -11,10 +11,22 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import apiClient from '../lib/api';
+import { getConfigSync } from '../lib/config';
 
-const HOST = window.location.host;
-const PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
-const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOST}/ws/chat`;
+/**
+ * Get WebSocket URL from runtime config
+ * Falls back to current host with appropriate protocol
+ */
+function getWsUrl() {
+  const config = getConfigSync();
+  if (config.aiWsUrl) {
+    return config.aiWsUrl;
+  }
+  // Fallback: derive from current host
+  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8002';
+  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${host}/ws/chat`;
+}
 
 /**
  * Claude WebSocket Hook Options
@@ -70,18 +82,18 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     projectIdRef.current = projectId;
   }, [projectId]);
 
-  // Load session ID and conversation ID from localStorage on mount
+  // Load session ID from localStorage on mount
+  // NOTE: conversationId is NOT restored - always start a new conversation.
+  // Users can view/resume old conversations from the History sidebar.
   useEffect(() => {
     const savedSessionId = localStorage.getItem('claude_session_id');
-    const savedConversationId = localStorage.getItem('claude_conversation_id');
     if (savedSessionId) {
       setSessionId(savedSessionId);
       console.log('Restored session ID:', savedSessionId);
     }
-    if (savedConversationId) {
-      setConversationId(savedConversationId);
-      console.log('Restored conversation ID:', savedConversationId);
-    }
+    // Clear any stale conversation ID so we always start fresh
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Starting fresh conversation (no resume)');
   }, []);
 
   // Save session ID to localStorage
@@ -128,9 +140,10 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
       if (currentProjectId) params.append('project_id', currentProjectId);
 
       const queryString = params.toString();
-      const wsUrl = queryString ? `${DEFAULT_WS_URL}?${queryString}` : DEFAULT_WS_URL;
+      const baseWsUrl = getWsUrl();
+      const wsUrl = queryString ? `${baseWsUrl}?${queryString}` : baseWsUrl;
 
-      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, {
+      console.log('Connecting to WebSocket:', baseWsUrl, {
         hasToken: !!token,
         orgId: currentOrgId || 'none',
         projectId: currentProjectId || 'none'

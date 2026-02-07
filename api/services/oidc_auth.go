@@ -1,49 +1,45 @@
 package services
 
 import (
-	"crypto/rsa"
-	"encoding/base64"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
-	"math/big"
-	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 // OIDCAuthService handles JWT verification for any OIDC-compliant provider
-// Supports: Keycloak, Auth0, Okta, Azure AD, Google, etc.
+// Uses coreos/go-oidc for standard-compliant token verification
+// Supports: Keycloak, Auth0, Okta, Azure AD, Google, Dex, Zitadel, etc.
 type OIDCAuthService struct {
-	Issuer       string
-	ClientID     string   // Primary client ID (for backward compatibility)
-	ClientIDs    []string // All valid client IDs (web, mobile, etc.)
-	rsaKeys      map[string]*rsa.PublicKey
-	keysMutex    sync.RWMutex
-	lastKeyFetch time.Time
-	jwksURI      string
+	Issuer    string
+	ClientID  string   // Primary client ID (for backward compatibility)
+	ClientIDs []string // All valid client IDs (web, mobile, etc.)
+
+	// go-oidc provider and verifier
+	provider  *oidc.Provider
+	verifiers map[string]*oidc.IDTokenVerifier // verifier per client ID
 }
 
 // OIDCClaims represents standard OIDC claims
 type OIDCClaims struct {
-	UserID        string                 `json:"sub"`
-	Email         string                 `json:"email"`
-	EmailVerified bool                   `json:"email_verified"`
-	Name          string                 `json:"name"`
-	GivenName     string                 `json:"given_name"`
-	FamilyName    string                 `json:"family_name"`
-	Locale        string                 `json:"locale"`
-	PreferredName string                 `json:"preferred_username"`
-	Picture       string                 `json:"picture"`
+	UserID        string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Locale        string `json:"locale"`
+	PreferredName string `json:"preferred_username"`
+	Picture       string `json:"picture"`
 	// Authentication time - when user actually logged in (not token issue time)
 	AuthTime int64 `json:"auth_time"`
 	// Common custom claims across providers
-	Roles  []string               `json:"roles"`
-	Groups []string               `json:"groups"`
+	Roles  []string `json:"roles"`
+	Groups []string `json:"groups"`
 	// Provider-specific metadata (Auth0, Keycloak, etc.)
 	Metadata map[string]interface{} `json:"metadata"`
 	jwt.RegisteredClaims
@@ -56,16 +52,6 @@ func (c *OIDCClaims) IsFreshLogin(withinMinutes int) bool {
 	}
 	authTime := time.Unix(c.AuthTime, 0)
 	return time.Since(authTime) < time.Duration(withinMinutes)*time.Minute
-}
-
-// OIDCDiscovery represents the OIDC discovery document
-type OIDCDiscovery struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	UserInfoEndpoint      string   `json:"userinfo_endpoint"`
-	JwksURI               string   `json:"jwks_uri"`
-	ScopesSupported       []string `json:"scopes_supported"`
 }
 
 // NewOIDCAuthService creates a new OIDC auth service
@@ -105,231 +91,84 @@ func NewOIDCAuthServiceWithClientIDs(issuer string, clientIDs []string) (*OIDCAu
 		primaryClientID = validClientIDs[0]
 	}
 
-	service := &OIDCAuthService{
+	// Create OIDC provider - automatically fetches discovery document
+	ctx := context.Background()
+	provider, err := oidc.NewProvider(ctx, issuer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OIDC provider for issuer %s: %w", issuer, err)
+	}
+
+	fmt.Printf("✅ OIDC provider initialized for issuer: %s\n", issuer)
+
+	// Create verifiers for each client ID
+	verifiers := make(map[string]*oidc.IDTokenVerifier)
+	for _, clientID := range validClientIDs {
+		verifiers[clientID] = provider.Verifier(&oidc.Config{
+			ClientID: clientID,
+		})
+		fmt.Printf("   ✓ Verifier created for client ID: %s\n", clientID)
+	}
+
+	// If no client IDs configured, create a verifier that skips audience check
+	if len(validClientIDs) == 0 {
+		verifiers[""] = provider.Verifier(&oidc.Config{
+			SkipClientIDCheck: true,
+		})
+		fmt.Println("   ✓ Verifier created (no audience check)")
+	}
+
+	return &OIDCAuthService{
 		Issuer:    issuer,
 		ClientID:  primaryClientID,
 		ClientIDs: validClientIDs,
-		rsaKeys:   make(map[string]*rsa.PublicKey),
-	}
-
-	// Fetch OIDC discovery document to get JWKS URI
-	if err := service.fetchDiscovery(); err != nil {
-		// Log warning but don't fail - JWKS URI might be configured manually
-		fmt.Printf("Warning: Failed to fetch OIDC discovery: %v\n", err)
-		// Use default JWKS URI pattern
-		service.jwksURI = issuer + "/.well-known/jwks.json"
-	}
-
-	return service, nil
-}
-
-// fetchDiscovery fetches the OIDC discovery document
-func (o *OIDCAuthService) fetchDiscovery() error {
-	discoveryURL := o.Issuer + "/.well-known/openid-configuration"
-
-	resp, err := http.Get(discoveryURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch OIDC discovery: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("OIDC discovery endpoint returned status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read discovery response: %v", err)
-	}
-
-	var discovery OIDCDiscovery
-	if err := json.Unmarshal(body, &discovery); err != nil {
-		return fmt.Errorf("failed to parse discovery document: %v", err)
-	}
-
-	o.jwksURI = discovery.JwksURI
-	return nil
+		provider:  provider,
+		verifiers: verifiers,
+	}, nil
 }
 
 // ValidateToken validates an OIDC JWT token from any compliant provider
 func (o *OIDCAuthService) ValidateToken(tokenString string) (*OIDCClaims, error) {
-	// Parse token without verification first to get the header
-	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &OIDCClaims{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %v", err)
-	}
+	ctx := context.Background()
 
-	// Get the key ID from token header
-	keyID, ok := token.Header["kid"].(string)
-	if !ok || keyID == "" {
-		return nil, errors.New("missing kid in token header")
-	}
-
-	// Get the signing algorithm - support RS256, RS384, RS512
-	alg, _ := token.Header["alg"].(string)
-	if !strings.HasPrefix(alg, "RS") {
-		return nil, fmt.Errorf("unsupported algorithm: %s (expected RS256/RS384/RS512)", alg)
-	}
-
-	// Get public key and verify
-	publicKey, err := o.getPublicKey(keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get public key: %v", err)
-	}
-
-	// Parse and verify token with the public key
-	parserOpts := []jwt.ParserOption{
-		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}),
-	}
-
-	// Add issuer validation
-	parserOpts = append(parserOpts, jwt.WithIssuer(o.Issuer))
-
-	// Add audience validation if client IDs are configured
-	// Token audience must match at least one of the configured client IDs
-	if len(o.ClientIDs) > 0 {
-		// jwt.WithAudience only accepts one audience, so we validate manually after parsing
-		// We'll validate audience after the token is parsed
-	}
-
-	token, err = jwt.ParseWithClaims(tokenString, &OIDCClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return publicKey, nil
-	}, parserOpts...)
-
-	if err != nil {
-		return nil, fmt.Errorf("token validation failed: %v", err)
-	}
-
-	if claims, ok := token.Claims.(*OIDCClaims); ok && token.Valid {
-		// Check expiration
-		if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
-			return nil, errors.New("token has expired")
+	// Try to verify with each configured verifier
+	var lastErr error
+	for clientID, verifier := range o.verifiers {
+		idToken, err := verifier.Verify(ctx, tokenString)
+		if err != nil {
+			lastErr = err
+			continue
 		}
 
-		// Validate audience if client IDs are configured
-		// Token audience must match at least one of the configured client IDs
-		if len(o.ClientIDs) > 0 {
-			if !o.validateAudience(claims.Audience) {
-				return nil, fmt.Errorf("token audience %v does not match any configured client ID", claims.Audience)
-			}
+		// Token verified successfully - extract claims
+		claims := &OIDCClaims{}
+		if err := idToken.Claims(claims); err != nil {
+			return nil, fmt.Errorf("failed to parse claims: %w", err)
+		}
+
+		// Set UserID from subject
+		claims.UserID = idToken.Subject
+
+		// Set RegisteredClaims from idToken
+		claims.RegisteredClaims = jwt.RegisteredClaims{
+			Issuer:    idToken.Issuer,
+			Subject:   idToken.Subject,
+			Audience:  idToken.Audience,
+			ExpiresAt: jwt.NewNumericDate(idToken.Expiry),
+			IssuedAt:  jwt.NewNumericDate(idToken.IssuedAt),
+		}
+
+		if clientID != "" {
+			fmt.Printf("✅ Token verified for client ID: %s, user: %s\n", clientID, claims.UserID)
 		}
 
 		return claims, nil
 	}
 
-	return nil, errors.New("invalid token claims")
-}
-
-// JWKS cache TTL
-const oidcJWKSCacheTTL = 10 * time.Minute
-
-// getPublicKey retrieves RSA public key from OIDC provider's JWKS
-func (o *OIDCAuthService) getPublicKey(keyID string) (*rsa.PublicKey, error) {
-	o.keysMutex.RLock()
-	key, exists := o.rsaKeys[keyID]
-	cacheValid := time.Since(o.lastKeyFetch) < oidcJWKSCacheTTL
-	o.keysMutex.RUnlock()
-
-	if exists && cacheValid {
-		return key, nil
+	// All verifiers failed
+	if lastErr != nil {
+		return nil, fmt.Errorf("token validation failed: %w", lastErr)
 	}
-
-	// Fetch JWKS from OIDC provider
-	jwks, err := o.fetchJWKS()
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the key with matching key ID
-	for _, jwkKey := range jwks.Keys {
-		if jwkKey.Kid == keyID && jwkKey.Kty == "RSA" {
-			publicKey, err := o.parseRSAPublicKey(jwkKey.N, jwkKey.E)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse RSA public key: %v", err)
-			}
-
-			// Cache the key
-			o.keysMutex.Lock()
-			o.rsaKeys[keyID] = publicKey
-			o.lastKeyFetch = time.Now()
-			o.keysMutex.Unlock()
-
-			return publicKey, nil
-		}
-	}
-
-	return nil, fmt.Errorf("RSA public key not found for key ID: %s", keyID)
-}
-
-// fetchJWKS fetches JWKS from the OIDC provider
-func (o *OIDCAuthService) fetchJWKS() (*JWKSResponse, error) {
-	if o.jwksURI == "" {
-		return nil, errors.New("JWKS URI not configured")
-	}
-
-	resp, err := http.Get(o.jwksURI)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("JWKS endpoint returned status: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read JWKS response: %v", err)
-	}
-
-	var jwks JWKSResponse
-	if err := json.Unmarshal(body, &jwks); err != nil {
-		return nil, fmt.Errorf("failed to parse JWKS: %v", err)
-	}
-
-	return &jwks, nil
-}
-
-// validateAudience checks if token audience matches any configured client ID
-func (o *OIDCAuthService) validateAudience(tokenAudience []string) bool {
-	if len(o.ClientIDs) == 0 {
-		return true // No client IDs configured, skip validation
-	}
-
-	for _, tokenAud := range tokenAudience {
-		for _, clientID := range o.ClientIDs {
-			if tokenAud == clientID {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// parseRSAPublicKey creates RSA public key from JWK parameters
-func (o *OIDCAuthService) parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
-	// Decode base64url-encoded modulus (n)
-	nBytes, err := base64.RawURLEncoding.DecodeString(nStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode modulus: %v", err)
-	}
-
-	// Decode base64url-encoded exponent (e)
-	eBytes, err := base64.RawURLEncoding.DecodeString(eStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode exponent: %v", err)
-	}
-
-	// Create RSA public key
-	publicKey := &rsa.PublicKey{
-		N: new(big.Int).SetBytes(nBytes),
-		E: int(new(big.Int).SetBytes(eBytes).Int64()),
-	}
-
-	return publicKey, nil
+	return nil, errors.New("no verifier available")
 }
 
 // ExtractTokenFromHeader extracts token from Authorization header
@@ -404,4 +243,3 @@ func (o *OIDCAuthService) ToSupabaseClaims(oClaims *OIDCClaims) *SupabaseClaims 
 		RegisteredClaims: oClaims.RegisteredClaims,
 	}
 }
-

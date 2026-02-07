@@ -9,8 +9,7 @@ import json
 import logging
 from fastapi import APIRouter, Request
 
-from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
-from supabase_storage import extract_user_id_from_token
+from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +50,9 @@ def _get_user_id_from_request(request: Request) -> tuple[str | None, dict | None
     if not auth_token:
         return None, {"success": False, "error": "Missing Authorization header"}
 
-    user_id = extract_user_id_from_token(auth_token)
+    user_id = resolve_user_id_from_token(auth_token)
     if not user_id:
-        return None, {"success": False, "error": "Invalid auth token"}
+        return None, {"success": False, "error": "Invalid auth token or failed to resolve user"}
 
     return user_id, None
 
@@ -142,17 +141,19 @@ async def add_installed_plugin(request: Request):
         if not plugin_name or not marketplace_name:
             return {"success": False, "error": "Missing plugin_name or marketplace_name"}
 
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
+        provider_id = extract_user_id_from_token(auth_token)
+        if not provider_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         plugin_id = str(uuid_module.uuid4())
 

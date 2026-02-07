@@ -10,8 +10,8 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	DatabaseURL string `mapstructure:"database_url"`
-	Port        string `mapstructure:"port"`
+	DatabaseURL       string `mapstructure:"database_url"`
+	Port              string `mapstructure:"port"`
 	AutoMigrate       bool   `mapstructure:"auto_migrate"`
 	MigrateBaseline   bool   `mapstructure:"migrate_baseline"` // Mark all migrations as applied without running them
 	SlarAPIURL        string `mapstructure:"slar_api_url"`
@@ -29,6 +29,10 @@ type Config struct {
 	OIDCClientID       string `mapstructure:"oidc_client_id"`        // Default/fallback client ID
 	OIDCWebClientID    string `mapstructure:"oidc_web_client_id"`    // Client ID for web frontend
 	OIDCMobileClientID string `mapstructure:"oidc_mobile_client_id"` // Client ID for mobile app
+
+	// Session Token (Backend-issued JWT for API authentication)
+	// Used after OIDC ID Token exchange - decouples API auth from provider token lifetime
+	SessionSecret string `mapstructure:"session_secret"` // HMAC secret for signing session tokens (min 32 chars recommended)
 
 	// Supabase (Deprecated - for migration period only)
 	SupabaseURL            string `mapstructure:"supabase_url"`
@@ -110,6 +114,9 @@ func LoadConfig(path string) error {
 	v.BindEnv("oidc_web_client_id", "OIDC_WEB_CLIENT_ID")
 	v.BindEnv("oidc_mobile_client_id", "OIDC_MOBILE_CLIENT_ID")
 
+	// Bind Session Token Env Vars
+	v.BindEnv("session_secret", "SESSION_SECRET")
+
 	// Bind Supabase Env Vars (Deprecated - for migration period only)
 	v.BindEnv("supabase_url", "SUPABASE_URL")
 	v.BindEnv("mobile_supabase_url", "MOBILE_SUPABASE_URL")
@@ -167,6 +174,7 @@ func LoadConfig(path string) error {
 	setEnvIfEmpty("OIDC_CLIENT_ID", App.OIDCClientID)
 	setEnvIfEmpty("OIDC_WEB_CLIENT_ID", App.OIDCWebClientID)
 	setEnvIfEmpty("OIDC_MOBILE_CLIENT_ID", App.OIDCMobileClientID)
+	setEnvIfEmpty("SESSION_SECRET", App.SessionSecret)
 
 	// Supabase (Deprecated - for migration period only)
 	setEnvIfEmpty("SUPABASE_URL", App.SupabaseURL)

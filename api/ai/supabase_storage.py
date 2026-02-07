@@ -189,20 +189,34 @@ def extract_user_id_from_token(auth_token: str) -> Optional[str]:
         # Remove 'Bearer ' prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # OIDC Authentication (Required)
-        if not config.oidc_issuer:
-            logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+        # Authentication: Try session token first (fast), then OIDC (backward compat)
+        if not config.session_secret and not config.oidc_issuer:
+            logger.error("❌ No authentication configured. Set SESSION_SECRET or OIDC_ISSUER.")
             return None
 
         from oidc_auth import extract_user_id_from_oidc_token
-        oidc_sub = extract_user_id_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
-        if oidc_sub:
-            # Convert OIDC subject to UUID for database compatibility
-            user_id = oidc_sub_to_uuid(oidc_sub)
-            logger.debug(f"✅ Verified OIDC token: sub={oidc_sub} -> uuid={user_id}")
+        user_id_or_sub = extract_user_id_from_oidc_token(
+            token, 
+            config.oidc_issuer, 
+            config.oidc_client_id,
+            config.session_secret
+        )
+        
+        if user_id_or_sub:
+            # Session token returns user_id (UUID), OIDC returns sub (may need conversion)
+            # Try to parse as UUID - if it works, it's already a UUID
+            try:
+                import uuid
+                uuid.UUID(user_id_or_sub)
+                user_id = user_id_or_sub  # Already a UUID
+                logger.debug(f"✅ Token verified: user_id={user_id}")
+            except ValueError:
+                # Not a UUID - must be OIDC sub, convert it
+                user_id = oidc_sub_to_uuid(user_id_or_sub)
+                logger.debug(f"✅ OIDC token verified: sub={user_id_or_sub} -> uuid={user_id}")
             return user_id
         else:
-            logger.warning("⚠️ OIDC token verification failed")
+            logger.warning("⚠️ Token verification failed")
             return None
 
     except Exception as e:
@@ -268,14 +282,16 @@ async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[
             }
         }
     """
-    # Priority: direct user_id > extract from auth_token
+    # Priority: direct user_id > resolve from auth_token
     effective_user_id = user_id
 
     if not effective_user_id and auth_token:
-        effective_user_id = extract_user_id_from_token(auth_token)
+        # Resolve to actual DB user_id (may differ from provider_id in token)
+        from database_util import resolve_user_id_from_token
+        effective_user_id = resolve_user_id_from_token(auth_token)
 
     if not effective_user_id:
-        logger.warning("⚠️ No user_id provided and could not extract from auth_token")
+        logger.warning("⚠️ No user_id provided and could not resolve from auth_token")
         return {}
 
     try:
@@ -439,23 +455,36 @@ def get_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
         # Remove Bearer prefix if present
         token = auth_token.replace("Bearer ", "").strip()
 
-        # OIDC Authentication (Required)
-        if not config.oidc_issuer:
-            logger.error("❌ No authentication provider configured. Set OIDC_ISSUER environment variable.")
+        # Authentication: Try session token first (fast), then OIDC (backward compat)
+        if not config.session_secret and not config.oidc_issuer:
+            logger.error("❌ No authentication configured. Set SESSION_SECRET or OIDC_ISSUER.")
             return None
 
         from oidc_auth import get_user_info_from_oidc_token
-        user_info = get_user_info_from_oidc_token(token, config.oidc_issuer, config.oidc_client_id)
+        user_info = get_user_info_from_oidc_token(
+            token, 
+            config.oidc_issuer, 
+            config.oidc_client_id,
+            config.session_secret
+        )
+        
         if user_info:
-            # Convert OIDC subject to UUID for database compatibility
-            oidc_sub = user_info.get("id")
-            if oidc_sub:
-                user_info["oidc_sub"] = oidc_sub  # Keep original for reference
-                user_info["id"] = oidc_sub_to_uuid(oidc_sub)  # Convert to UUID
-            logger.debug(f"✅ Got user info from OIDC token: {user_info.get('id')}")
+            user_id_or_sub = user_info.get("id")
+            if user_id_or_sub:
+                # Session token returns user_id (UUID), OIDC returns sub (may need conversion)
+                try:
+                    import uuid
+                    uuid.UUID(user_id_or_sub)
+                    # Already a UUID from session token
+                    logger.debug(f"✅ Token verified: user_id={user_id_or_sub}")
+                except ValueError:
+                    # Not a UUID - must be OIDC sub, convert it
+                    user_info["oidc_sub"] = user_id_or_sub  # Keep original for reference
+                    user_info["id"] = oidc_sub_to_uuid(user_id_or_sub)  # Convert to UUID
+                    logger.debug(f"✅ OIDC token verified: sub={user_id_or_sub} -> uuid={user_info['id']}")
             return user_info
         else:
-            logger.warning("⚠️ OIDC token verification failed")
+            logger.warning("⚠️ Token verification failed")
             return None
 
     except Exception as e:
@@ -910,14 +939,16 @@ async def sync_user_skills(auth_token: str) -> Dict[str, Any]:
     Returns:
         Dictionary with sync results
     """
-    user_id = extract_user_id_from_token(auth_token)
+    # Resolve to actual DB user_id (may differ from provider_id in token)
+    from database_util import resolve_user_id_from_token
+    user_id = resolve_user_id_from_token(auth_token)
     if not user_id:
         return {
             "success": False,
             "synced_count": 0,
             "failed_count": 0,
             "skills": [],
-            "errors": ["Invalid auth token"]
+            "errors": ["Invalid auth token or failed to resolve user"]
         }
 
     try:

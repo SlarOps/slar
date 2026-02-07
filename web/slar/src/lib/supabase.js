@@ -1,13 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
+import { getConfigSync } from './config';
 
 // Singleton instance
 let supabaseInstance = null;
 
-// Get config from environment variables directly
-const getConfig = () => {
+// Get config from runtime config
+const getSupabaseConfig = () => {
+  const config = getConfigSync();
   return {
-    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321',
-    supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+    supabaseUrl: config.supabaseUrl || 'http://localhost:54321',
+    supabaseAnonKey: config.supabaseAnonKey || '',
   };
 };
 
@@ -18,7 +20,7 @@ const getSupabaseClient = () => {
     return supabaseInstance;
   }
 
-  const config = getConfig();
+  const config = getSupabaseConfig();
 
   // Only create client if we have valid config
   if (!config.supabaseUrl || !config.supabaseAnonKey) {

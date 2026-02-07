@@ -49,9 +49,19 @@ async def get_memory(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing Authorization header"}
 
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
+        provider_id = extract_user_id_from_token(auth_token)
+        if not provider_id:
             return {"success": False, "error": "Invalid auth token"}
+
+        # Get actual DB user_id (may differ from provider_id)
+        user_info = extract_user_info_from_token(auth_token)
+        user_id = ensure_user_exists(
+            provider_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         result = execute_query(
             "SELECT * FROM claude_memory WHERE user_id = %s AND scope = %s",
@@ -103,17 +113,19 @@ async def update_memory(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
+        provider_id = extract_user_id_from_token(auth_token)
+        if not provider_id:
             return {"success": False, "error": "Invalid auth token"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         execute_query(
             """
@@ -168,9 +180,19 @@ async def delete_memory(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing Authorization header"}
 
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
+        provider_id = extract_user_id_from_token(auth_token)
+        if not provider_id:
             return {"success": False, "error": "Invalid auth token"}
+
+        # Get actual DB user_id (may differ from provider_id)
+        user_info = extract_user_info_from_token(auth_token)
+        user_id = ensure_user_exists(
+            provider_id,
+            email=user_info.get("email") if user_info else None,
+            name=user_info.get("name") if user_info else None
+        )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         execute_query(
             "DELETE FROM claude_memory WHERE user_id = %s AND scope = %s",

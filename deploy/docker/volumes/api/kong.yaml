@@ -23,6 +23,18 @@ services:
     plugins:
       - name: cors
 
+  ## Next.js Runtime Config - Must be before api-service
+  - name: nextjs-config-service
+    # _comment: 'Config: /api/config -> http://web:3000/api/config'
+    url: http://web:3000/
+    routes:
+      - name: nextjs-config-route
+        strip_path: false
+        paths:
+          - /api/config
+    plugins:
+      - name: cors
+
   ## API Service - Main Backend API
   - name: api-service
     # _comment: 'API: /api/* -> http://api:8081/*'

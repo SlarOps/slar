@@ -1,15 +1,24 @@
 """
 OIDC Authentication Module
 
-This module handles JWT verification for any OIDC-compliant provider.
-Supports: Keycloak, Auth0, Okta, Azure AD, Google, etc.
+This module handles JWT verification for:
+1. Backend session tokens (HS256 - fast path, no external calls)
+2. OIDC ID tokens (RS256 - via JWKS, backward compatible)
+
+Supports: Cloudflare Access, Keycloak, Auth0, Okta, Azure AD, Google, etc.
 
 Features:
-- RS256/RS384/RS512 JWT verification using JWKS
+- HS256 session token verification (stateless, fast)
+- RS256/RS384/RS512 OIDC token verification using JWKS
 - OIDC Discovery support (.well-known/openid-configuration)
 - JWKS caching with automatic refresh
+- Automatic token type detection
 - User ID extraction from tokens
-- Compatible with existing code structure
+
+Architecture: Microservices with shared authentication
+- Go backend issues session tokens signed with SESSION_SECRET
+- AI agent verifies tokens with same SESSION_SECRET
+- Standard pattern used by Google, Netflix, Uber
 
 Uses authlib for robust OIDC/JWT handling:
 https://docs.authlib.org/en/latest/jose/jwt.html
@@ -31,6 +40,10 @@ _jwks_cache: Dict[str, Any] = {}
 _jwks_cache_time: Dict[str, float] = {}
 _discovery_cache: Dict[str, Any] = {}
 JWKS_CACHE_TTL = 600  # 10 minutes
+
+# Backend session token constants (must match Go backend)
+SESSION_ISSUER = "slar"
+SESSION_TOKEN_TYPE = "session"
 
 
 def get_oidc_discovery(issuer: str) -> Optional[Dict[str, Any]]:
@@ -139,6 +152,72 @@ def _get_jwks(issuer: str) -> Optional[JsonWebKey]:
         return None
 
 
+def verify_session_token(token: str, secret: str) -> Optional[Dict[str, Any]]:
+    """
+    Verify backend-issued session token (HS256).
+
+    This is the FAST PATH for authentication - no external calls needed.
+    Backend session tokens are issued by Go backend after OIDC authentication.
+
+    Args:
+        token: JWT token string (without Bearer prefix)
+        secret: Shared HMAC secret (SESSION_SECRET from config)
+
+    Returns:
+        Decoded token payload or None if verification fails
+
+    Example:
+        payload = verify_session_token(token, config.session_secret)
+        if payload:
+            user_id = payload.get("user_id")  # Note: custom claim name
+            email = payload.get("email")
+            role = payload.get("role")
+    """
+    try:
+        if not secret:
+            logger.warning("SESSION_SECRET not configured - session token verification disabled")
+            return None
+
+        # Build claims to validate
+        claims_options = {
+            "iss": {"essential": True, "value": SESSION_ISSUER},
+            "exp": {"essential": True},
+            "iat": {"essential": True},
+        }
+
+        # Decode and verify token using HMAC-SHA256
+        claims = authlib_jwt.decode(
+            token,
+            secret,
+            claims_options=claims_options,
+        )
+
+        # Validate claims (exp, iat, iss)
+        claims.validate()
+
+        # Verify this is a session token (not refresh token)
+        token_type = claims.get("token_type")
+        if token_type != SESSION_TOKEN_TYPE:
+            logger.warning(f"Invalid token type: expected '{SESSION_TOKEN_TYPE}', got '{token_type}'")
+            return None
+
+        logger.debug(f"✅ Session token verified for user: {claims.get('user_id')}")
+        return dict(claims)
+
+    except ExpiredTokenError:
+        logger.debug("Session token expired")
+        return None
+    except InvalidClaimError as e:
+        logger.debug(f"Invalid session token claim: {e}")
+        return None
+    except JoseError as e:
+        logger.debug(f"Session token verification failed: {type(e).__name__}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error verifying session token: {type(e).__name__}: {e}")
+        return None
+
+
 def verify_oidc_token(token: str, issuer: str, client_id: str = None) -> Optional[Dict[str, Any]]:
     """
     Verify OIDC JWT token using JWKS public key.
@@ -209,111 +288,156 @@ def verify_oidc_token(token: str, issuer: str, client_id: str = None) -> Optiona
         return None
 
 
-def extract_user_id_from_oidc_token(auth_token: str, issuer: str, client_id: str = None) -> Optional[str]:
+def extract_user_id_from_oidc_token(auth_token: str, issuer: str, client_id: str = None, session_secret: str = None) -> Optional[str]:
     """
-    Extract and verify user ID from OIDC JWT token.
+    Extract and verify user ID from JWT token.
+
+    Supports 2 token types (tries in order):
+    1. Backend session token (HS256 - fast, no external calls)
+    2. OIDC ID token (RS256 - via JWKS, backward compatible)
 
     Args:
         auth_token: JWT token (with or without Bearer prefix)
-        issuer: OIDC issuer URL
+        issuer: OIDC issuer URL (for OIDC token verification)
         client_id: Optional client ID for audience validation
+        session_secret: Optional SESSION_SECRET for backend token verification
 
     Returns:
-        User ID (sub claim) or None if verification fails
+        User ID or None if verification fails
 
     Example:
+        # Try session token first, fallback to OIDC
         user_id = extract_user_id_from_oidc_token(
-            "Bearer eyJhbGc...",
-            "https://auth.example.com"
+            token,
+            issuer="https://auth.example.com",
+            session_secret=config.session_secret
         )
     """
     if not auth_token:
         logger.warning("No auth token provided")
         return None
 
-    if not issuer:
-        logger.warning("No OIDC issuer configured")
-        return None
-
     # Remove Bearer prefix if present
     token = auth_token.replace("Bearer ", "").strip()
 
-    # Verify token and extract payload
-    payload = verify_oidc_token(token, issuer, client_id)
+    # PATH 1: Try backend session token (fast path - no external calls)
+    if session_secret:
+        session_payload = verify_session_token(token, session_secret)
+        if session_payload:
+            # Session token uses "user_id" claim (not "sub")
+            user_id = session_payload.get("user_id")
+            if user_id:
+                logger.debug(f"✅ Session token verified - user_id: {user_id}")
+                return user_id
 
-    if payload:
-        user_id = payload.get("sub")
+    # PATH 2: Try OIDC ID token (backward compatible)
+    if not issuer:
+        logger.warning("No OIDC issuer configured - cannot verify OIDC token")
+        return None
+
+    oidc_payload = verify_oidc_token(token, issuer, client_id)
+    if oidc_payload:
+        user_id = oidc_payload.get("sub")
         if user_id:
-            logger.debug(f"Extracted user_id: {user_id}")
+            logger.debug(f"✅ OIDC token verified - sub: {user_id}")
             return user_id
         else:
-            logger.warning("Token does not contain 'sub' claim")
+            logger.warning("OIDC token does not contain 'sub' claim")
 
     return None
 
 
-def get_user_info_from_oidc_token(auth_token: str, issuer: str, client_id: str = None) -> Optional[Dict[str, Any]]:
+def get_user_info_from_oidc_token(auth_token: str, issuer: str, client_id: str = None, session_secret: str = None) -> Optional[Dict[str, Any]]:
     """
-    Extract full user info from OIDC JWT token.
+    Extract full user info from JWT token.
+
+    Supports 2 token types (tries in order):
+    1. Backend session token (HS256 - fast, no external calls)
+    2. OIDC ID token (RS256 - via JWKS, backward compatible)
 
     Args:
         auth_token: JWT token (with or without Bearer prefix)
-        issuer: OIDC issuer URL
+        issuer: OIDC issuer URL (for OIDC token verification)
         client_id: Optional client ID for audience validation
+        session_secret: Optional SESSION_SECRET for backend token verification
 
     Returns:
         User info dictionary or None if verification fails
 
     Example:
-        user_info = get_user_info_from_oidc_token(token, issuer)
+        user_info = get_user_info_from_oidc_token(
+            token,
+            issuer="https://auth.example.com",
+            session_secret=config.session_secret
+        )
         # Returns: {
         #     "id": "user-uuid",
         #     "email": "user@example.com",
         #     "name": "John Doe",
-        #     "email_verified": True
+        #     "role": "engineer"
         # }
     """
-    if not auth_token or not issuer:
+    if not auth_token:
         return None
 
     # Remove Bearer prefix if present
     token = auth_token.replace("Bearer ", "").strip()
 
-    # Verify token and extract payload
-    payload = verify_oidc_token(token, issuer, client_id)
+    # PATH 1: Try backend session token (fast path)
+    if session_secret:
+        session_payload = verify_session_token(token, session_secret)
+        if session_payload:
+            # Session token has custom claims structure
+            user_info = {
+                "id": session_payload.get("user_id"),
+                "email": session_payload.get("email"),
+                "name": session_payload.get("email", "").split("@")[0],  # Fallback name from email
+                "role": session_payload.get("role", "authenticated"),
+                "token_type": "session",
+            }
+            logger.debug(f"✅ Session token user info extracted: {user_info.get('id')}")
+            return user_info
 
-    if not payload:
+    # PATH 2: Try OIDC ID token (backward compatible)
+    if not issuer:
+        logger.warning("No OIDC issuer configured - cannot verify OIDC token")
+        return None
+
+    oidc_payload = verify_oidc_token(token, issuer, client_id)
+    if not oidc_payload:
         return None
 
     # Build user info compatible with existing code
     user_info = {
-        "id": payload.get("sub"),
-        "email": payload.get("email"),
-        "name": payload.get("name") or _build_name(payload),
-        "email_verified": payload.get("email_verified", False),
-        "preferred_username": payload.get("preferred_username"),
-        "locale": payload.get("locale"),
-        "picture": payload.get("picture"),
+        "id": oidc_payload.get("sub"),
+        "email": oidc_payload.get("email"),
+        "name": oidc_payload.get("name") or _build_name(oidc_payload),
+        "email_verified": oidc_payload.get("email_verified", False),
+        "preferred_username": oidc_payload.get("preferred_username"),
+        "locale": oidc_payload.get("locale"),
+        "picture": oidc_payload.get("picture"),
+        "token_type": "oidc",
     }
 
     # Add roles and groups if present (Keycloak, Auth0, etc.)
-    if "roles" in payload:
-        user_info["roles"] = payload["roles"]
-    if "groups" in payload:
-        user_info["groups"] = payload["groups"]
+    if "roles" in oidc_payload:
+        user_info["roles"] = oidc_payload["roles"]
+    if "groups" in oidc_payload:
+        user_info["groups"] = oidc_payload["groups"]
 
     # Keycloak realm_access roles
-    if "realm_access" in payload:
-        user_info["realm_roles"] = payload["realm_access"].get("roles", [])
+    if "realm_access" in oidc_payload:
+        user_info["realm_roles"] = oidc_payload["realm_access"].get("roles", [])
 
     # Keycloak resource_access roles
-    if "resource_access" in payload:
-        user_info["resource_access"] = payload["resource_access"]
+    if "resource_access" in oidc_payload:
+        user_info["resource_access"] = oidc_payload["resource_access"]
 
     # Auth0 custom claims
-    if "https://auth0.com/claims" in payload:
-        user_info["metadata"] = payload["https://auth0.com/claims"]
+    if "https://auth0.com/claims" in oidc_payload:
+        user_info["metadata"] = oidc_payload["https://auth0.com/claims"]
 
+    logger.debug(f"✅ OIDC token user info extracted: {user_info.get('id')}")
     return user_info
 
 

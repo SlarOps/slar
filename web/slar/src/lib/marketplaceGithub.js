@@ -8,6 +8,8 @@
  * - Download plugin files on demand (lazy loading)
  */
 
+import { getConfigSync } from './config';
+
 /**
  * Decode JWT token to extract user_id (client-side, no verification)
  *
@@ -408,7 +410,7 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
 
     // Call AI service endpoint to git clone
     // SECURITY: Send token via Authorization header, not in request body
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const aiServiceUrl = getConfigSync().aiApiUrl;
     const response = await fetch(`${aiServiceUrl}/api/marketplace/clone`, {
       method: 'POST',
       headers: {
@@ -486,7 +488,7 @@ export async function updateMarketplace(marketplaceName, authToken, onProgress) 
     }
 
     // SECURITY: Send token via Authorization header, not in request body
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const aiServiceUrl = getConfigSync().aiApiUrl;
     const response = await fetch(`${aiServiceUrl}/api/marketplace/update`, {
       method: 'POST',
       headers: {
@@ -545,7 +547,7 @@ export async function refreshMarketplaceSkills(marketplaceName, authToken) {
   try {
     console.log('[marketplaceGithub] Refreshing skills for marketplace:', { marketplaceName });
 
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const aiServiceUrl = getConfigSync().aiApiUrl;
     const response = await fetch(`${aiServiceUrl}/api/marketplace/refresh-skills`, {
       method: 'POST',
       headers: {
@@ -675,7 +677,7 @@ export async function fetchMarketplaceMetadata(owner, repo, branch = 'main', aut
     console.log('[marketplaceGithub] 🌐 Fetching marketplace metadata (lightweight):', { owner, repo, branch });
 
     // SECURITY: Send token via Authorization header, not in request body
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const aiServiceUrl = getConfigSync().aiApiUrl;
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/fetch-metadata`, {
       method: 'POST',
@@ -742,7 +744,7 @@ export async function installPluginFromMarketplace(
     });
 
     // SECURITY: Send token via Authorization header, not in request body
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    const aiServiceUrl = getConfigSync().aiApiUrl;
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/install-plugin`, {
       method: 'POST',

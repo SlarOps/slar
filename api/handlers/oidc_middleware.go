@@ -1,15 +1,16 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
+	"github.com/vanchonlee/slar/internal/config"
 	"github.com/vanchonlee/slar/services"
 )
 
@@ -31,25 +32,31 @@ func oidcSubToUUID(sub string) string {
 }
 
 // OIDCAuthMiddleware handles JWT authentication using any OIDC-compliant provider
+// Supports three authentication methods (tried in order):
+//  1. API Key - database lookup
+//  2. Session Token - backend-issued JWT (fast HMAC verification, no external calls)
+//  3. OIDC ID Token - provider-issued JWT (JWKS verification, backward compatible)
 type OIDCAuthMiddleware struct {
 	OIDCAuth      *services.OIDCAuthService
+	SessionToken  *services.SessionTokenService // Backend-issued session tokens
 	UserService   *services.UserService
 	APIKeyService *services.APIKeyService
 }
 
 // NewOIDCAuthMiddleware creates a new OIDC auth middleware
-// Reads configuration from environment variables:
-// - OIDC_ISSUER: The OIDC issuer URL (required)
-// - OIDC_CLIENT_ID: Default client ID (optional, used as fallback)
-// - OIDC_WEB_CLIENT_ID: Client ID for web frontend (optional)
-// - OIDC_MOBILE_CLIENT_ID: Client ID for mobile app (optional)
+// Reads configuration from config.App (loaded from config.yaml):
+// - OIDCIssuer: The OIDC issuer URL (required)
+// - OIDCClientID: Default client ID (optional, used as fallback)
+// - OIDCWebClientID: Client ID for web frontend (optional)
+// - OIDCMobileClientID: Client ID for mobile app (optional)
 // Returns nil if OIDC is not configured - API will start but protected endpoints will be disabled
-func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *services.APIKeyService) *OIDCAuthMiddleware {
-	oidcIssuer := os.Getenv("OIDC_ISSUER")
+func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *services.APIKeyService, sessionTokenService *services.SessionTokenService) *OIDCAuthMiddleware {
+	// Read from config.App (loaded from config.yaml)
+	oidcIssuer := config.App.OIDCIssuer
 
 	if oidcIssuer == "" {
-		log.Println("⚠️  WARNING: OIDC_ISSUER not configured. Protected endpoints will be disabled.")
-		log.Println("   Set OIDC_ISSUER and OIDC_CLIENT_ID to enable authentication.")
+		log.Println("⚠️  WARNING: oidc_issuer not configured in config.yaml. Protected endpoints will be disabled.")
+		log.Println("   Set oidc_issuer and oidc_client_id in config.yaml to enable authentication.")
 		return nil
 	}
 
@@ -58,23 +65,23 @@ func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *ser
 	clientIDs := []string{}
 
 	// Add default client ID
-	if defaultClientID := os.Getenv("OIDC_CLIENT_ID"); defaultClientID != "" {
-		clientIDs = append(clientIDs, defaultClientID)
+	if config.App.OIDCClientID != "" {
+		clientIDs = append(clientIDs, config.App.OIDCClientID)
 	}
 
 	// Add web-specific client ID
-	if webClientID := os.Getenv("OIDC_WEB_CLIENT_ID"); webClientID != "" {
+	if config.App.OIDCWebClientID != "" {
 		// Only add if different from default
-		if !contains(clientIDs, webClientID) {
-			clientIDs = append(clientIDs, webClientID)
+		if !contains(clientIDs, config.App.OIDCWebClientID) {
+			clientIDs = append(clientIDs, config.App.OIDCWebClientID)
 		}
 	}
 
 	// Add mobile-specific client ID
-	if mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID"); mobileClientID != "" {
+	if config.App.OIDCMobileClientID != "" {
 		// Only add if different from others
-		if !contains(clientIDs, mobileClientID) {
-			clientIDs = append(clientIDs, mobileClientID)
+		if !contains(clientIDs, config.App.OIDCMobileClientID) {
+			clientIDs = append(clientIDs, config.App.OIDCMobileClientID)
 		}
 	}
 
@@ -86,8 +93,13 @@ func NewOIDCAuthMiddleware(userService *services.UserService, apiKeyService *ser
 	}
 
 	log.Printf("✅ OIDC authentication configured: %s (client IDs: %v)", oidcIssuer, clientIDs)
+	if sessionTokenService != nil {
+		log.Println("✅ Session token support enabled (token exchange available)")
+	}
+
 	return &OIDCAuthMiddleware{
 		OIDCAuth:      oidcAuth,
+		SessionToken:  sessionTokenService,
 		UserService:   userService,
 		APIKeyService: apiKeyService,
 	}
@@ -103,7 +115,15 @@ func contains(slice []string, str string) bool {
 	return false
 }
 
-// OIDCAuthMiddleware validates OIDC JWT tokens
+// OIDCAuthMiddleware validates tokens in this priority order:
+//  1. API Key (database lookup)
+//  2. Session Token (backend-issued JWT, HMAC verification - microseconds, no external calls)
+//  3. OIDC ID Token (provider-issued JWT, JWKS verification - backward compatible)
+//
+// This ordering ensures:
+//   - Existing API key integrations continue to work
+//   - New session token flow is the fast path (no DB lookup for user, no JWKS calls)
+//   - Old ID Token flow still works during migration (backward compatible)
 func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract token from Authorization header
@@ -121,7 +141,7 @@ func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Check if it's an API key (database lookup via APIKeyService)
+		// === PATH 1: API Key (database lookup) ===
 		if m.APIKeyService != nil {
 			apiKey, err := m.APIKeyService.ValidateAPIKey(token)
 			if err == nil {
@@ -142,10 +162,45 @@ func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			// API key validation failed - fall through to JWT validation
+			// API key validation failed - fall through to token validation
 		}
 
-		// Validate the OIDC token (normal user JWT)
+		// === PATH 2: Session Token (backend-issued, fast HMAC verification) ===
+		// Try session token first - it's the fastest path (microseconds, no external calls)
+		if m.SessionToken != nil && m.SessionToken.IsSessionToken(token) {
+			sessionClaims, err := m.SessionToken.ValidateSessionToken(token)
+			if err == nil {
+				// Session token verified - set context from token claims
+				// No need to call ensureUserExistsByEmail - user was created during token exchange
+				c.Set("user_id", sessionClaims.UserID)
+				c.Set("user_email", sessionClaims.Email)
+				c.Set("user_role", sessionClaims.Role)
+				c.Set("auth_provider", "session_token")
+
+				// Set user map for handlers that expect it
+				c.Set("user", map[string]interface{}{
+					"id":    sessionClaims.UserID,
+					"email": sessionClaims.Email,
+					"role":  sessionClaims.Role,
+				})
+
+				c.Next()
+				return
+			}
+			// Session token validation failed (expired, tampered, etc.)
+			// Don't fall through to OIDC - if it was a session token, reject it
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":   "session_token_expired",
+				"message": "Session token is invalid or expired. Use /auth/refresh to get a new one.",
+			})
+			c.Abort()
+			return
+		}
+
+		// === PATH 3: OIDC ID Token (backward compatible) ===
+		// This path handles:
+		//   - Clients that haven't migrated to session tokens yet
+		//   - Initial token exchange requests
 		claims, err := m.OIDCAuth.ValidateToken(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: " + err.Error()})
@@ -153,21 +208,20 @@ func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Convert OIDC subject to UUID for database compatibility
-		userUUID := oidcSubToUUID(claims.UserID)
+		// EMAIL-BASED LOOKUP: Get or create user by email (not by sub-based UUID)
+		// This enables multi-provider authentication: same email = same user
+		userUUID, err := m.ensureUserExistsByEmail(claims, claims.IsFreshLogin(5))
+		if err != nil {
+			log.Printf("Failed to process user: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user authentication"})
+			c.Abort()
+			return
+		}
 
 		// Store user info in context for use in handlers
 		userInfo := m.OIDCAuth.GetUserInfo(claims)
-		userInfo["id"] = userUUID // Override with UUID
+		userInfo["id"] = userUUID // Use the actual user ID from database
 		c.Set("user", userInfo)
-
-		// Always ensure user exists (required for FK constraints)
-		// Only update profile fields on fresh login (within 5 minutes of auth_time)
-		err = m.ensureUserExists(userUUID, claims, claims.IsFreshLogin(5))
-		if err != nil {
-			log.Printf("Failed to sync user to database: %v", err)
-			// Don't block request on sync failure, just log it
-		}
 
 		c.Set("user_id", userUUID)
 		c.Set("oidc_sub", claims.UserID) // Keep original OIDC subject for reference
@@ -175,13 +229,14 @@ func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 		c.Set("user_role", "authenticated")
 		c.Set("auth_provider", "oidc")
 
-		log.Printf("AUTH SUCCESS - User: %s (oidc:%s -> uuid:%s) via OIDC", claims.Email, claims.UserID, userUUID)
+		log.Printf("AUTH SUCCESS - User: %s (oidc_sub:%s -> uuid:%s) via OIDC ID Token", claims.Email, claims.UserID, userUUID)
 
 		c.Next()
 	}
 }
 
 // OptionalOIDCAuth middleware for endpoints that can work with or without auth
+// Supports both session tokens and OIDC ID tokens
 func (m *OIDCAuthMiddleware) OptionalOIDCAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract token from Authorization header
@@ -189,29 +244,44 @@ func (m *OIDCAuthMiddleware) OptionalOIDCAuth() gin.HandlerFunc {
 		if authHeader != "" {
 			token, err := m.OIDCAuth.ExtractTokenFromHeader(authHeader)
 			if err == nil {
-				// Validate the OIDC token
-				claims, err := m.OIDCAuth.ValidateToken(token)
-				if err == nil {
-					// Convert OIDC subject to UUID
-					userUUID := oidcSubToUUID(claims.UserID)
-
-					// Store user info in context
-					userInfo := m.OIDCAuth.GetUserInfo(claims)
-					userInfo["id"] = userUUID
-					c.Set("user", userInfo)
-
-					// Always ensure user exists, update profile only on fresh login
-					syncErr := m.ensureUserExists(userUUID, claims, claims.IsFreshLogin(5))
-					if syncErr != nil {
-						log.Printf("Failed to sync user to database: %v", syncErr)
+				// Try session token first (fast path)
+				if m.SessionToken != nil && m.SessionToken.IsSessionToken(token) {
+					sessionClaims, err := m.SessionToken.ValidateSessionToken(token)
+					if err == nil {
+						c.Set("user_id", sessionClaims.UserID)
+						c.Set("user_email", sessionClaims.Email)
+						c.Set("user_role", sessionClaims.Role)
+						c.Set("authenticated", true)
+						c.Set("auth_provider", "session_token")
+						c.Set("user", map[string]interface{}{
+							"id":    sessionClaims.UserID,
+							"email": sessionClaims.Email,
+							"role":  sessionClaims.Role,
+						})
 					}
+				} else {
+					// Fallback to OIDC ID Token
+					claims, err := m.OIDCAuth.ValidateToken(token)
+					if err == nil {
+						// EMAIL-BASED LOOKUP: Get or create user by email
+						userUUID, userErr := m.ensureUserExistsByEmail(claims, claims.IsFreshLogin(5))
+						if userErr != nil {
+							log.Printf("Failed to sync user to database: %v", userErr)
+							// Continue without auth for optional endpoints
+						} else {
+							// Store user info in context
+							userInfo := m.OIDCAuth.GetUserInfo(claims)
+							userInfo["id"] = userUUID
+							c.Set("user", userInfo)
 
-					c.Set("user_id", userUUID)
-					c.Set("oidc_sub", claims.UserID)
-					c.Set("user_email", claims.Email)
-					c.Set("user_role", "authenticated")
-					c.Set("authenticated", true)
-					c.Set("auth_provider", "oidc")
+							c.Set("user_id", userUUID)
+							c.Set("oidc_sub", claims.UserID)
+							c.Set("user_email", claims.Email)
+							c.Set("user_role", "authenticated")
+							c.Set("authenticated", true)
+							c.Set("auth_provider", "oidc")
+						}
+					}
 				}
 			}
 		}
@@ -221,83 +291,111 @@ func (m *OIDCAuthMiddleware) OptionalOIDCAuth() gin.HandlerFunc {
 	}
 }
 
-// ensureUserExists checks if user exists in database and creates/updates accordingly
-// userID is the UUID (converted from OIDC subject), claims.UserID is original OIDC subject
+// ensureUserExistsByEmail looks up user by EMAIL first (not by sub-based UUID)
+// This enables multi-provider authentication: same email = same user
+// Returns: (userID string, error)
 // updateProfile: if true, sync profile data from IdP (for fresh logins)
-func (m *OIDCAuthMiddleware) ensureUserExists(userID string, claims *services.OIDCClaims, updateProfile bool) error {
+func (m *OIDCAuthMiddleware) ensureUserExistsByEmail(claims *services.OIDCClaims, updateProfile bool) (string, error) {
+	// Validate email is present (required for email-based lookup)
+	if claims.Email == "" {
+		return "", fmt.Errorf("email claim is required for authentication")
+	}
+
 	newName := m.extractNameFromClaims(claims)
 	newTeam := m.extractTeamFromClaims(claims)
 
-	// Check if user exists
-	existingUser, err := m.UserService.GetUser(userID)
-	if err == nil {
-		// User exists - only update profile if updateProfile=true (fresh login)
-		if !updateProfile {
-			return nil // User exists, no update needed
-		}
-
-		// Check if profile needs updating (IdP is source of truth)
-		needsUpdate := existingUser.Email != claims.Email ||
-			existingUser.Name != newName ||
-			existingUser.ProviderID != claims.UserID
-
-		if needsUpdate {
-			log.Printf("Syncing user profile from IdP: %s -> %s (uuid:%s)",
-				existingUser.Email, claims.Email, userID)
-
-			// Update with latest data from IdP (preserve user's role and team if set)
-			user := db.User{
-				ID:         userID,
-				Provider:   "oidc",
-				ProviderID: claims.UserID,
-				Email:      claims.Email,
-				Name:       newName,
-				Role:       existingUser.Role, // Preserve existing role
-				Team:       existingUser.Team, // Preserve existing team (can be overridden by IdP if needed)
-				IsActive:   existingUser.IsActive,
-				CreatedAt:  existingUser.CreatedAt,
-				UpdatedAt:  time.Now(),
-			}
-
-			// If team was default and IdP has better info, update it
-			if existingUser.Team == "Default Team" && newTeam != "Default Team" {
-				user.Team = newTeam
-			}
-
-			updateErr := m.UserService.CreateUserRecord(user)
-			if updateErr != nil {
-				log.Printf("ERROR updating user profile: %v (uuid:%s)", updateErr, userID)
-				return updateErr
-			}
-			log.Printf("Successfully synced user profile: %s (uuid:%s)", claims.Email, userID)
-		}
-		return nil
+	// STEP 1: Lookup by EMAIL first (key change for multi-provider support)
+	existingUser, err := m.UserService.GetUserByEmail(claims.Email)
+	if err != nil {
+		return "", fmt.Errorf("failed to lookup user by email: %w", err)
 	}
 
-	// User doesn't exist, create it
-	log.Printf("Creating new user record for: %s (uuid:%s, oidc_sub:%s)", claims.Email, userID, claims.UserID)
+	if existingUser != nil {
+		// User found by email → USE EXISTING ID (don't create new)
+		userID := existingUser.ID
+
+		// Log if provider changed (useful for audit)
+		if existingUser.ProviderID != claims.UserID {
+			log.Printf("User %s logged in with different provider: old_sub=%s, new_sub=%s",
+				claims.Email, existingUser.ProviderID, claims.UserID)
+		}
+
+		// Link this identity (idempotent - won't duplicate)
+		if linkErr := m.UserService.LinkUserIdentity(userID, "oidc", claims.UserID, claims.Email); linkErr != nil {
+			log.Printf("Warning: failed to link identity: %v", linkErr)
+			// Don't fail the request, just log
+		}
+
+		// Update profile if fresh login
+		if updateProfile {
+			needsUpdate := existingUser.Name != newName || existingUser.ProviderID != claims.UserID
+
+			if needsUpdate {
+				log.Printf("Syncing user profile from IdP: %s (uuid:%s)", claims.Email, userID)
+
+				user := db.User{
+					ID:         userID,
+					Provider:   "oidc",
+					ProviderID: claims.UserID, // Update to latest provider sub
+					Email:      claims.Email,
+					Name:       newName,
+					Role:       existingUser.Role,
+					Team:       existingUser.Team,
+					IsActive:   existingUser.IsActive,
+					CreatedAt:  existingUser.CreatedAt,
+					UpdatedAt:  time.Now(),
+				}
+
+				// Update team if it was default and IdP has better info
+				if existingUser.Team == "Default Team" && newTeam != "Default Team" {
+					user.Team = newTeam
+				}
+
+				if updateErr := m.UserService.CreateUserRecord(user); updateErr != nil {
+					log.Printf("ERROR updating user profile: %v (uuid:%s)", updateErr, userID)
+					// Don't fail, just log
+				}
+			}
+		}
+
+		return userID, nil
+	}
+
+	// STEP 2: User doesn't exist by email → Create new user with random UUID
+	userID := uuid.New().String()
+	log.Printf("Creating new user: %s (uuid:%s, provider_sub:%s)", claims.Email, userID, claims.UserID)
 
 	user := db.User{
-		ID:         userID,        // UUID for database
+		ID:         userID,
 		Provider:   "oidc",
-		ProviderID: claims.UserID, // Original OIDC subject for reference
+		ProviderID: claims.UserID,
 		Email:      claims.Email,
 		Name:       newName,
-		Role:       "engineer", // Default role
+		Role:       "engineer",
 		Team:       newTeam,
 		IsActive:   true,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
 
-	createErr := m.UserService.CreateUserRecord(user)
-	if createErr != nil {
-		log.Printf("ERROR creating user record: %v (uuid:%s, email:%s)", createErr, userID, claims.Email)
-		return createErr
+	if createErr := m.UserService.CreateUserRecord(user); createErr != nil {
+		return "", fmt.Errorf("failed to create user: %w", createErr)
+	}
+
+	// Link identity for the new user
+	if linkErr := m.UserService.LinkUserIdentity(userID, "oidc", claims.UserID, claims.Email); linkErr != nil {
+		log.Printf("Warning: failed to link identity for new user: %v", linkErr)
 	}
 
 	log.Printf("Successfully created user: %s (uuid:%s)", claims.Email, userID)
-	return nil
+	return userID, nil
+}
+
+// ensureUserExists is kept for backward compatibility but now delegates to ensureUserExistsByEmail
+// Deprecated: Use ensureUserExistsByEmail directly
+func (m *OIDCAuthMiddleware) ensureUserExists(userID string, claims *services.OIDCClaims, updateProfile bool) error {
+	_, err := m.ensureUserExistsByEmail(claims, updateProfile)
+	return err
 }
 
 // extractNameFromClaims extracts full name from OIDC claims
@@ -358,4 +456,3 @@ func (m *OIDCAuthMiddleware) extractTeamFromClaims(claims *services.OIDCClaims) 
 
 	return "Default Team"
 }
-
