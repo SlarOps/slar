@@ -1748,9 +1748,20 @@ async def websocket_chat(websocket: WebSocket):
     is_valid, result = await verify_websocket_auth(websocket)
     if not is_valid:
         logger.warning(f"🚫 WebSocket auth failed: {result}")
+        # Try to extract user_id from token payload for audit (even if verification failed)
+        claimed_user_id = None
+        try:
+            from database_util import extract_user_info_from_token
+            ws_token = websocket.query_params.get("token")
+            if ws_token:
+                info = extract_user_info_from_token(ws_token)
+                if info:
+                    claimed_user_id = info.get("user_id")
+        except Exception:
+            pass
         # Log auth failure
         await audit.log_auth_failed(
-            user_id=None,
+            user_id=claimed_user_id,
             error_code="INVALID_TOKEN",
             error_message=result,
             source_ip=client_ip,

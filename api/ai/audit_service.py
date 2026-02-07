@@ -513,6 +513,18 @@ class AuditService:
         def _sanitize_uuid(value: Optional[str]) -> Optional[str]:
             return None if value == '' else value
 
+        # Nil UUID fallback for user_id when not a valid UUID
+        NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+        def _sanitize_user_id(value: Optional[str]) -> str:
+            if not value or value == '':
+                return NIL_UUID
+            try:
+                uuid.UUID(value)
+                return value
+            except ValueError:
+                return NIL_UUID
+
         for event in events:
             values_list.append(values_template)
             params.extend([
@@ -520,7 +532,7 @@ class AuditService:
                 event.event_time,
                 event.event_type.value if isinstance(event.event_type, EventType) else str(event.event_type),
                 event.event_category,
-                event.user_id,
+                _sanitize_user_id(event.user_id),
                 event.user_email,
                 _sanitize_uuid(event.org_id),       # UUID field - convert '' to None
                 _sanitize_uuid(event.project_id),  # UUID field - convert '' to None
@@ -603,7 +615,7 @@ class AuditService:
         """Log authentication failure"""
         await self.log(AuditEvent(
             event_type=EventType.AUTH_FAILED,
-            user_id=user_id or "unknown",
+            user_id=user_id or "00000000-0000-0000-0000-000000000000",
             action="authenticate",
             status=EventStatus.FAILURE,
             error_code=error_code,
@@ -765,7 +777,7 @@ class AuditService:
         """Log security-related event"""
         await self.log(AuditEvent(
             event_type=event_type,
-            user_id=user_id or "unknown",
+            user_id=user_id or "00000000-0000-0000-0000-000000000000",
             action=action,
             status=EventStatus.FAILURE,
             error_code=error_code,
