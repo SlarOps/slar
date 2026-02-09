@@ -34,7 +34,8 @@ from claude_agent_sdk import (
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id
+from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id as set_incident_project_id
+from memory_tools import create_memory_tools_server, set_user_id, set_project_id as set_memory_project_id
 from zero_trust_verifier import get_verifier, init_verifier
 from audit_service import (
     get_audit_service,
@@ -631,13 +632,17 @@ async def agent_task_streaming(
 
                 if data.get("project_id"):
                     context["project_id"] = data["project_id"]
-                    set_project_id(context["project_id"])
+                    set_incident_project_id(context["project_id"])
+                    set_memory_project_id(context["project_id"])
 
                 if data.get("user_id"):
                     context["user_id"] = data["user_id"]
+                    set_user_id(context["user_id"])
 
                 if not context["user_id"] and context["auth_token"]:
                     context["user_id"] = extract_user_id_from_token(context["auth_token"]) or ""
+                    if context["user_id"]:
+                        set_user_id(context["user_id"])
 
                 prompt = data.get("prompt", "")
                 is_silent = data.get("silent", False)  # Silent mode for fetch_capabilities
@@ -962,7 +967,12 @@ async def agent_task_streaming(
         if context["org_id"]:
             set_org_id(context["org_id"])
         if context["project_id"]:
-            set_project_id(context["project_id"])
+            set_incident_project_id(context["project_id"])
+            set_memory_project_id(context["project_id"])
+        
+        # Set user_id for memory tools tracking
+        if context["user_id"]:
+            set_user_id(context["user_id"])
 
         # Get user workspace
         if context["user_id"]:
@@ -972,7 +982,11 @@ async def agent_task_streaming(
 
         # Load MCP servers
         incident_tools_server = create_incident_tools_server()
-        mcp_servers = {"incident_tools": incident_tools_server}
+        memory_tools_server = create_memory_tools_server()
+        mcp_servers = {
+            "incident_tools": incident_tools_server,
+            "memory_tools": memory_tools_server,
+        }
 
         user_mcp_servers = await get_user_mcp_servers(
             auth_token=context["auth_token"],
@@ -993,6 +1007,7 @@ async def agent_task_streaming(
             "mcp__incident_tools__get_incidents_by_id",
             "mcp__incident_tools__get_current_time",
             "mcp__incident_tools__get_incident_stats",
+            "mcp__memory_tools__update_memory",
             "Skill"
         ]
         if context["user_id"]:
@@ -1250,11 +1265,16 @@ async def agent_task(
             # Set project_id for ReBAC project filtering (OPTIONAL)
             project_id = data.get("project_id", "")
             if project_id:
-                set_project_id(project_id)
+                set_incident_project_id(project_id)
+                set_memory_project_id(project_id)
                 logger.info(f"📁 Project ID set: {project_id}")
 
             # Use the current user_id (from Zero-Trust or JWT)
             user_id = current_user_id
+            
+            # Set user_id for memory tools
+            if user_id:
+                set_user_id(user_id)
 
             # Get user workspace directory (isolated per user)
             if user_id:
@@ -1267,8 +1287,12 @@ async def agent_task(
 
             # Create MCP server with all incident tools
             incident_tools_server = create_incident_tools_server()
+            memory_tools_server = create_memory_tools_server()
 
-            mcp_servers = {"incident_tools": incident_tools_server}
+            mcp_servers = {
+                "incident_tools": incident_tools_server,
+                "memory_tools": memory_tools_server,
+            }
 
             # Get user MCP servers
             # Secure flow: user_id from Zero-Trust session (no auth_token needed)
@@ -1296,8 +1320,10 @@ async def agent_task(
             allowed_tools = [
                 "mcp__incident_tools__get_incidents_by_time",
                 "mcp__incident_tools__get_incidents_by_id",
+                "mcp__incident_tools__get_incidents_by_id",
                 "mcp__incident_tools__get_current_time",
-                "mcp__incident_tools__get_incident_stats"
+                "mcp__incident_tools__get_incident_stats",
+                "mcp__memory_tools__update_memory"
             ]
             if user_id:
                 user_allowed = await get_user_allowed_tools(user_id)
