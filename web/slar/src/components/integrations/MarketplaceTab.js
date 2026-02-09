@@ -23,7 +23,8 @@ import {
 } from '../../lib/marketplaceGithub';
 import {
   getInstalledPluginsFromDB,
-  loadMarketplaceFromDB
+  loadMarketplaceFromDB,
+  removeInstalledPluginFromDB
 } from '../../lib/workspaceManager';
 
 const DEFAULT_MARKETPLACES = [];
@@ -32,6 +33,7 @@ export default function MarketplaceTab() {
   const { session } = useAuth();
   const [marketplaces, setMarketplaces] = useState([]);
   const [marketplaceData, setMarketplaceData] = useState({});
+  const [installedPlugins, setInstalledPlugins] = useState({});  // Map: pluginKey -> plugin data
   const [installedPluginIds, setInstalledPluginIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,14 +85,17 @@ export default function MarketplaceTab() {
       if (session?.user?.id && session?.access_token) {
         const installedResult = await getInstalledPluginsFromDB(session.user.id, session.access_token);
         if (installedResult.success) {
-          // Convert plugins array to set of plugin IDs
+          // Convert plugins array to set of plugin IDs and map for lookup
           const pluginIds = new Set();
+          const pluginMap = {};
           installedResult.plugins.forEach((plugin) => {
             // Create plugin key: pluginName@marketplaceName
             const pluginKey = `${plugin.plugin_name}@${plugin.marketplace_name}`;
             pluginIds.add(pluginKey);
+            pluginMap[pluginKey] = plugin;
           });
           setInstalledPluginIds(pluginIds);
+          setInstalledPlugins(pluginMap);
         }
       }
 
@@ -466,6 +471,51 @@ export default function MarketplaceTab() {
     }
   };
 
+  const handleUninstallPlugin = async (plugin) => {
+    if (!session?.user?.id || !session?.access_token) return;
+
+    const pluginKey = `${plugin.name}@${plugin.marketplaceName}`;
+    const installedPlugin = installedPlugins[pluginKey];
+
+    if (!installedPlugin) {
+      toast.error('Plugin not found in installed list');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to uninstall ${plugin.name}?`)) return;
+
+    let toastId;
+    try {
+      toastId = toast.loading(`Uninstalling ${plugin.name}...`);
+
+      const result = await removeInstalledPluginFromDB(
+        session.user.id,
+        installedPlugin.id,
+        session.access_token
+      );
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to uninstall plugin');
+      }
+
+      // Update UI
+      const newPluginIds = new Set(installedPluginIds);
+      newPluginIds.delete(pluginKey);
+      setInstalledPluginIds(newPluginIds);
+
+      const newPluginMap = { ...installedPlugins };
+      delete newPluginMap[pluginKey];
+      setInstalledPlugins(newPluginMap);
+
+      if (toastId) toast.dismiss(toastId);
+      toast.success(`${plugin.name} uninstalled successfully`);
+    } catch (error) {
+      console.error('[MarketplaceTab] Uninstall error:', error);
+      if (toastId) toast.dismiss(toastId);
+      toast.error(`Failed to uninstall: ${error.message}`);
+    }
+  };
+
   const filteredData = Object.entries(marketplaceData).reduce((acc, [url, data]) => {
     if (!data || !data.plugins) return acc;
 
@@ -691,10 +741,19 @@ export default function MarketplaceTab() {
                           {/* Install button at plugin level */}
                           <div className="pl-6 sm:pl-7">
                             {isInstalled ? (
-                              <span className="inline-flex px-2 sm:px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded items-center gap-1.5">
-                                <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4" />
-                                Installed
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex px-2 sm:px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded items-center gap-1.5">
+                                  <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  Installed
+                                </span>
+                                <button
+                                  onClick={() => handleUninstallPlugin(plugin)}
+                                  className="inline-flex px-2 sm:px-3 py-1.5 text-xs font-medium bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 rounded transition-colors items-center gap-1.5"
+                                >
+                                  <TrashIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  Uninstall
+                                </button>
+                              </div>
                             ) : (
                               <button
                                 onClick={() => handleInstallPlugin(plugin)}

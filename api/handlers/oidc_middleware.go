@@ -170,16 +170,44 @@ func (m *OIDCAuthMiddleware) OIDCAuthMiddleware() gin.HandlerFunc {
 		if m.SessionToken != nil && m.SessionToken.IsSessionToken(token) {
 			sessionClaims, err := m.SessionToken.ValidateSessionToken(token)
 			if err == nil {
-				// Session token verified - set context from token claims
-				// No need to call ensureUserExistsByEmail - user was created during token exchange
-				c.Set("user_id", sessionClaims.UserID)
+				// Ensure user exists in database (handles DB reset, fresh install scenarios)
+				// This is a lightweight SELECT by PK - fast even with the extra query
+				userID := sessionClaims.UserID
+				if _, userErr := m.UserService.GetUser(userID); userErr != nil {
+					// User not in DB - re-create from session token claims
+					log.Printf("Session token user not in DB, re-creating: %s (uuid:%s)", sessionClaims.Email, userID)
+					user := db.User{
+						ID:         userID,
+						Provider:   "oidc",
+						ProviderID: userID, // Best effort - will be updated on next OIDC login
+						Email:      sessionClaims.Email,
+						Name:       strings.Split(sessionClaims.Email, "@")[0],
+						Role:       "engineer",
+						Team:       "Default Team",
+						IsActive:   true,
+						CreatedAt:  time.Now(),
+						UpdatedAt:  time.Now(),
+					}
+					if createErr := m.UserService.CreateUserRecord(user); createErr != nil {
+						log.Printf("Failed to re-create user from session token: %v (uuid:%s)", createErr, userID)
+						c.JSON(http.StatusUnauthorized, gin.H{
+							"error":   "user_sync_failed",
+							"message": "User account not found. Please re-authenticate.",
+						})
+						c.Abort()
+						return
+					}
+					log.Printf("Re-created user from session token: %s (uuid:%s)", sessionClaims.Email, userID)
+				}
+
+				c.Set("user_id", userID)
 				c.Set("user_email", sessionClaims.Email)
 				c.Set("user_role", sessionClaims.Role)
 				c.Set("auth_provider", "session_token")
 
 				// Set user map for handlers that expect it
 				c.Set("user", map[string]interface{}{
-					"id":    sessionClaims.UserID,
+					"id":    userID,
 					"email": sessionClaims.Email,
 					"role":  sessionClaims.Role,
 				})
@@ -248,13 +276,34 @@ func (m *OIDCAuthMiddleware) OptionalOIDCAuth() gin.HandlerFunc {
 				if m.SessionToken != nil && m.SessionToken.IsSessionToken(token) {
 					sessionClaims, err := m.SessionToken.ValidateSessionToken(token)
 					if err == nil {
-						c.Set("user_id", sessionClaims.UserID)
+						userID := sessionClaims.UserID
+						// Ensure user exists in database
+						if _, userErr := m.UserService.GetUser(userID); userErr != nil {
+							log.Printf("Optional auth: session token user not in DB, re-creating: %s (uuid:%s)", sessionClaims.Email, userID)
+							user := db.User{
+								ID:         userID,
+								Provider:   "oidc",
+								ProviderID: userID,
+								Email:      sessionClaims.Email,
+								Name:       strings.Split(sessionClaims.Email, "@")[0],
+								Role:       "engineer",
+								Team:       "Default Team",
+								IsActive:   true,
+								CreatedAt:  time.Now(),
+								UpdatedAt:  time.Now(),
+							}
+							if createErr := m.UserService.CreateUserRecord(user); createErr != nil {
+								log.Printf("Optional auth: failed to re-create user: %v", createErr)
+								// For optional auth, continue without auth
+							}
+						}
+						c.Set("user_id", userID)
 						c.Set("user_email", sessionClaims.Email)
 						c.Set("user_role", sessionClaims.Role)
 						c.Set("authenticated", true)
 						c.Set("auth_provider", "session_token")
 						c.Set("user", map[string]interface{}{
-							"id":    sessionClaims.UserID,
+							"id":    userID,
 							"email": sessionClaims.Email,
 							"role":  sessionClaims.Role,
 						})

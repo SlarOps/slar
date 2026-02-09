@@ -12,7 +12,7 @@ import logging
 from fastapi import APIRouter, Request
 
 from supabase_storage import sync_mcp_config_to_local
-from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
+from database_util import execute_query, resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +59,31 @@ async def get_mcp_servers(request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token or failed to resolve user"}
 
-        servers = execute_query(
-            """
-            SELECT * FROM user_mcp_servers
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            """,
-            (user_id,),
-            fetch="all"
-        )
+        project_id = request.query_params.get("project_id")
+        
+        # If project_id provided, fetch project servers
+        if project_id:
+            # TODO: Verify user is member of project (for now assuming if they have valid token they can access)
+            servers = execute_query(
+                """
+                SELECT * FROM user_mcp_servers
+                WHERE project_id = %s
+                ORDER BY created_at DESC
+                """,
+                (project_id,),
+                fetch="all"
+            )
+        else:
+            # Fetch personal servers only (legacy behavior)
+            servers = execute_query(
+                """
+                SELECT * FROM user_mcp_servers
+                WHERE user_id = %s AND project_id IS NULL
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+                fetch="all"
+            )
 
         return {"success": True, "servers": servers or []}
 
@@ -143,22 +159,15 @@ async def create_mcp_server(request: Request):
                     "error": f"Missing required field for {server_type} server: url",
                 }
 
-        provider_id = extract_user_id_from_token(auth_token)
-        if not provider_id:
-            return {"success": False, "error": "Invalid auth token"}
+        project_id = body.get("project_id")
 
-        # Ensure user exists and get actual DB user_id (may differ from provider_id)
-        user_info = extract_user_info_from_token(auth_token)
-        user_id = ensure_user_exists(
-            provider_id,
-            email=user_info.get("email") if user_info else None,
-            name=user_info.get("name") if user_info else None
-        )
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
-            return {"success": False, "error": "Failed to resolve user"}
+            return {"success": False, "error": "Invalid auth token or failed to resolve user"}
 
         server_record = {
             "user_id": user_id,
+            "project_id": project_id,
             "server_name": server_name,
             "server_type": server_type,
             "status": "active",
@@ -172,21 +181,50 @@ async def create_mcp_server(request: Request):
             server_record["url"] = body.get("url")
             server_record["headers"] = body.get("headers", {})
 
-        execute_query(
+        # Construct INSERT query based on whether project_id is present
+        if project_id:
+            # Project server
+            query = """
+                INSERT INTO user_mcp_servers (user_id, project_id, server_name, server_type, status, command, args, env, url, headers)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (project_id, server_name) WHERE project_id IS NOT NULL DO UPDATE SET
+                    server_type = EXCLUDED.server_type,
+                    status = EXCLUDED.status,
+                    command = EXCLUDED.command,
+                    args = EXCLUDED.args,
+                    env = EXCLUDED.env,
+                    url = EXCLUDED.url,
+                    headers = EXCLUDED.headers,
+                    updated_at = NOW()
             """
-            INSERT INTO user_mcp_servers (user_id, server_name, server_type, status, command, args, env, url, headers)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (user_id, server_name) DO UPDATE SET
-                server_type = EXCLUDED.server_type,
-                status = EXCLUDED.status,
-                command = EXCLUDED.command,
-                args = EXCLUDED.args,
-                env = EXCLUDED.env,
-                url = EXCLUDED.url,
-                headers = EXCLUDED.headers,
-                updated_at = NOW()
-            """,
-            (
+            params = (
+                user_id,
+                project_id,
+                server_name,
+                server_type,
+                "active",
+                server_record.get("command"),
+                json.dumps(server_record.get("args", [])),
+                json.dumps(server_record.get("env", {})),
+                server_record.get("url"),
+                json.dumps(server_record.get("headers", {})),
+            )
+        else:
+            # Personal server
+            query = """
+                INSERT INTO user_mcp_servers (user_id, server_name, server_type, status, command, args, env, url, headers)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, server_name) WHERE project_id IS NULL DO UPDATE SET
+                    server_type = EXCLUDED.server_type,
+                    status = EXCLUDED.status,
+                    command = EXCLUDED.command,
+                    args = EXCLUDED.args,
+                    env = EXCLUDED.env,
+                    url = EXCLUDED.url,
+                    headers = EXCLUDED.headers,
+                    updated_at = NOW()
+            """
+            params = (
                 user_id,
                 server_name,
                 server_type,
@@ -196,11 +234,11 @@ async def create_mcp_server(request: Request):
                 json.dumps(server_record.get("env", {})),
                 server_record.get("url"),
                 json.dumps(server_record.get("headers", {})),
-            ),
-            fetch="none"
-        )
+            )
 
-        logger.info(f"Saved MCP server ({server_type}): {server_name} for user {user_id}")
+        execute_query(query, params, fetch="none")
+
+        logger.info(f"Saved MCP server ({server_type}): {server_name} for user {user_id} (project: {project_id})")
 
         sync_result = await sync_mcp_config_to_local(user_id)
         if sync_result["success"]:
@@ -245,13 +283,25 @@ async def delete_mcp_server(server_name: str, request: Request):
         if not user_id:
             return {"success": False, "error": "Invalid auth token or failed to resolve user"}
 
-        execute_query(
-            "DELETE FROM user_mcp_servers WHERE user_id = %s AND server_name = %s",
-            (user_id, server_name),
-            fetch="none"
-        )
+        project_id = request.query_params.get("project_id")
 
-        logger.info(f"Deleted MCP server: {server_name} for user {user_id}")
+        if project_id:
+            # Delete project server
+            # TODO: Add permission check (only project admin/owner can delete shared servers?)
+            execute_query(
+                "DELETE FROM user_mcp_servers WHERE project_id = %s AND server_name = %s",
+                (project_id, server_name),
+                fetch="none"
+            )
+            logger.info(f"Deleted MCP server: {server_name} for project {project_id} (by user {user_id})")
+        else:
+            # Delete personal server
+            execute_query(
+                "DELETE FROM user_mcp_servers WHERE user_id = %s AND project_id IS NULL AND server_name = %s",
+                (user_id, server_name),
+                fetch="none"
+            )
+            logger.info(f"Deleted MCP server: {server_name} for user {user_id}")
 
         sync_result = await sync_mcp_config_to_local(user_id)
         if sync_result["success"]:

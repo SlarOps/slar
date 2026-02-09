@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { toast } from '../ui';
 import {
     DocumentTextIcon,
@@ -15,8 +16,17 @@ import {
     deleteMemoryFromDB
 } from '../../lib/workspaceManager';
 
+// Simple in-memory cache to prevent reloading when switching tabs
+let memoryCache = {
+    projectId: null,
+    content: null,
+    updated_at: null,
+    timestamp: 0
+};
+
 export default function LocalMemoryTab() {
     const { session } = useAuth();
+    const { currentProject } = useOrg();
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -25,18 +35,36 @@ export default function LocalMemoryTab() {
 
     useEffect(() => {
         loadMemory();
-    }, [session]);
+    }, [session, currentProject]);
 
-    const loadMemory = async () => {
-        if (!session?.user?.id) return;
+    const loadMemory = async (force = false) => {
+        if (!session?.user?.id || !currentProject?.id) return;
+
+        // Check cache first if not forced
+        if (!force && memoryCache.projectId === currentProject.id && memoryCache.content !== null) {
+            setContent(memoryCache.content);
+            setLastUpdated(memoryCache.updated_at);
+            setHasUnsavedChanges(false);
+            setLoading(false);
+            return;
+        }
 
         setLoading(true);
         try {
-            const result = await getMemoryFromDB(session.user.id, 'local');
+            const result = await getMemoryFromDB(session.user.id, currentProject.id);
             if (result.success) {
-                setContent(result.content || '');
+                const content = result.content || '';
+                setContent(content);
                 setLastUpdated(result.updated_at);
                 setHasUnsavedChanges(false);
+
+                // Update cache
+                memoryCache = {
+                    projectId: currentProject.id,
+                    content: content,
+                    updated_at: result.updated_at,
+                    timestamp: Date.now()
+                };
             } else {
                 toast.error('Failed to load local memory');
             }
@@ -49,14 +77,23 @@ export default function LocalMemoryTab() {
     };
 
     const handleSave = async () => {
-        if (!session?.user?.id) return;
+        if (!session?.user?.id || !currentProject?.id) return;
 
         setSaving(true);
         try {
-            const result = await saveMemoryToDB(session.user.id, content, 'local');
+            const result = await saveMemoryToDB(session.user.id, content, currentProject.id);
             if (result.success) {
                 setLastUpdated(result.updated_at);
                 setHasUnsavedChanges(false);
+
+                // Update cache
+                memoryCache = {
+                    projectId: currentProject.id,
+                    content: content,
+                    updated_at: result.updated_at,
+                    timestamp: Date.now()
+                };
+
                 toast.success('Local memory saved successfully!');
             } else {
                 toast.error('Failed to save local memory');
@@ -70,15 +107,25 @@ export default function LocalMemoryTab() {
     };
 
     const handleClear = async () => {
-        if (!confirm('Are you sure you want to delete all local memory content?')) return;
+        if (!confirm('Are you sure you want to delete all project memory content?')) return;
+        if (!currentProject?.id) return;
 
         setSaving(true);
         try {
-            const result = await deleteMemoryFromDB(session.user.id, 'local');
+            const result = await deleteMemoryFromDB(session.user.id, currentProject.id);
             if (result.success) {
                 setContent('');
                 setLastUpdated(null);
                 setHasUnsavedChanges(false);
+
+                // Update cache
+                memoryCache = {
+                    projectId: currentProject.id,
+                    content: '',
+                    updated_at: null,
+                    timestamp: Date.now()
+                };
+
                 toast.success('Local memory cleared successfully!');
             } else {
                 toast.error('Failed to clear local memory');
@@ -136,7 +183,7 @@ export default function LocalMemoryTab() {
 
                     <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 ml-2">
                         <button
-                            onClick={loadMemory}
+                            onClick={() => loadMemory(true)}
                             disabled={saving}
                             className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
                             title="Reload"

@@ -42,7 +42,8 @@ type MobileConnectQR struct {
 // MobileConnectConfig stores full config for a connect code
 // Stored server-side, fetched by mobile after scanning QR
 type MobileConnectConfig struct {
-	Code         string    `json:"-"` // Not returned in response
+	Code         string    `json:"-"`                     // Not returned in response
+	UserID       string    `json:"-"`                     // QR-generating user's ID (for signed_token)
 	InstanceID   string    `json:"instance_id"`
 	InstanceName string    `json:"instance_name"`
 	BackendURL   string    `json:"backend_url"`
@@ -159,9 +160,10 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		AgentURL:     os.Getenv("AGENT_URL"),
 	}
 
-	// Store full config server-side
+	// Store full config server-side (including userID for signed_token generation)
 	config := &MobileConnectConfig{
 		Code:         code,
+		UserID:       userID,
 		InstanceID:   instanceID,
 		InstanceName: instanceName,
 		BackendURL:   backendURL,
@@ -194,6 +196,7 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 
 // GetMobileConnectConfig returns config for a connect code
 // GET /api/mobile/connect/:code
+// Includes signed_token for direct device registration with noti-gw
 func (h *MobileHandler) GetMobileConnectConfig(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" {
@@ -215,8 +218,44 @@ func (h *MobileHandler) GetMobileConnectConfig(c *gin.Context) {
 		return
 	}
 
-	// Return config (don't delete - allow multiple scans within validity period)
-	c.JSON(http.StatusOK, config)
+	// Build response with config fields
+	response := gin.H{
+		"instance_id":   config.InstanceID,
+		"instance_name": config.InstanceName,
+		"backend_url":   config.BackendURL,
+		"auth_config":   config.AuthConfig,
+		"expires_at":    config.ExpiresAt,
+	}
+	if config.GatewayURL != "" {
+		response["gateway_url"] = config.GatewayURL
+	}
+
+	// Generate signed_token for direct noti-gw device registration
+	// Uses the QR-generating user's ID (the user who wants to connect their mobile)
+	if h.IdentityService != nil && config.GatewayURL != "" && config.UserID != "" {
+		nonce, err := generateNonce()
+		if err == nil {
+			payload := map[string]interface{}{
+				"instance_id": config.InstanceID,
+				"user_id":     config.UserID,
+				"nonce":       nonce,
+				"expires_at":  config.ExpiresAt.Unix(),
+			}
+
+			signature, err := h.IdentityService.SignMap(payload)
+			if err == nil {
+				response["signed_token"] = gin.H{
+					"payload":   payload,
+					"signature": signature,
+				}
+				fmt.Printf("V4: signed_token generated for code %s\n", code)
+			} else {
+				fmt.Printf("V4: Failed to sign token for code %s: %v\n", code, err)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // cleanupExpiredConfigs removes expired configs from store

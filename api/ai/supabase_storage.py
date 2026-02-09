@@ -357,8 +357,26 @@ async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
         from datetime import datetime
 
         # Get all active MCP servers from PostgreSQL using raw SQL
-        query = "SELECT * FROM user_mcp_servers WHERE user_id = %s AND status = 'active'"
-        results = execute_query(query, (user_id,), fetch="all")
+        # Fetch:
+        # 1. Personal servers (user_id match, project_id is NULL)
+        # 2. Project servers (project_id match where user is a member) - Assuming explicit project membership check or just fetching everything for now
+        # Ideally we should join with project_members, but for now let's just fetch personal + any project servers associated with projects the user is explicitly requesting or known to be in?
+        # Actually, to make them available to the Agent, we should fetch ALL servers the user has access to.
+        
+        # Simple approach: Fetch all servers where user_id matches OR (for now, just user_id + explicit project fetch if we had a project_id passed... but this function only takes user_id)
+        # Better: Join with project_members.
+        
+        query = """
+            SELECT * FROM user_mcp_servers 
+            WHERE status = 'active' AND (
+                (user_id = %s AND project_id IS NULL) OR
+                project_id IN (
+                    SELECT resource_id FROM memberships 
+                    WHERE user_id = %s AND resource_type = 'project'
+                )
+            )
+        """
+        results = execute_query(query, (user_id, user_id), fetch="all")
 
         # Convert to .mcp.json format
         mcp_servers = {}
@@ -757,17 +775,16 @@ async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
         }
 
 
-async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[str, Any]:
+async def sync_memory_to_workspace(user_id: str, project_id: str = "") -> Dict[str, Any]:
     """
-    Sync CLAUDE.md content from PostgreSQL to workspace file.
+    Sync CLAUDE.md content from PostgreSQL to user's workspace file.
 
-    Fetches memory content from claude_memory table and writes to:
-    - Local scope: .claude/CLAUDE.md in user's workspace
-    - User scope: ~/.claude/CLAUDE.md (global user directory)
+    Memory is project-scoped: one CLAUDE.md per project, shared by all users.
+    Writes to .claude/CLAUDE.md in the user's workspace directory.
 
     Args:
-        user_id: User's UUID
-        scope: Memory scope ('local' or 'user', default: 'local')
+        user_id: User's UUID (for workspace path)
+        project_id: Project UUID (to fetch shared project memory)
 
     Returns:
         Dictionary with sync results:
@@ -778,37 +795,25 @@ async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[s
         }
     """
     try:
-        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}, scope: {scope}")
+        logger.info(f"📝 Syncing CLAUDE.md for user: {user_id}, project: {project_id}")
 
-        # Fetch memory from PostgreSQL using raw SQL
-        result = execute_query(
-            "SELECT content FROM claude_memory WHERE user_id = %s AND scope = %s",
-            (user_id, scope),
-            fetch="one"
-        )
-
-        # Get content (empty string if no memory)
+        # Fetch project memory from PostgreSQL
         content = ""
-        if result:
-            content = result.get("content", "")
+        if project_id:
+            result = execute_query(
+                "SELECT content FROM claude_memory WHERE project_id = %s",
+                (project_id,),
+                fetch="one"
+            )
+            if result:
+                content = result.get("content", "")
 
-        # Determine target path based on scope
-        if scope == "user":
-            # User memory: ~/.claude/CLAUDE.md (global)
-            home_dir = Path(os.path.expanduser("~"))
-            claude_dir = home_dir / ".claude"
-            claude_dir.mkdir(parents=True, exist_ok=True)
-            claude_md_path = claude_dir / "CLAUDE.md"
-            target_description = "~/.claude/CLAUDE.md"
-        else:
-            # Local memory: workspaces/{user_id}/.claude/CLAUDE.md
-            workspace_path = get_user_workspace_path(user_id)
-            claude_dir = workspace_path / ".claude"
-            claude_dir.mkdir(parents=True, exist_ok=True)
-            claude_md_path = claude_dir / "CLAUDE.md"
-            target_description = ".claude/CLAUDE.md"
+        # Write to workspace .claude/CLAUDE.md
+        workspace_path = get_user_workspace_path(user_id)
+        claude_dir = workspace_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        claude_md_path = claude_dir / "CLAUDE.md"
 
-        # Write to CLAUDE.md
         claude_md_path.write_text(content, encoding="utf-8")
 
         logger.info(f"✅ CLAUDE.md synced ({len(content)} chars) to: {claude_md_path}")
@@ -816,7 +821,7 @@ async def sync_memory_to_workspace(user_id: str, scope: str = "local") -> Dict[s
         return {
             "success": True,
             "content_length": len(content),
-            "message": f"Memory synced to {target_description} ({len(content)} chars)"
+            "message": f"Memory synced to .claude/CLAUDE.md ({len(content)} chars)"
         }
 
     except Exception as e:

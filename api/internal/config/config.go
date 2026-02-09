@@ -6,12 +6,14 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
+	"github.com/vanchonlee/slar/internal/logger"
 )
 
 // Config holds all application configuration
 type Config struct {
 	DatabaseURL       string `mapstructure:"database_url"`
 	Port              string `mapstructure:"port"`
+	LogLevel          string `mapstructure:"log_level"` // DEBUG, INFO, WARN, ERROR
 	AutoMigrate       bool   `mapstructure:"auto_migrate"`
 	MigrateBaseline   bool   `mapstructure:"migrate_baseline"` // Mark all migrations as applied without running them
 	SlarAPIURL        string `mapstructure:"slar_api_url"`
@@ -102,6 +104,8 @@ func LoadConfig(path string) error {
 	v.SetEnvPrefix("SLAR") // Legacy support
 	v.SetDefault("backend_url", "http://localhost:8080")
 	v.SetDefault("data_dir", "./data")
+	v.SetDefault("log_level", "INFO")
+	v.BindEnv("log_level", "LOG_LEVEL")
 
 	// Bind standard environment variables (Docker/deploy compatibility)
 	// This allows using standard keys like DATABASE_URL instead of SLAR_DATABASE_URL
@@ -162,6 +166,10 @@ func LoadConfig(path string) error {
 	if err := v.Unmarshal(&App); err != nil {
 		return err
 	}
+
+	// 3. Initialize logger with configured level
+	logger.SetLevelString(App.LogLevel)
+	log.Printf("✅ Log level set to: %s", logger.GetLevelString())
 
 	// 3. Backfill environment variables for legacy code compatibility
 	// Many existing services (FCM, Router, etc.) still use os.Getenv()

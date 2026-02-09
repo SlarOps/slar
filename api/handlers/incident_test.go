@@ -229,8 +229,9 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 
 		mockDB.ExpectQuery("SELECT .* FROM incidents").WithArgs("inc-3").WillReturnRows(rows)
 
-		// Mock Authorizer NOT called because ad-hoc check passes first
-		// (No expectation set for Check)
+		// Authorizer is still called - ad-hoc access is not implemented in checkIncidentAccess
+		// The user needs project-level access to view the incident
+		mockAuthorizer.On("Check", mock.Anything, "user-1", authz.ActionView, authz.ResourceProject, "proj-3").Return(true)
 
 		// Make Request
 		w := httptest.NewRecorder()

@@ -44,7 +44,7 @@ function AIAgentContent() {
     syncMessage,
     syncBucket,
     retrySync
-  } = useSyncBucket(authToken);
+  } = useSyncBucket(authToken, { projectId: currentProject?.id });
 
   // Step 2: Use WebSocket connection (manual connect)
   const {
@@ -113,21 +113,28 @@ function AIAgentContent() {
     setInput(e.target.value);
   }, []);
 
-  // Trigger sync on mount (only once per auth token)
+  // Trigger sync on mount (only once per auth token + project)
   const hasSynced = useRef(false);
+  const lastSyncedProjectId = useRef(null);
   useEffect(() => {
     if (!authToken) {
       console.log('No auth token, skipping sync');
       return;
     }
 
-    // Only sync once per session
-    if (!hasSynced.current) {
-      console.log('Triggering initial sync...');
+    if (!currentProject?.id) {
+      console.log('No project selected, skipping sync');
+      return;
+    }
+
+    // Sync once per session, or re-sync if project changed
+    if (!hasSynced.current || lastSyncedProjectId.current !== currentProject.id) {
+      console.log('Triggering initial sync for project:', currentProject.id);
       syncBucket();
       hasSynced.current = true;
+      lastSyncedProjectId.current = currentProject.id;
     }
-  }, [authToken, syncBucket]);
+  }, [authToken, currentProject?.id, syncBucket]);
 
   // Connect WebSocket after successful sync AND auth token is available
   useEffect(() => {

@@ -55,12 +55,10 @@ const NAV_ITEMS = [
       </svg>
     ),
     subItems: [
-      { href: '/agent-config/installed', label: 'Installed' },
       { href: '/agent-config/marketplace', label: 'Marketplace' },
       { href: '/agent-config/mcp-servers', label: 'MCP Servers' },
       { href: '/agent-config/allowed-tools', label: 'Allowed Tools' },
-      { href: '/agent-config/local-memory', label: 'Local Memory' },
-      { href: '/agent-config/user-memory', label: 'User Memory' },
+      { href: '/agent-config/local-memory', label: 'Project Memory' },
     ],
   },
   {

@@ -314,7 +314,7 @@ func (r *SimpleProjectRepository) ListByUser(ctx context.Context, userID string)
 				WHERE m.user_id = $1 AND m.resource_type = 'project' AND m.resource_id = p.id
 			)
 			OR (
-				-- User is org member AND project has no explicit members
+				-- User is org member AND project has no explicit members (open project)
 				EXISTS (
 					SELECT 1 FROM memberships m
 					WHERE m.user_id = $1 AND m.resource_type = 'org' AND m.resource_id = p.organization_id
@@ -322,6 +322,14 @@ func (r *SimpleProjectRepository) ListByUser(ctx context.Context, userID string)
 				AND NOT EXISTS (
 					SELECT 1 FROM memberships m
 					WHERE m.resource_type = 'project' AND m.resource_id = p.id
+				)
+			)
+			OR (
+				-- Inherited: user is member of a group that belongs to this project
+				EXISTS (
+					SELECT 1 FROM memberships m
+					JOIN groups g ON g.id = m.resource_id
+					WHERE m.user_id = $1 AND m.resource_type = 'group' AND g.project_id = p.id
 				)
 			)
 		)

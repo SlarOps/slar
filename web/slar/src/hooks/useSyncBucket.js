@@ -17,7 +17,7 @@
 import { useState, useCallback } from 'react';
 import { getConfigSync } from '../lib/config';
 
-export function useSyncBucket(authToken) {
+export function useSyncBucket(authToken, { projectId } = {}) {
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'ready' | 'error'
   const [syncMessage, setSyncMessage] = useState('');
   const [syncResult, setSyncResult] = useState(null);
@@ -46,7 +46,7 @@ export function useSyncBucket(authToken) {
           'Content-Type': 'application/json',
           'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ project_id: projectId || '' }),
         signal: AbortSignal.timeout(30000) // 30 second timeout
       });
 
@@ -102,7 +102,7 @@ export function useSyncBucket(authToken) {
 
       return false;
     }
-  }, [authToken]);
+  }, [authToken, projectId]);
 
   /**
    * Retry sync (useful for error recovery)

@@ -2008,22 +2008,27 @@ class APIClient {
    * Get MCP servers from AI backend
    * @returns {Promise<object>} MCP servers result
    */
-  async getMCPServers() {
-    return this.request('/api/mcp-servers', {}, this.aiBaseURL);
+  async getMCPServers(projectId = null) {
+    const params = new URLSearchParams();
+    if (projectId) params.append('project_id', projectId);
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
   }
 
   /**
    * Save MCP server to AI backend
    * @param {string} serverName - Server name
-   * @param {object} serverConfig - Server configuration
+   * @param {object} config - Server configuration
+   * @param {string} [projectId] - Project ID (optional)
    * @returns {Promise<object>} Save result
    */
-  async saveMCPServer(serverName, serverConfig) {
+  async saveMCPServer(serverName, config, projectId = null) {
     return this.request('/api/mcp-servers', {
       method: 'POST',
       body: JSON.stringify({
         server_name: serverName,
-        ...serverConfig
+        ...config,
+        ...(projectId && { project_id: projectId })
       })
     }, this.aiBaseURL);
   }
@@ -2031,43 +2036,59 @@ class APIClient {
   /**
    * Delete MCP server from AI backend
    * @param {string} serverName - Server name
+   * @param {string} [projectId] - Project ID (optional)
    * @returns {Promise<object>} Delete result
    */
-  async deleteMCPServer(serverName) {
-    return this.request(`/api/mcp-servers/${encodeURIComponent(serverName)}`, {
+  async deleteMCPServer(serverName, projectId = null) {
+    const params = new URLSearchParams();
+    if (projectId) params.append('project_id', projectId);
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers/${serverName}${queryString ? `?${queryString}` : ''}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
   }
 
   /**
    * Get memory (CLAUDE.md) from AI backend
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Memory content
    */
-  async getMemory(scope = 'local') {
-    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {}, this.aiBaseURL);
+  async getMemory(projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
+    return this.request(`/api/memory?project_id=${encodeURIComponent(projectId)}`, {}, this.aiBaseURL);
   }
 
   /**
    * Save memory (CLAUDE.md) to AI backend
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
    * @param {string} content - Markdown content
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Save result
    */
-  async saveMemory(content, scope = 'local') {
+  async saveMemory(content, projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
     return this.request('/api/memory', {
       method: 'POST',
-      body: JSON.stringify({ content, scope })
+      body: JSON.stringify({ content, project_id: projectId })
     }, this.aiBaseURL);
   }
 
   /**
    * Delete memory (CLAUDE.md) from AI backend
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Delete result
    */
-  async deleteMemory(scope = 'local') {
-    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {
+  async deleteMemory(projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
+    return this.request(`/api/memory?project_id=${encodeURIComponent(projectId)}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
   }

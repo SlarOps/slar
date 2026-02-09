@@ -25,7 +25,7 @@ export default function SharedConversationPage() {
 
       try {
         const apiUrl = getConfigSync().apiUrl;
-        const response = await fetch(`${apiUrl}/api/shared/${token}`);
+        const response = await fetch(`${apiUrl}/shared/${token}`);
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));

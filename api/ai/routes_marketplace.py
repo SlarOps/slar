@@ -31,6 +31,7 @@ from fastapi import APIRouter, Request
 from supabase_storage import (
     get_user_workspace_path,
     unzip_installed_plugins,
+    extract_user_id_from_token,
 )
 from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
 from git_utils import (

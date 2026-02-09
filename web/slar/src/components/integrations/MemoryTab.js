@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { toast } from '../ui';
 import {
   DocumentTextIcon,
@@ -17,6 +18,7 @@ import {
 
 export default function MemoryTab() {
   const { session } = useAuth();
+  const { currentProject } = useOrg();
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -25,14 +27,14 @@ export default function MemoryTab() {
 
   useEffect(() => {
     loadMemory();
-  }, [session]);
+  }, [session, currentProject]);
 
   const loadMemory = async () => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !currentProject?.id) return;
 
     setLoading(true);
     try {
-      const result = await getMemoryFromDB(session.user.id);
+      const result = await getMemoryFromDB(session.user.id, currentProject.id);
       if (result.success) {
         setContent(result.content || '');
         setLastUpdated(result.updated_at);
@@ -49,11 +51,11 @@ export default function MemoryTab() {
   };
 
   const handleSave = async () => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !currentProject?.id) return;
 
     setSaving(true);
     try {
-      const result = await saveMemoryToDB(session.user.id, content);
+      const result = await saveMemoryToDB(session.user.id, content, currentProject.id);
       if (result.success) {
         setLastUpdated(result.updated_at);
         setHasUnsavedChanges(false);
@@ -70,11 +72,12 @@ export default function MemoryTab() {
   };
 
   const handleClear = async () => {
-    if (!confirm('Are you sure you want to delete all memory content?')) return;
+    if (!confirm('Are you sure you want to delete all memory content for this project?')) return;
+    if (!currentProject?.id) return;
 
     setSaving(true);
     try {
-      const result = await deleteMemoryFromDB(session.user.id);
+      const result = await deleteMemoryFromDB(session.user.id, currentProject.id);
       if (result.success) {
         setContent('');
         setLastUpdated(null);

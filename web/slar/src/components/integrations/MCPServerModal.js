@@ -43,6 +43,7 @@ export default function MCPServerModal({
   onClose,
   mode = 'create', // 'create' or 'edit'
   server = null,
+  projectId = null,
   onServerCreated,
   onServerUpdated
 }) {
@@ -154,7 +155,8 @@ export default function MCPServerModal({
       const saveResult = await saveMCPServerToDB(
         session.user.id,
         serverName,
-        serverConfig
+        serverConfig,
+        projectId
       );
 
       if (saveResult.success) {

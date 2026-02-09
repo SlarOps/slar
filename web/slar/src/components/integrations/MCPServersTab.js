@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { toast } from '../ui';
 import {
   MagnifyingGlassIcon,
@@ -22,6 +23,7 @@ import MCPServerDetailModal from './MCPServerDetailModal';
 
 export default function MCPServersTab() {
   const { session } = useAuth();
+  const { currentProject } = useOrg();
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -32,17 +34,13 @@ export default function MCPServersTab() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
 
-  useEffect(() => {
-    loadMCPServers();
-  }, [session]);
-
   const loadMCPServers = async () => {
     if (!session?.user?.id) return;
 
     setLoading(true);
     try {
       // Load from PostgreSQL (instant, no S3 lag!)
-      const result = await getMCPServersFromDB(session.user.id);
+      const result = await getMCPServersFromDB(session.user.id, currentProject?.id);
       if (result.success && result.config) {
         // Convert mcpServers object to array
         const serversArray = Object.entries(result.config.mcpServers || {}).map(([name, config]) => ({
@@ -62,6 +60,11 @@ export default function MCPServersTab() {
     }
   };
 
+  useEffect(() => {
+    loadMCPServers();
+  }, [session, currentProject]);
+
+
   const handleToggleServer = async (serverName) => {
     if (!session?.user?.id) return;
 
@@ -70,7 +73,7 @@ export default function MCPServersTab() {
 
       if (server.enabled) {
         // Remove server (disable) - delete from PostgreSQL
-        const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName);
+        const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentProject?.id);
         if (deleteResult.success) {
           // Remove from UI
           setServers(servers.filter(s => s.name !== serverName));
@@ -92,7 +95,7 @@ export default function MCPServersTab() {
           })
         };
 
-        const saveResult = await saveMCPServerToDB(session.user.id, serverName, serverConfig);
+        const saveResult = await saveMCPServerToDB(session.user.id, serverName, serverConfig, currentProject?.id);
         if (saveResult.success) {
           setServers(servers.map(s =>
             s.name === serverName ? { ...s, enabled: true } : s
@@ -114,7 +117,7 @@ export default function MCPServersTab() {
 
     try {
       // Delete from PostgreSQL (instant, no S3 lag!)
-      const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName);
+      const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentProject?.id);
       if (deleteResult.success) {
         setServers(servers.filter(s => s.name !== serverName));
         toast.success('Server removed successfully');
@@ -148,7 +151,7 @@ export default function MCPServersTab() {
 
   const filteredServers = servers.filter(server => {
     const matchesSearch = server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         server.command.toLowerCase().includes(searchTerm.toLowerCase());
+      server.command.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
 
@@ -202,11 +205,10 @@ export default function MCPServersTab() {
                     <h3 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white font-mono truncate">
                       {server.name}
                     </h3>
-                    <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded flex-shrink-0 ${
-                      server.enabled
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                        : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300'
-                    }`}>
+                    <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded flex-shrink-0 ${server.enabled
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                      : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300'
+                      }`}>
                       {server.enabled ? 'enabled' : 'disabled'}
                     </span>
                   </div>
@@ -297,6 +299,7 @@ export default function MCPServersTab() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         mode="create"
+        projectId={currentProject?.id}
         onServerCreated={handleServerCreated}
       />
 
@@ -308,6 +311,7 @@ export default function MCPServersTab() {
         }}
         mode="edit"
         server={selectedServer}
+        projectId={currentProject?.id}
         onServerUpdated={handleServerUpdated}
       />
 

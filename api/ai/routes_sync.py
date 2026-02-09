@@ -87,10 +87,12 @@ async def sync_workspace(request: Request):
         if not user_id:
             return {"success": False, "message": "Invalid auth token"}
 
-        logger.info(f"Starting workspace sync for user: {user_id}")
+        project_id = body.get("project_id", "")
 
-        # Step 1: Sync memory (CLAUDE.md) from PostgreSQL to workspace
-        memory_result = await sync_memory_to_workspace(user_id)
+        logger.info(f"Starting workspace sync for user: {user_id}, project: {project_id}")
+
+        # Step 1: Sync memory (CLAUDE.md) from PostgreSQL to workspace (project-scoped)
+        memory_result = await sync_memory_to_workspace(user_id, project_id=project_id)
         if memory_result["success"]:
             logger.info(f"Memory synced: {memory_result['message']}")
         else:
