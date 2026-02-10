@@ -15,7 +15,7 @@
     "@types/uuid": "^10.0.0",
     "chart.js": "^4.5.1",
     "highlight.js": "^11.11.1",
-    "next": "16.0.10",
+    "next": "16.1.5",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-chartjs-2": "^5.2.0",
