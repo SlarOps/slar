@@ -96,7 +96,7 @@ class MCPConfigManager:
         """
         Extract and VERIFY user ID from JWT token.
 
-        Uses OIDC authentication via supabase_storage module.
+        Uses OIDC authentication via workspace_service module.
         """
         if not auth_token:
             return None

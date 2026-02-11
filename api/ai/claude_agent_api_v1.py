@@ -45,15 +45,13 @@ from audit_service import (
     EventStatus,
 )
 from audit_hooks import build_hooks_config
-from supabase_storage import (
+from workspace_service import (
     extract_user_id_from_token,
     get_user_mcp_servers,
     get_user_workspace_path,
     load_user_plugins,
-    sync_mcp_config_to_local,
     sync_memory_to_workspace,
     sync_user_skills,
-    unzip_installed_plugins,
     get_user_allowed_tools,
     add_user_allowed_tool,
     delete_user_allowed_tool,
@@ -343,6 +341,11 @@ logger.info("[Memory] Memory routes loaded from routes_memory.py")
 
 app.include_router(marketplace_router)
 logger.info("[Marketplace] Marketplace routes loaded from routes_marketplace.py")
+
+# Import and include Credential routes
+from routes_credentials import router as credentials_router
+app.include_router(credentials_router)
+logger.info("[Credentials] Credential routes loaded from routes_credentials.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -1046,9 +1049,10 @@ async def agent_task_streaming(
             resume=resume_id,
             mcp_servers=mcp_servers,
             plugins=user_plugins,
-            setting_sources=["project", "user"],
+            setting_sources=["project"],
             allowed_tools=allowed_tools,
             hooks=actual_hooks_config,
+            env={"DATADOG_API_KEY": "123123qwe"},
         )
 
         # Create message generator that includes first message
@@ -1716,7 +1720,7 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
     Returns:
         tuple: (is_valid, user_id or error_message)
     """
-    from supabase_storage import get_user_info_from_token
+    from workspace_service import get_user_info_from_token
     from database_util import ensure_user_exists
 
     # Get token from query parameters

@@ -15,6 +15,7 @@ import {
   LinkIcon
 } from '@heroicons/react/24/outline';
 import apiClient from '../../lib/api';
+import { credentialsService } from '../../services/credentials-service';
 import {
   fetchPluginsFromMarketplace,
   parseGitHubUrl,
@@ -43,6 +44,8 @@ export default function MarketplaceTab() {
   // Add marketplace form
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [selectedCredential, setSelectedCredential] = useState('');
+  const [availableCredentials, setAvailableCredentials] = useState([]);
   const [addingRepo, setAddingRepo] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
 
@@ -52,6 +55,18 @@ export default function MarketplaceTab() {
   useEffect(() => {
     loadMarketplaces();
   }, [session]);
+
+  // Load available credentials when add form is shown
+  useEffect(() => {
+    if (showAddForm && session?.access_token) {
+      credentialsService.setToken(session.access_token);
+      credentialsService.listCredentials().then(data => {
+        if (data.success) {
+          setAvailableCredentials(data.credentials || []);
+        }
+      });
+    }
+  }, [showAddForm, session?.access_token]);
 
   const loadMarketplaces = async () => {
     setLoading(true);
@@ -233,7 +248,8 @@ export default function MarketplaceTab() {
         owner: parsed.owner,
         repo: parsed.repo,
         branch: 'main',
-        marketplace_name: inferredMarketplaceName
+        marketplace_name: inferredMarketplaceName,
+        ...(selectedCredential ? { credential_name: selectedCredential } : {})
       });
 
       if (!downloadResult.success) {
@@ -296,8 +312,9 @@ export default function MarketplaceTab() {
       // Mark as cached (loaded from storage)
       setCachedMarketplaces(new Set([...cachedMarketplaces, newMarketplace.url]));
 
-      toast.success(`Marketplace added with ZIP: ${plugins.length} plugin(s) available`);
+      toast.success(`Marketplace added: ${plugins.length} plugin(s) available`);
       setNewRepoUrl('');
+      setSelectedCredential('');
       setShowAddForm(false);
     } catch (error) {
       console.error('[MarketplaceTab] Failed to add marketplace:', error);
@@ -590,16 +607,29 @@ export default function MarketplaceTab() {
           <h3 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white mb-2 sm:mb-3">
             Add GitHub Marketplace
           </h3>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="text"
-              value={newRepoUrl}
-              onChange={(e) => setNewRepoUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo"
-              className="flex-1 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
-              onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
-              disabled={addingRepo}
-            />
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={newRepoUrl}
+                onChange={(e) => setNewRepoUrl(e.target.value)}
+                placeholder="https://github.com/owner/repo"
+                className="flex-1 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
+                onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
+                disabled={addingRepo}
+              />
+              <select
+                value={selectedCredential}
+                onChange={(e) => setSelectedCredential(e.target.value)}
+                disabled={addingRepo}
+                className="sm:w-48 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs sm:text-sm"
+              >
+                <option value="">No credential (public)</option>
+                {availableCredentials.map(cred => (
+                  <option key={cred.name} value={cred.name}>{cred.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleAddMarketplace}

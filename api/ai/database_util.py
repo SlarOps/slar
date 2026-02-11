@@ -22,7 +22,7 @@ def resolve_user_id_from_token(auth_token: str) -> Optional[str]:
     Returns:
         Actual database user_id, or None on error
     """
-    from supabase_storage import extract_user_id_from_token
+    from workspace_service import extract_user_id_from_token
 
     provider_id = extract_user_id_from_token(auth_token)
     if not provider_id:

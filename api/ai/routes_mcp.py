@@ -11,7 +11,6 @@ import json
 import logging
 from fastapi import APIRouter, Request
 
-from supabase_storage import sync_mcp_config_to_local
 from database_util import execute_query, resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
@@ -240,12 +239,6 @@ async def create_mcp_server(request: Request):
 
         logger.info(f"Saved MCP server ({server_type}): {server_name} for user {user_id} (project: {project_id})")
 
-        sync_result = await sync_mcp_config_to_local(user_id)
-        if sync_result["success"]:
-            logger.info(f"Synced MCP config to local file: {sync_result['message']}")
-        else:
-            logger.warning(f"Failed to sync MCP config to local: {sync_result['message']}")
-
         return {
             "success": True,
             "server": server_record,
@@ -302,12 +295,6 @@ async def delete_mcp_server(server_name: str, request: Request):
                 fetch="none"
             )
             logger.info(f"Deleted MCP server: {server_name} for user {user_id}")
-
-        sync_result = await sync_mcp_config_to_local(user_id)
-        if sync_result["success"]:
-            logger.info(f"Synced MCP config to local file: {sync_result['message']}")
-        else:
-            logger.warning(f"Failed to sync MCP config to local: {sync_result['message']}")
 
         return {
             "success": True,

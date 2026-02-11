@@ -10,7 +10,7 @@ Handles:
 import logging
 from fastapi import APIRouter, Request
 
-from supabase_storage import (
+from workspace_service import (
     get_user_allowed_tools,
     add_user_allowed_tool,
     delete_user_allowed_tool,

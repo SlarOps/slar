@@ -17,7 +17,7 @@ from psycopg2.extras import RealDictCursor
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from config import config
-from supabase_storage import sync_memory_to_workspace
+from workspace_service import sync_memory_to_workspace
 
 logger = logging.getLogger(__name__)
 

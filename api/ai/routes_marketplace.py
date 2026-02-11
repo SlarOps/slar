@@ -28,9 +28,8 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Request
 
-from supabase_storage import (
+from workspace_service import (
     get_user_workspace_path,
-    unzip_installed_plugins,
     extract_user_id_from_token,
 )
 from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
@@ -552,6 +551,7 @@ async def clone_marketplace(request: Request):
         repo = body.get("repo")
         branch = body.get("branch", "main")
         marketplace_name = body.get("marketplace_name") or f"{owner}-{repo}"
+        credential_name = body.get("credential_name")  # Optional: Vault credential for private repos
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -588,15 +588,20 @@ async def clone_marketplace(request: Request):
         repo_url = build_github_url(owner, repo)
         repository_url = f"https://github.com/{owner}/{repo}"
 
-        logger.info(f"Cloning {repo_url} -> {marketplace_dir}")
+        logger.info(f"Cloning {repo_url} -> {marketplace_dir}" + (f" (credential: {credential_name})" if credential_name else ""))
 
-        # Clone the repository
-        success, result = await clone_repository(
+        # Clone the repository (with automatic Vault credential injection if available)
+        clone_kwargs = dict(
             repo_url=repo_url,
             target_dir=marketplace_dir,
             branch=branch,
-            depth=1  # Shallow clone for efficiency
+            depth=1,  # Shallow clone for efficiency
+            user_id=user_id,  # Enable Vault credential lookup for private repos
         )
+        if credential_name:
+            clone_kwargs["credential_name"] = credential_name
+
+        success, result = await clone_repository(**clone_kwargs)
 
         if not success:
             return {
@@ -645,13 +650,14 @@ async def clone_marketplace(request: Request):
                 "version": marketplace_metadata.get("version", "unknown"),
                 "plugins": marketplace_metadata.get("plugins", []),
                 "git_commit_sha": commit_sha,
+                "credential_name": credential_name,
                 "status": "active",
             }
 
             execute_query(
                 """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, git_commit_sha, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, git_commit_sha, credential_name, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     repository_url = EXCLUDED.repository_url,
                     branch = EXCLUDED.branch,
@@ -660,6 +666,7 @@ async def clone_marketplace(request: Request):
                     version = EXCLUDED.version,
                     plugins = EXCLUDED.plugins,
                     git_commit_sha = EXCLUDED.git_commit_sha,
+                    credential_name = EXCLUDED.credential_name,
                     status = EXCLUDED.status,
                     last_synced_at = NOW(),
                     updated_at = NOW()
@@ -668,7 +675,7 @@ async def clone_marketplace(request: Request):
                     user_id, marketplace_name, repository_url, branch,
                     marketplace_record["display_name"], marketplace_record["description"],
                     marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    commit_sha, "active"
+                    commit_sha, credential_name, "active"
                 ),
                 fetch="none"
             )
@@ -866,6 +873,7 @@ async def update_marketplace(request: Request):
             }
 
         branch = marketplace.get("branch", "main")
+        stored_credential = marketplace.get("credential_name")
         workspace_path = get_user_workspace_path(user_id)
         marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
@@ -876,9 +884,17 @@ async def update_marketplace(request: Request):
                 "error": f"Marketplace '{marketplace_name}' is not a git repository. Please re-clone it.",
             }
 
-        # Fetch and reset
-        logger.info(f"Fetching updates for {marketplace_name}...")
-        success, result, had_changes = await fetch_and_reset(marketplace_dir, branch)
+        # Fetch and reset (with automatic Vault credential injection if available)
+        logger.info(f"Fetching updates for {marketplace_name}..." + (f" (credential: {stored_credential})" if stored_credential else ""))
+        fetch_kwargs = dict(
+            repo_dir=marketplace_dir,
+            branch=branch,
+            user_id=user_id,  # Enable Vault credential lookup for private repos
+        )
+        if stored_credential:
+            fetch_kwargs["credential_name"] = stored_credential
+
+        success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
         if not success:
             return {
@@ -994,7 +1010,7 @@ async def update_all_marketplaces(request: Request):
         # Get all marketplaces
         def get_all_marketplaces_sync():
             return execute_query(
-                "SELECT name, branch FROM marketplaces WHERE user_id = %s AND status = 'active'",
+                "SELECT name, branch, credential_name FROM marketplaces WHERE user_id = %s AND status = 'active'",
                 (user_id,),
                 fetch="all"
             )
@@ -1016,6 +1032,7 @@ async def update_all_marketplaces(request: Request):
         for mp in marketplaces:
             mp_name = mp["name"]
             mp_branch = mp.get("branch", "main")
+            mp_credential = mp.get("credential_name")
             mp_dir = get_marketplace_dir(workspace_path, mp_name)
 
             if not await is_git_repository(mp_dir):
@@ -1026,7 +1043,11 @@ async def update_all_marketplaces(request: Request):
                 })
                 continue
 
-            success, result, had_changes = await fetch_and_reset(mp_dir, mp_branch)
+            fetch_kwargs = dict(repo_dir=mp_dir, branch=mp_branch, user_id=user_id)
+            if mp_credential:
+                fetch_kwargs["credential_name"] = mp_credential
+
+            success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
             if success:
                 # Update commit SHA in DB

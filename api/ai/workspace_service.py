@@ -1,18 +1,14 @@
 """
-Storage & Authentication Utility
+Workspace Service — user workspace management and data loading.
 
 This module handles:
 1. OIDC JWT token verification (primary auth method)
-2. MCP servers from PostgreSQL (user_mcp_servers table) - PRIMARY SOURCE
-3. Skills sync from local workspace
-4. Plugins sync from git repositories
-5. User workspace management
-
-NOTE: MCP servers are stored in PostgreSQL, NOT object storage.
-Use get_user_mcp_servers() to load MCP servers from database.
-
-AUTHENTICATION:
-- Primary: OIDC (Keycloak, Auth0, Okta, Zitadel, etc.) - requires OIDC_ISSUER env var
+2. User workspace directory management
+3. MCP servers loading from PostgreSQL
+4. Plugin loading from PostgreSQL (files from git clone)
+5. Memory sync (CLAUDE.md) from PostgreSQL to workspace
+6. Skills directory management
+7. Allowed tools management
 """
 
 import os
@@ -63,7 +59,6 @@ def oidc_sub_to_uuid(sub: str) -> str:
     return str(uuid.uuid5(OIDC_UUID_NAMESPACE, sub))
 
 
-MCP_FILE_NAME = ".mcp.json"
 CLAUDE_SKILLS_DIR = ".claude/skills"  # Skills location in workspace
 CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in workspace
 
@@ -100,63 +95,6 @@ def ensure_user_workspace(user_id: str) -> Path:
     workspace_path.mkdir(parents=True, exist_ok=True)
     logger.debug(f"📁 Ensured workspace exists: {workspace_path}")
     return workspace_path
-
-
-def save_config_to_file(user_id: str, mcp_config: Dict[str, Any]) -> bool:
-    """
-    Save MCP configuration to file in user's workspace.
-
-    Args:
-        user_id: User's UUID
-        mcp_config: MCP configuration dictionary
-
-    Returns:
-        True if saved successfully, False otherwise
-    """
-    try:
-        # Ensure workspace directory exists
-        workspace_path = ensure_user_workspace(user_id)
-
-        # Write config to .mcp.json file
-        config_file = workspace_path / MCP_FILE_NAME
-        with open(config_file, 'w') as f:
-            json.dump(mcp_config, f, indent=2)
-
-        logger.info(f"💾 Saved config to file: {config_file}")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Failed to save config to file for user {user_id}: {e}")
-        return False
-
-
-def load_config_from_file(user_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Load MCP configuration from file in user's workspace.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        Parsed MCP configuration dictionary or None if file doesn't exist
-    """
-    try:
-        workspace_path = get_user_workspace_path(user_id)
-        config_file = workspace_path / MCP_FILE_NAME
-
-        if not config_file.exists():
-            logger.debug(f"📄 Config file does not exist: {config_file}")
-            return None
-
-        with open(config_file, 'r') as f:
-            mcp_config = json.load(f)
-
-        logger.info(f"📂 Loaded config from file: {config_file}")
-        return mcp_config
-
-    except Exception as e:
-        logger.error(f"❌ Failed to load config from file for user {user_id}: {e}")
-        return None
 
 
 def extract_user_id_from_token(auth_token: str) -> Optional[str]:
@@ -338,96 +276,6 @@ async def get_user_mcp_servers(auth_token: str = "", user_id: str = "") -> Dict[
     except Exception as e:
         logger.error(f"❌ Failed to load MCP servers from PostgreSQL for user {effective_user_id}: {e}")
         return {}
-
-
-async def sync_mcp_config_to_local(user_id: str) -> Dict[str, Any]:
-    """
-    Sync MCP configuration from PostgreSQL to local .mcp.json file.
-
-    This ensures the local workspace file matches the database state.
-    Should be called after any MCP server add/delete operation.
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        {"success": bool, "message": str, "servers_count": int}
-    """
-    try:
-        from datetime import datetime
-
-        # Get all active MCP servers from PostgreSQL using raw SQL
-        # Fetch:
-        # 1. Personal servers (user_id match, project_id is NULL)
-        # 2. Project servers (project_id match where user is a member) - Assuming explicit project membership check or just fetching everything for now
-        # Ideally we should join with project_members, but for now let's just fetch personal + any project servers associated with projects the user is explicitly requesting or known to be in?
-        # Actually, to make them available to the Agent, we should fetch ALL servers the user has access to.
-        
-        # Simple approach: Fetch all servers where user_id matches OR (for now, just user_id + explicit project fetch if we had a project_id passed... but this function only takes user_id)
-        # Better: Join with project_members.
-        
-        query = """
-            SELECT * FROM user_mcp_servers 
-            WHERE status = 'active' AND (
-                (user_id = %s AND project_id IS NULL) OR
-                project_id IN (
-                    SELECT resource_id FROM memberships 
-                    WHERE user_id = %s AND resource_type = 'project'
-                )
-            )
-        """
-        results = execute_query(query, (user_id, user_id), fetch="all")
-
-        # Convert to .mcp.json format
-        mcp_servers = {}
-        for server in results or []:
-            server_name = server.get("server_name")
-            server_type = server.get("server_type", "stdio")
-
-            if not server_name:
-                continue
-
-            if server_type == "stdio":
-                mcp_servers[server_name] = {
-                    "command": server.get("command", ""),
-                    "args": server.get("args", []),
-                    "env": server.get("env", {})
-                }
-            elif server_type in ["sse", "http"]:
-                mcp_servers[server_name] = {
-                    "type": server_type,
-                    "url": server.get("url", ""),
-                    "headers": server.get("headers", {})
-                }
-
-        # Build config object
-        mcp_config = {
-            "mcpServers": mcp_servers,
-            "metadata": {
-                "version": "1.0.0",
-                "updatedAt": datetime.now().isoformat(),
-                "syncedFrom": "postgresql"
-            }
-        }
-
-        # Save to local .mcp.json file
-        save_config_to_file(user_id, mcp_config)
-
-        logger.info(f"✅ Synced {len(mcp_servers)} MCP servers to local .mcp.json for user {user_id}")
-
-        return {
-            "success": True,
-            "message": f"Synced {len(mcp_servers)} servers to local file",
-            "servers_count": len(mcp_servers)
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Failed to sync MCP config to local for user {user_id}: {e}")
-        return {
-            "success": False,
-            "message": f"Sync failed: {str(e)}",
-            "servers_count": 0
-        }
 
 
 def get_user_id_from_token(auth_token: str) -> Optional[str]:
@@ -613,166 +461,6 @@ def ensure_claude_skills_dir(workspace_path: Path) -> Path:
 
     logger.debug(f"📁 Ensured .claude/skills directory exists: {claude_skills_path}")
     return claude_skills_path
-
-
-async def unzip_installed_plugins(user_id: str) -> Dict[str, Any]:
-    """
-    Verify installed plugins exist in workspace, auto-cloning marketplaces if missing.
-
-    Git-based approach:
-    - Plugin files are already in workspace from git clone
-    - If marketplace not cloned, automatically clone it from repository_url
-    - Re-verify plugin after cloning
-
-    Args:
-        user_id: User's UUID
-
-    Returns:
-        {
-            "success": bool,
-            "verified_count": int,
-            "cloned_count": int,
-            "message": str
-        }
-    """
-    from git_utils import ensure_repository, get_marketplace_dir
-
-    try:
-        logger.info(f"📦 Verifying installed plugins for user: {user_id}")
-
-        # Get installed plugins from PostgreSQL
-        installed_plugins = execute_query(
-            "SELECT * FROM installed_plugins WHERE user_id = %s AND status = 'active'",
-            (user_id,),
-            fetch="all"
-        )
-
-        if not installed_plugins:
-            logger.info(f"ℹ️  No installed plugins found for user: {user_id}")
-            return {
-                "success": True,
-                "verified_count": 0,
-                "cloned_count": 0,
-                "message": "No plugins installed"
-            }
-
-        logger.info(f"📋 Found {len(installed_plugins)} installed plugins")
-
-        # Get user workspace
-        workspace_path = get_user_workspace_path(user_id)
-        verified_count = 0
-        cloned_count = 0
-        missing_plugins = []
-
-        # Cache for marketplace info (avoid repeated DB queries)
-        marketplace_cache: Dict[str, Optional[Dict]] = {}
-
-        for plugin in installed_plugins:
-            plugin_name = plugin["plugin_name"]
-            marketplace_name = plugin["marketplace_name"]
-            marketplace_id = plugin.get("marketplace_id")
-            install_path = plugin.get("install_path", "")
-
-            # Build full path to plugin
-            if install_path:
-                plugin_path = workspace_path / install_path
-            else:
-                plugin_path = workspace_path / ".claude" / "plugins" / "marketplaces" / marketplace_name / plugin_name
-
-            # Check if plugin exists (from git clone)
-            if plugin_path.exists():
-                logger.info(f"   ✅ {plugin_name} - exists at {plugin_path}")
-                verified_count += 1
-                continue
-
-            # Plugin not found - check if marketplace directory exists (git repo)
-            marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
-            git_dir = marketplace_dir / ".git"
-
-            if git_dir.exists():
-                # Git repo exists but plugin path doesn't - might be wrong install_path
-                logger.warning(f"   ⚠️  {plugin_name} - not found at {plugin_path}")
-                logger.info(f"      Git repo exists at {marketplace_dir}")
-                missing_plugins.append(plugin_name)
-                continue
-
-            # No git repo - need to clone the marketplace
-            logger.info(f"   🔄 {plugin_name} - marketplace not cloned, attempting to clone: {marketplace_name}")
-
-            # Get marketplace info from cache or database
-            if marketplace_name not in marketplace_cache:
-                marketplace_info = None
-                if marketplace_id:
-                    marketplace_info = execute_query(
-                        "SELECT repository_url, branch FROM marketplaces WHERE id = %s",
-                        (marketplace_id,),
-                        fetch="one"
-                    )
-                if not marketplace_info:
-                    # Fallback: query by user_id and name
-                    marketplace_info = execute_query(
-                        "SELECT repository_url, branch FROM marketplaces WHERE user_id = %s AND name = %s",
-                        (user_id, marketplace_name),
-                        fetch="one"
-                    )
-                marketplace_cache[marketplace_name] = marketplace_info
-
-            marketplace_info = marketplace_cache[marketplace_name]
-
-            if not marketplace_info or not marketplace_info.get("repository_url"):
-                logger.warning(f"   ❌ {plugin_name} - no repository_url found for marketplace: {marketplace_name}")
-                missing_plugins.append(plugin_name)
-                continue
-
-            # Clone the marketplace repository
-            repo_url = marketplace_info["repository_url"]
-            branch = marketplace_info.get("branch", "main")
-
-            logger.info(f"   📥 Cloning marketplace: {repo_url} (branch: {branch})")
-            success, result, was_cloned = await ensure_repository(repo_url, marketplace_dir, branch)
-
-            if not success:
-                logger.error(f"   ❌ Failed to clone marketplace {marketplace_name}: {result}")
-                missing_plugins.append(plugin_name)
-                continue
-
-            if was_cloned:
-                cloned_count += 1
-                logger.info(f"   ✅ Cloned marketplace: {marketplace_name} (commit: {result[:8] if result else 'unknown'})")
-
-            # Re-check if plugin exists after cloning
-            if plugin_path.exists():
-                logger.info(f"   ✅ {plugin_name} - now exists at {plugin_path}")
-                verified_count += 1
-            else:
-                logger.warning(f"   ⚠️  {plugin_name} - still not found after cloning marketplace")
-                missing_plugins.append(plugin_name)
-
-        # Log summary
-        if missing_plugins:
-            logger.warning(f"⚠️  {len(missing_plugins)} plugins not found: {missing_plugins}")
-
-        if cloned_count > 0:
-            logger.info(f"📥 Auto-cloned {cloned_count} marketplaces")
-
-        logger.info(f"✅ Verified {verified_count}/{len(installed_plugins)} plugins for user: {user_id}")
-
-        return {
-            "success": True,
-            "verified_count": verified_count,
-            "cloned_count": cloned_count,
-            "missing_plugins": missing_plugins,
-            "message": f"Verified {verified_count} plugins, cloned {cloned_count} marketplaces"
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Error verifying plugins: {e}", exc_info=True)
-        return {
-            "success": False,
-            "verified_count": 0,
-            "cloned_count": 0,
-            "message": f"Error: {str(e)}"
-        }
 
 
 async def sync_memory_to_workspace(user_id: str, project_id: str = "") -> Dict[str, Any]:

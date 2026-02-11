@@ -122,7 +122,7 @@ SLAR is a multi-service on-call management platform with AI-powered incident res
 - **Key Files**:
   - `claude_agent_api_v1.py` - Main FastAPI server with WebSocket endpoints
   - `mcp_config_manager.py` - MCP server configuration and management
-  - `supabase_storage.py` - Conversation and session storage
+  - `workspace_service.py` - Workspace management, auth, and data loading
   - `incident_tools.py` - Tools for incident management
 - **Runs on**: Port 8002
 
