@@ -33,20 +33,46 @@ class StoreCredentialRequest(BaseModel):
     data: Dict[str, Any] = Field(..., description="Credential data (type-specific fields)")
     description: Optional[str] = Field(None, description="Optional description")
     tags: Optional[list[str]] = Field(None, description="Optional tags")
-    
+    export_to_agent: bool = Field(False, description="Whether to export this credential to AI agent env")
+    env_mappings: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of ENV_VAR_NAME -> json_key in credential data. "
+                    "e.g. {'OPENSEARCH_USERNAME': 'username', 'OPENSEARCH_PASSWORD': 'password'}"
+    )
+
     class Config:
         json_schema_extra = {
-            "example": {
-                "credential_type": "github_pat",
-                "credential_name": "default_github",
-                "data": {
-                    "username": "octocat",
-                    "token": "ghp_xxxxxxxxxxxxxxxxxxxx"
+            "examples": [
+                {
+                    "credential_type": "generic_api_key",
+                    "credential_name": "datadog_api_key",
+                    "data": {"value": "dd-api-xxxxxxxxxx"},
+                    "description": "Datadog API key",
+                    "export_to_agent": True,
+                    "env_mappings": {"DATADOG_API_KEY": "value"}
                 },
-                "description": "My GitHub personal access token",
-                "tags": ["github", "personal"]
-            }
+                {
+                    "credential_type": "generic_api_key",
+                    "credential_name": "opensearch_creds",
+                    "data": {"username": "admin", "password": "secret123"},
+                    "description": "OpenSearch credentials",
+                    "export_to_agent": True,
+                    "env_mappings": {
+                        "OPENSEARCH_USERNAME": "username",
+                        "OPENSEARCH_PASSWORD": "password"
+                    }
+                }
+            ]
         }
+
+
+class UpdateCredentialMetadataRequest(BaseModel):
+    """Request to update credential metadata (export settings)."""
+    export_to_agent: Optional[bool] = Field(None, description="Whether to export to AI agent env")
+    env_mappings: Optional[Dict[str, str]] = Field(
+        None,
+        description="Mapping of ENV_VAR_NAME -> json_key. Pass {} to clear."
+    )
 
 
 class CredentialResponse(BaseModel):
@@ -137,10 +163,12 @@ async def store_credential(request: Request, body: StoreCredentialRequest):
         # Store raw data as-is — client sends { "value": "..." } or any dict
         data_dict = body.data
 
-        # Prepare metadata
+        # Prepare metadata (includes export settings)
         metadata = {
             "description": body.description,
-            "tags": body.tags or []
+            "tags": body.tags or [],
+            "export_to_agent": body.export_to_agent,
+            "env_mappings": body.env_mappings or {},
         }
         
         # Store in Vault
@@ -200,18 +228,32 @@ async def list_credentials(
             credential_type=credential_type
         )
         
-        # Enrich with metadata
+        # Enrich with metadata (includes reading export settings from Vault)
         enriched_credentials = []
         for cred in credentials:
             cred_type = cred.get("type")
-            metadata = CREDENTIAL_TYPE_METADATA.get(cred_type, {})
-            
+            type_metadata = CREDENTIAL_TYPE_METADATA.get(cred_type, {})
+
+            # Read full credential to get export metadata
+            cred_detail = vault_client.get_credential(
+                user_id=user_id,
+                credential_type=cred_type,
+                credential_name=cred.get("name")
+            )
+            cred_metadata = cred_detail.get("metadata", {}) if cred_detail else {}
+
+            # Return data_keys so UI can build env_mappings dropdown
+            cred_data = cred_detail.get("data", {}) if cred_detail else {}
+
             enriched_credentials.append({
                 "name": cred.get("name"),
                 "type": cred_type,
-                "type_name": metadata.get("name", cred_type),
-                "category": metadata.get("category", "generic"),
-                "icon": metadata.get("icon", "🔐"),
+                "type_name": type_metadata.get("name", cred_type),
+                "category": type_metadata.get("category", "generic"),
+                "icon": type_metadata.get("icon", "🔐"),
+                "export_to_agent": cred_metadata.get("export_to_agent", False),
+                "env_mappings": cred_metadata.get("env_mappings", {}),
+                "data_keys": list(cred_data.keys()),
             })
         
         return CredentialListResponse(
@@ -287,6 +329,84 @@ async def get_credential_metadata(
     except Exception as e:
         logger.error(f"Failed to get credential: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get credential: {str(e)}")
+
+
+@router.patch("/{credential_type}/{credential_name}", response_model=CredentialResponse)
+async def update_credential_metadata(
+    request: Request,
+    credential_type: str,
+    credential_name: str,
+    body: UpdateCredentialMetadataRequest
+):
+    """
+    Update credential metadata (export settings) without re-submitting sensitive data.
+
+    Use this to toggle export_to_agent or change env_var_name.
+    """
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+
+    vault = vault_client.get_vault_client()
+    if not vault.is_available():
+        raise HTTPException(status_code=503, detail="Vault is not available")
+
+    try:
+        # Read existing credential
+        existing = vault_client.get_credential(
+            user_id=user_id,
+            credential_type=credential_type,
+            credential_name=credential_name
+        )
+
+        if not existing:
+            raise HTTPException(status_code=404, detail="Credential not found")
+
+        # Update only the metadata fields that were provided
+        metadata = existing.get("metadata", {})
+        if body.export_to_agent is not None:
+            metadata["export_to_agent"] = body.export_to_agent
+        if body.env_mappings is not None:
+            metadata["env_mappings"] = body.env_mappings
+
+        # Re-store with updated metadata (data unchanged)
+        success = vault_client.store_credential(
+            user_id=user_id,
+            credential_type=credential_type,
+            credential_name=credential_name,
+            data=existing.get("data", {}),
+            metadata=metadata
+        )
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update credential metadata")
+
+        # Build response with updated credential info
+        type_metadata = CREDENTIAL_TYPE_METADATA.get(credential_type, {})
+        cred_data = existing.get("data", {})
+
+        return CredentialResponse(
+            success=True,
+            credential={
+                "name": credential_name,
+                "type": credential_type,
+                "type_name": type_metadata.get("name", credential_type),
+                "category": type_metadata.get("category", "generic"),
+                "icon": type_metadata.get("icon", "🔐"),
+                "export_to_agent": metadata.get("export_to_agent", False),
+                "env_mappings": metadata.get("env_mappings", {}),
+                "data_keys": list(cred_data.keys()),
+            },
+            message=f"Credential '{credential_name}' updated successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update credential metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update credential: {str(e)}")
 
 
 @router.delete("/{credential_type}/{credential_name}", response_model=CredentialResponse)

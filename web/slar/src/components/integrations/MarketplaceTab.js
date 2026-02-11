@@ -15,7 +15,6 @@ import {
   LinkIcon
 } from '@heroicons/react/24/outline';
 import apiClient from '../../lib/api';
-import { credentialsService } from '../../services/credentials-service';
 import {
   fetchPluginsFromMarketplace,
   parseGitHubUrl,
@@ -59,8 +58,8 @@ export default function MarketplaceTab() {
   // Load available credentials when add form is shown
   useEffect(() => {
     if (showAddForm && session?.access_token) {
-      credentialsService.setToken(session.access_token);
-      credentialsService.listCredentials().then(data => {
+      apiClient.setToken(session.access_token);
+      apiClient.listCredentials().then(data => {
         if (data.success) {
           setAvailableCredentials(data.credentials || []);
         }

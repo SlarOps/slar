@@ -2204,6 +2204,45 @@ class APIClient {
     return response.blob();
   }
 
+  // ===========================
+  // CREDENTIALS (Vault - AI Backend)
+  // ===========================
+
+  async getVaultStatus() {
+    return this.request('/api/credentials/status', {}, this.aiBaseURL);
+  }
+
+  async getCredentialTypes() {
+    return this.request('/api/credentials/types', {}, this.aiBaseURL);
+  }
+
+  async listCredentials(type = null) {
+    const params = new URLSearchParams();
+    if (type) params.append('credential_type', type);
+    const queryString = params.toString();
+    return this.request(`/api/credentials${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  async storeCredential(credential) {
+    return this.request('/api/credentials', {
+      method: 'POST',
+      body: JSON.stringify(credential)
+    }, this.aiBaseURL);
+  }
+
+  async updateCredentialMetadata(type, name, updates) {
+    return this.request(`/api/credentials/${type}/${name}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    }, this.aiBaseURL);
+  }
+
+  async deleteCredential(type, name) {
+    return this.request(`/api/credentials/${type}/${name}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
   // ========================================
   // Conversation Sharing
   // ========================================

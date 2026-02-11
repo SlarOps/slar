@@ -101,6 +101,27 @@ class CredentialsService {
     }
 
     /**
+     * Update credential metadata (export settings)
+     * @param {string} type - Credential type
+     * @param {string} name - Credential name
+     * @param {Object} updates - { env_var_name?, export_to_agent? }
+     * @returns {Promise<{success: boolean, message: string}>}
+     */
+    async updateCredential(type, name, updates) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/credentials/${type}/${name}`, {
+                method: 'PATCH',
+                headers: this.headers,
+                body: JSON.stringify(updates)
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Failed to update credential:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
      * Delete a credential
      * @param {string} type - Credential type
      * @param {string} name - Credential name

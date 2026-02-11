@@ -60,6 +60,7 @@ from workspace_service import (
 # Import database routes (split for better organization)
 from routes_db import router as db_router
 from database_util import execute_query, resolve_user_id_from_token
+import vault_client
 
 # Import conversation routes and helper functions
 from routes_conversations import (
@@ -120,6 +121,91 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 
 
 # ==========================================
+# Credential Export to Agent Env
+# ==========================================
+
+def load_exported_credentials(user_id: str) -> Dict[str, str]:
+    """
+    Load all credentials marked as export_to_agent=True from Vault.
+
+    Uses env_mappings to map credential JSON keys to env var names.
+    Supports both single-value and multi-key credentials:
+
+    Single-value: data={"value": "dd-api-xxx"}
+      env_mappings={"DATADOG_API_KEY": "value"}
+      -> {"DATADOG_API_KEY": "dd-api-xxx"}
+
+    Multi-key: data={"username": "admin", "password": "secret"}
+      env_mappings={"OS_USER": "username", "OS_PASS": "password"}
+      -> {"OS_USER": "admin", "OS_PASS": "secret"}
+
+    Args:
+        user_id: User ID for Vault path scoping
+
+    Returns:
+        Dict mapping env var names to resolved values
+    """
+    vault = vault_client.get_vault_client()
+    if not vault.is_available():
+        logger.debug("Vault not available, skipping credential export")
+        return {}
+
+    try:
+        credentials = vault_client.list_credentials(user_id)
+        if not credentials:
+            return {}
+
+        exported_env: Dict[str, str] = {}
+
+        for cred in credentials:
+            cred_type = cred.get("type", "")
+            cred_name = cred.get("name", "")
+
+            cred_detail = vault_client.get_credential(
+                user_id=user_id,
+                credential_type=cred_type,
+                credential_name=cred_name
+            )
+            if not cred_detail:
+                continue
+
+            metadata = cred_detail.get("metadata", {})
+            if not metadata.get("export_to_agent"):
+                continue
+
+            env_mappings = metadata.get("env_mappings", {})
+            data = cred_detail.get("data", {})
+
+            if not env_mappings:
+                logger.warning(
+                    f"Credential {cred_name} marked for export but no env_mappings set, skipping"
+                )
+                continue
+
+            # Resolve each mapping: ENV_VAR_NAME -> json_key -> actual value
+            for env_var, json_key in env_mappings.items():
+                if json_key in data:
+                    exported_env[env_var] = str(data[json_key])
+                else:
+                    logger.warning(
+                        f"Credential {cred_name}: key '{json_key}' not found in data "
+                        f"(available: {list(data.keys())}), skipping {env_var}"
+                    )
+
+        if exported_env:
+            logger.info(
+                f"Exported {len(exported_env)} env vars from credentials: "
+                f"{list(exported_env.keys())}"
+            )
+
+        return exported_env
+
+    except Exception as e:
+        logger.error(f"Failed to load exported credentials: {e}", exc_info=True)
+        return {}
+
+
+# ==========================================
 # Rate Limiting
 # ==========================================
 
@@ -128,7 +214,7 @@ rate_limit_storage = defaultdict(list)
 rate_limit_lock = Lock()
 
 # Get rate limit from environment (default: 60 requests per minute)
-RATE_LIMIT_REQUESTS = int(os.getenv("AI_RATE_LIMIT", "60"))
+RATE_LIMIT_REQUESTS = int(os.getenv("AI_RATE_LIMIT", "300"))
 RATE_LIMIT_WINDOW = 60  # seconds
 
 
@@ -306,7 +392,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -1041,6 +1127,11 @@ async def agent_task_streaming(
         # Create SDK options - use resume if continuing conversation
         resume_id = context["conversation_id"] if context["conversation_id"] else None
 
+        # Load exported credentials from Vault into env
+        agent_env = {}
+        if context["user_id"]:
+            agent_env = load_exported_credentials(context["user_id"])
+
         options = ClaudeAgentOptions(
             can_use_tool=permission_callback,
             permission_mode="default",
@@ -1052,7 +1143,7 @@ async def agent_task_streaming(
             setting_sources=["project"],
             allowed_tools=allowed_tools,
             hooks=actual_hooks_config,
-            env={"DATADOG_API_KEY": "123123qwe"},
+            env=agent_env if agent_env else None,
         )
 
         # Create message generator that includes first message
@@ -1356,6 +1447,11 @@ async def agent_task(
                 project_id=current_project_id,
             ) if current_user_id else hooks_config
 
+            # Load exported credentials from Vault into env
+            agent_env = {}
+            if user_id:
+                agent_env = load_exported_credentials(user_id)
+
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
@@ -1364,9 +1460,10 @@ async def agent_task(
                 resume=resume_id,  # Use conversation_id, not session_id!
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
-                setting_sources=["project","user"],
+                setting_sources=["project"],
                 allowed_tools=allowed_tools,
                 hooks=actual_hooks_config,  # Audit hooks with org_id/project_id
+                env=agent_env if agent_env else None,
             )
             async with ClaudeSDKClient(options) as client:
                 logger.info("\n📝 Sending query to Claude...")
