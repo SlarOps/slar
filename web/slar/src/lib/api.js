@@ -2204,6 +2204,93 @@ class APIClient {
     return response.blob();
   }
 
+  // ========================================
+  // AI Cost Tracking
+  // ========================================
+
+  /**
+   * Get cost logs with filtering and pagination (project-scoped)
+   * ReBAC: org_id and project_id are required (cost logs are project-scoped like credentials)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.model] - Filter by model
+   * @param {string} [filters.time_range] - Time range ('1h', '24h', '7d', '30d')
+   * @param {number} [filters.limit] - Max results (default 50, max 500)
+   * @param {number} [filters.offset] - Pagination offset
+   * @returns {Promise<object>} { success, logs, total, limit, offset }
+   */
+  async getCostLogs(filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id and project_id MANDATORY (project-scoped like credentials)
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    // Filters
+    if (filters.model) params.append('model', filters.model);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    // Pagination
+    if (filters.limit) params.append('limit', filters.limit.toString());
+    if (filters.offset) params.append('offset', filters.offset.toString());
+
+    const queryString = params.toString();
+    return this.request(`/api/cost-logs${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get cost statistics (project-scoped)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.time_range] - Time range ('1h', '24h', '7d', '30d')
+   * @returns {Promise<object>} { success, stats, by_model, daily }
+   */
+  async getCostStats(filters = {}) {
+    const params = new URLSearchParams();
+
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    const queryString = params.toString();
+    return this.request(`/api/cost-logs/stats${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Export cost logs as CSV (project-scoped)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.model] - Filter by model
+   * @param {string} [filters.time_range] - Time range
+   * @returns {Promise<Blob>} CSV file blob
+   */
+  async exportCostLogs(filters = {}) {
+    const params = new URLSearchParams();
+
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.model) params.append('model', filters.model);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    const queryString = params.toString();
+    const url = `${this.aiBaseURL}/api/cost-logs/export${queryString ? `?${queryString}` : ''}`;
+
+    const response = await fetch(url, {
+      headers: {
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
   // ===========================
   // CREDENTIALS (Vault - AI Backend)
   // ===========================

@@ -44,6 +44,11 @@ from audit_service import (
     EventType,
     EventStatus,
 )
+from cost_tracking_service import (
+    get_cost_service,
+    init_cost_tracking_service,
+    shutdown_cost_tracking_service,
+)
 from audit_hooks import build_hooks_config
 from authz.dependencies import init_authz_client, get_authz_client
 from workspace_service import (
@@ -344,6 +349,10 @@ async def lifespan(app: FastAPI):
     await init_audit_service()
     logger.info("📝 Audit service initialized")
 
+    # Initialize cost tracking service
+    await init_cost_tracking_service()
+    logger.info("💰 Cost tracking service initialized")
+
     # Start PGMQ consumer for incident analytics
     await start_pgmq_consumer()
     logger.info("🤖 Incident analytics PGMQ consumer started")
@@ -403,6 +412,10 @@ async def lifespan(app: FastAPI):
     # Shutdown audit service (flush remaining events)
     await shutdown_audit_service()
     logger.info("📝 Audit service stopped")
+
+    # Shutdown cost tracking service (flush remaining events)
+    await shutdown_cost_tracking_service()
+    logger.info("💰 Cost tracking service stopped")
 
     logger.info("✅ Application stopped")
 
@@ -472,6 +485,11 @@ logger.info("[Marketplace] Marketplace routes loaded from routes_marketplace.py"
 from routes_credentials import router as credentials_router
 app.include_router(credentials_router)
 logger.info("[Credentials] Credential routes loaded from routes_credentials.py")
+
+# Import and include Cost Tracking routes
+from routes_cost import router as cost_router
+app.include_router(cost_router)
+logger.info("[Cost] Cost tracking routes loaded from routes_cost.py")
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -838,6 +856,7 @@ async def agent_task_streaming(
         nonlocal session_initialized, assistant_text_buffer, user_message_saved
 
         was_interrupted = False  # Track if we broke due to interrupt
+        step_counter = 0  # Track conversation steps for cost logging
 
         while True:  # Keep running even after interrupts
             try:
@@ -878,6 +897,7 @@ async def agent_task_streaming(
                         if isinstance(message, ResultMessage):
                             logger.info("📭 Interrupted turn ResultMessage received, marking for wait")
                             was_interrupted = True
+                            # Note: Cost is already tracked from AssistantMessage, not ResultMessage
                         continue  # Skip processing, keep draining
 
                     # Log loaded plugins from init message
@@ -921,6 +941,8 @@ async def agent_task_streaming(
                                         })
                                     except Exception as e:
                                         logger.error(f"❌ TodoWrite error: {e}")
+
+                        # Note: Python SDK only has usage in ResultMessage, not AssistantMessage
 
                     elif isinstance(message, UserMessage):
                         for block in message.content:
@@ -996,6 +1018,30 @@ async def agent_task_streaming(
                             "type": message.subtype,
                             "result": message.result
                         })
+
+                        # Track cost from ResultMessage (Python SDK only has usage here, not on AssistantMessage)
+                        if context.get("user_id") and message.usage and message.total_cost_usd > 0:
+                            step_counter += 1
+                            try:
+                                cost_service = get_cost_service()
+
+                                # Use session_id as message_id since Python SDK doesn't provide message.id
+                                message_id = f"{message.session_id}_{step_counter}"
+
+                                await cost_service.log_cost_from_assistant_message(
+                                    message=message,  # Pass ResultMessage (has usage)
+                                    user_id=context["user_id"],
+                                    model=context.get("model", "haiku"),
+                                    org_id=context.get("org_id"),
+                                    project_id=context.get("project_id"),
+                                    session_id=context.get("session_id"),
+                                    conversation_id=context.get("conversation_id"),
+                                    request_type="chat",
+                                    step_number=step_counter
+                                )
+                                logger.info(f"💰 Step {step_counter}: Logged cost ${message.total_cost_usd:.6f}")
+                            except Exception as e:
+                                logger.error(f"Failed to log cost: {e}", exc_info=True)
 
                         # Save assistant message when result received
                         if context["conversation_id"] and assistant_text_buffer:
@@ -1183,8 +1229,10 @@ async def agent_task_streaming(
             setting_sources=["project"],
             allowed_tools=allowed_tools,
             hooks=actual_hooks_config,
-            env=agent_env if agent_env else None,
+            env=agent_env,
         )
+
+        print(f"🚀 Agent options: {options}")
 
         # Create message generator that includes first message
         async def full_message_generator():
@@ -1297,6 +1345,7 @@ async def agent_task(
     current_org_id = None  # Organization ID for metadata
     current_project_id = None  # Project ID for metadata
     is_resuming = False  # Flag to track if we're resuming an existing conversation
+    alt_step_counter = 0  # Track steps for cost logging
 
     try:
         while True:
@@ -1604,6 +1653,8 @@ async def agent_task(
                                         except Exception as e:
                                             logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
 
+                            # Note: Python SDK only has usage in ResultMessage, not AssistantMessage
+
                         # Handle UserMessage (tool results from SDK)
                         # Send to frontend so users can see what agent is executing
                         if isinstance(message, UserMessage):
@@ -1693,6 +1744,30 @@ async def agent_task(
                             await output_queue.put(
                                 {"type": message.subtype, "result": message.result}
                             )
+
+                            # Track cost from ResultMessage (Python SDK only has usage here)
+                            if current_user_id and message.usage and message.total_cost_usd > 0:
+                                alt_step_counter += 1
+                                try:
+                                    cost_service = get_cost_service()
+
+                                    # Use session_id as message_id
+                                    message_id = f"{message.session_id}_{alt_step_counter}"
+
+                                    await cost_service.log_cost_from_assistant_message(
+                                        message=message,
+                                        user_id=current_user_id,
+                                        model=options.model if options else "haiku",
+                                        org_id=current_org_id,
+                                        project_id=current_project_id,
+                                        session_id=session_id,
+                                        conversation_id=current_conversation_id,
+                                        request_type="chat",
+                                        step_number=alt_step_counter
+                                    )
+                                    logger.info(f"💰 Step {alt_step_counter}: Logged cost ${message.total_cost_usd:.6f}")
+                                except Exception as e:
+                                    logger.error(f"Failed to log cost: {e}", exc_info=True)
 
                             # Save assistant message to DB when response is complete
                             if current_conversation_id and assistant_text_buffer:
