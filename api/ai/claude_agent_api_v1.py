@@ -45,6 +45,7 @@ from audit_service import (
     EventStatus,
 )
 from audit_hooks import build_hooks_config
+from authz.dependencies import init_authz_client, get_authz_client
 from workspace_service import (
     extract_user_id_from_token,
     get_user_mcp_servers,
@@ -124,9 +125,12 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 # Credential Export to Agent Env
 # ==========================================
 
-def load_exported_credentials(user_id: str) -> Dict[str, str]:
+def load_exported_credentials(user_id: str, project_id: str = None) -> Dict[str, str]:
     """
     Load all credentials marked as export_to_agent=True from Vault.
+
+    Tries project-scoped credentials first (if project_id provided),
+    then falls back to user-scoped credentials for backward compatibility.
 
     Uses env_mappings to map credential JSON keys to env var names.
     Supports both single-value and multi-key credentials:
@@ -140,7 +144,8 @@ def load_exported_credentials(user_id: str) -> Dict[str, str]:
       -> {"OS_USER": "admin", "OS_PASS": "secret"}
 
     Args:
-        user_id: User ID for Vault path scoping
+        user_id: User ID for Vault path scoping (fallback)
+        project_id: Project ID for project-scoped credentials (preferred)
 
     Returns:
         Dict mapping env var names to resolved values
@@ -151,13 +156,28 @@ def load_exported_credentials(user_id: str) -> Dict[str, str]:
         return {}
 
     try:
-        credentials = vault_client.list_credentials(user_id)
-        if not credentials:
-            return {}
-
         exported_env: Dict[str, str] = {}
 
-        for cred in credentials:
+        # Try project-scoped credentials first
+        if project_id:
+            credentials = vault_client.list_project_credentials(project_id)
+            for cred in credentials:
+                cred_type = cred.get("type", "")
+                cred_name = cred.get("name", "")
+
+                cred_detail = vault_client.get_project_credential(
+                    project_id=project_id,
+                    credential_type=cred_type,
+                    credential_name=cred_name
+                )
+                if not cred_detail:
+                    continue
+
+                _resolve_credential_env(cred_detail, cred_name, exported_env)
+
+        # Fall back to user-scoped credentials (backward compat)
+        user_credentials = vault_client.list_credentials(user_id)
+        for cred in user_credentials:
             cred_type = cred.get("type", "")
             cred_name = cred.get("name", "")
 
@@ -169,28 +189,7 @@ def load_exported_credentials(user_id: str) -> Dict[str, str]:
             if not cred_detail:
                 continue
 
-            metadata = cred_detail.get("metadata", {})
-            if not metadata.get("export_to_agent"):
-                continue
-
-            env_mappings = metadata.get("env_mappings", {})
-            data = cred_detail.get("data", {})
-
-            if not env_mappings:
-                logger.warning(
-                    f"Credential {cred_name} marked for export but no env_mappings set, skipping"
-                )
-                continue
-
-            # Resolve each mapping: ENV_VAR_NAME -> json_key -> actual value
-            for env_var, json_key in env_mappings.items():
-                if json_key in data:
-                    exported_env[env_var] = str(data[json_key])
-                else:
-                    logger.warning(
-                        f"Credential {cred_name}: key '{json_key}' not found in data "
-                        f"(available: {list(data.keys())}), skipping {env_var}"
-                    )
+            _resolve_credential_env(cred_detail, cred_name, exported_env)
 
         if exported_env:
             logger.info(
@@ -203,6 +202,34 @@ def load_exported_credentials(user_id: str) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Failed to load exported credentials: {e}", exc_info=True)
         return {}
+
+
+def _resolve_credential_env(cred_detail: dict, cred_name: str, exported_env: Dict[str, str]):
+    """Resolve env mappings from a credential detail into exported_env dict."""
+    metadata = cred_detail.get("metadata", {})
+    if not metadata.get("export_to_agent"):
+        return
+
+    env_mappings = metadata.get("env_mappings", {})
+    data = cred_detail.get("data", {})
+
+    if not env_mappings:
+        logger.warning(
+            f"Credential {cred_name} marked for export but no env_mappings set, skipping"
+        )
+        return
+
+    for env_var, json_key in env_mappings.items():
+        # Don't overwrite project-scoped vars with user-scoped ones
+        if env_var in exported_env:
+            continue
+        if json_key in data:
+            exported_env[env_var] = str(data[json_key])
+        else:
+            logger.warning(
+                f"Credential {cred_name}: key '{json_key}' not found in data "
+                f"(available: {list(data.keys())}), skipping {env_var}"
+            )
 
 
 # ==========================================
@@ -308,6 +335,11 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting application...")
 
+    # Initialize AuthzClient (delegates all auth checks to Go API)
+    go_api_url = os.getenv("API_BASE_URL", "http://localhost:8080")
+    init_authz_client(go_api_url)
+    logger.info(f"AuthzClient initialized -> {go_api_url}")
+
     # Initialize audit service
     await init_audit_service()
     logger.info("📝 Audit service initialized")
@@ -359,6 +391,14 @@ async def lifespan(app: FastAPI):
     # Stop PGMQ consumer
     await stop_pgmq_consumer()
     logger.info("🤖 Incident analytics PGMQ consumer stopped")
+
+    # Close AuthzClient HTTP connections
+    try:
+        authz_client = get_authz_client()
+        await authz_client.close()
+        logger.info("AuthzClient closed")
+    except RuntimeError:
+        pass  # Not initialized
 
     # Shutdown audit service (flush remaining events)
     await shutdown_audit_service()
@@ -1130,13 +1170,13 @@ async def agent_task_streaming(
         # Load exported credentials from Vault into env
         agent_env = {}
         if context["user_id"]:
-            agent_env = load_exported_credentials(context["user_id"])
+            agent_env = load_exported_credentials(context["user_id"], project_id=context.get("project_id"))
 
         options = ClaudeAgentOptions(
             can_use_tool=permission_callback,
             permission_mode="default",
             cwd=context["workspace"],
-            model="sonnet",
+            model="haiku",
             resume=resume_id,
             mcp_servers=mcp_servers,
             plugins=user_plugins,
@@ -1450,13 +1490,13 @@ async def agent_task(
             # Load exported credentials from Vault into env
             agent_env = {}
             if user_id:
-                agent_env = load_exported_credentials(user_id)
+                agent_env = load_exported_credentials(user_id, project_id=current_project_id)
 
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
                 cwd=user_workspace,
-                model="sonnet",
+                model="haiku",
                 resume=resume_id,  # Use conversation_id, not session_id!
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,

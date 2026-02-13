@@ -104,6 +104,7 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 	orgHandler := handlers.NewOrgHandler(orgService)                                                                // Organization management
 	projectHandler := handlers.NewProjectHandler(projectService)                                                    // Project management
 	conversationShareHandler := handlers.NewConversationShareHandler(pg)                                            // Conversation sharing
+	internalAuthzHandler := handlers.NewInternalAuthzHandler(authzBackend)                                          // Internal authz for AI Agent
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -197,6 +198,15 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 		apiKeyWebhookRoutes.POST("/incident", incidentHandler.WebhookCreateIncident) // NEW: PagerDuty-style incident webhook
 		apiKeyWebhookRoutes.POST("/alert", apiKeyHandler.WebhookAlert)               // Legacy
 		apiKeyWebhookRoutes.POST("/alertmanager", alertManagerHandler.ReceiveWebhook)
+	}
+
+	// INTERNAL ENDPOINTS (service-to-service, no OIDC auth - secured at network level)
+	// Used by AI Agent to delegate authorization checks to Go API
+	internalAuthzRoutes := r.Group("/internal/authz")
+	{
+		internalAuthzRoutes.GET("/org/:org_id/role", internalAuthzHandler.GetOrgRole)
+		internalAuthzRoutes.GET("/project/:project_id/role", internalAuthzHandler.GetProjectRole)
+		internalAuthzRoutes.POST("/check", internalAuthzHandler.CheckAccess)
 	}
 
 	// PROTECTED ENDPOINTS (require OIDC authentication)

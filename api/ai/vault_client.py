@@ -487,35 +487,242 @@ class VaultClient:
     ) -> bool:
         """
         Delete a credential from Vault.
-        
+
         Args:
             user_id: User ID
             credential_type: Type of credential
             credential_name: Name of credential
-        
+
         Returns:
             True if deleted successfully, False otherwise
         """
         if not self.is_available():
             logger.warning("⚠️  Cannot delete credential: Vault not available")
             return False
-        
+
         try:
             secret_path = f"slar/users/{user_id}/credentials/{credential_type}/{credential_name}"
-            
+
             logger.debug(f"🗑️  Deleting credential from Vault: {secret_path}")
-            
+
             # Delete metadata (soft delete)
             self.client.secrets.kv.v2.delete_metadata_and_all_versions(
                 path=secret_path,
                 mount_point="secret"
             )
-            
+
             logger.info(f"✅ Deleted {credential_type} credential for user {user_id}: {credential_name}")
             return True
-        
+
         except Exception as e:
             logger.error(f"❌ Failed to delete credential from Vault: {e}")
+            return False
+
+    # ==========================================
+    # Project-Scoped Credential Methods
+    # ==========================================
+
+    def store_project_credential(
+        self,
+        project_id: str,
+        credential_type: str,
+        credential_name: str,
+        data: dict,
+        metadata: Optional[dict] = None
+    ) -> bool:
+        """
+        Store a project-scoped credential in Vault.
+
+        Args:
+            project_id: Project UUID
+            credential_type: Type of credential
+            credential_name: Name of this credential instance
+            data: Credential data
+            metadata: Optional metadata (description, tags, etc.)
+
+        Returns:
+            True if stored successfully, False otherwise
+        """
+        if not self.is_available():
+            logger.warning("Cannot store credential: Vault not available")
+            return False
+
+        try:
+            secret_path = f"slar/projects/{project_id}/credentials/{credential_type}/{credential_name}"
+            logger.debug(f"Storing project credential to Vault: {secret_path}")
+
+            secret_data = {
+                "data": data,
+                "metadata": metadata or {},
+                "credential_type": credential_type,
+                "created_at": __import__("datetime").datetime.utcnow().isoformat()
+            }
+
+            self.client.secrets.kv.v2.create_or_update_secret(
+                path=secret_path,
+                secret=secret_data,
+                mount_point="secret"
+            )
+
+            logger.info(f"Stored project {credential_type} credential: {credential_name} (project={project_id})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to store project credential: {e}")
+            return False
+
+    def get_project_credential(
+        self,
+        project_id: str,
+        credential_type: str,
+        credential_name: str
+    ) -> Optional[dict]:
+        """
+        Retrieve a project-scoped credential from Vault.
+
+        Args:
+            project_id: Project UUID
+            credential_type: Type of credential
+            credential_name: Name of credential
+
+        Returns:
+            Dict with credential data and metadata, or None if not found
+        """
+        if not self.is_available():
+            return None
+
+        try:
+            secret_path = f"slar/projects/{project_id}/credentials/{credential_type}/{credential_name}"
+            secret_response = self.client.secrets.kv.v2.read_secret_version(
+                path=secret_path,
+                mount_point="secret"
+            )
+
+            if not secret_response or "data" not in secret_response:
+                return None
+
+            return secret_response["data"]["data"]
+
+        except hvac.exceptions.InvalidPath:
+            return None
+        except Exception as e:
+            logger.error(f"Failed to retrieve project credential: {e}")
+            return None
+
+    def list_project_credentials(
+        self,
+        project_id: str,
+        credential_type: Optional[str] = None
+    ) -> list[dict]:
+        """
+        List all credentials for a project, optionally filtered by type.
+
+        Args:
+            project_id: Project UUID
+            credential_type: Optional credential type filter
+
+        Returns:
+            List of credential info dicts (name, type only - no sensitive data)
+        """
+        if not self.is_available():
+            return []
+
+        try:
+            base_path = f"slar/projects/{project_id}/credentials"
+
+            if credential_type:
+                type_path = f"{base_path}/{credential_type}"
+                response = self.client.secrets.kv.v2.list_secrets(
+                    path=type_path,
+                    mount_point="secret"
+                )
+
+                if response and "data" in response and "keys" in response["data"]:
+                    return [
+                        {
+                            "name": name.rstrip("/"),
+                            "type": credential_type,
+                            "path": f"{type_path}/{name.rstrip('/')}"
+                        }
+                        for name in response["data"]["keys"]
+                    ]
+                return []
+            else:
+                types_response = self.client.secrets.kv.v2.list_secrets(
+                    path=base_path,
+                    mount_point="secret"
+                )
+
+                if not types_response or "data" not in types_response:
+                    return []
+
+                credential_types = types_response["data"].get("keys", [])
+                all_credentials = []
+
+                for cred_type_raw in credential_types:
+                    cred_type = cred_type_raw.rstrip("/")
+                    type_path = f"{base_path}/{cred_type}"
+                    try:
+                        creds_response = self.client.secrets.kv.v2.list_secrets(
+                            path=type_path,
+                            mount_point="secret"
+                        )
+
+                        if creds_response and "data" in creds_response:
+                            for name_raw in creds_response["data"].get("keys", []):
+                                name = name_raw.rstrip("/")
+                                all_credentials.append({
+                                    "name": name,
+                                    "type": cred_type,
+                                    "path": f"{type_path}/{name}"
+                                })
+                    except hvac.exceptions.InvalidPath:
+                        continue
+
+                logger.info(f"Found {len(all_credentials)} credentials for project {project_id}")
+                return all_credentials
+
+        except hvac.exceptions.InvalidPath:
+            return []
+        except Exception as e:
+            logger.error(f"Failed to list project credentials: {e}")
+            return []
+
+    def delete_project_credential(
+        self,
+        project_id: str,
+        credential_type: str,
+        credential_name: str
+    ) -> bool:
+        """
+        Delete a project-scoped credential from Vault.
+
+        Args:
+            project_id: Project UUID
+            credential_type: Type of credential
+            credential_name: Name of credential
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        if not self.is_available():
+            logger.warning("Cannot delete credential: Vault not available")
+            return False
+
+        try:
+            secret_path = f"slar/projects/{project_id}/credentials/{credential_type}/{credential_name}"
+            logger.debug(f"Deleting project credential from Vault: {secret_path}")
+
+            self.client.secrets.kv.v2.delete_metadata_and_all_versions(
+                path=secret_path,
+                mount_point="secret"
+            )
+
+            logger.info(f"Deleted project {credential_type} credential: {credential_name} (project={project_id})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete project credential: {e}")
             return False
 
 
@@ -604,4 +811,51 @@ def delete_credential(
     """Delete a credential from Vault."""
     return get_vault_client().delete_credential(
         user_id, credential_type, credential_name
+    )
+
+
+# ==========================================
+# Convenience Functions - Project-Scoped Credentials
+# ==========================================
+
+def store_project_credential(
+    project_id: str,
+    credential_type: str,
+    credential_name: str,
+    data: dict,
+    metadata: Optional[dict] = None
+) -> bool:
+    """Store a project-scoped credential in Vault."""
+    return get_vault_client().store_project_credential(
+        project_id, credential_type, credential_name, data, metadata
+    )
+
+
+def get_project_credential(
+    project_id: str,
+    credential_type: str,
+    credential_name: str
+) -> Optional[dict]:
+    """Retrieve a project-scoped credential from Vault."""
+    return get_vault_client().get_project_credential(
+        project_id, credential_type, credential_name
+    )
+
+
+def list_project_credentials(
+    project_id: str,
+    credential_type: Optional[str] = None
+) -> list[dict]:
+    """List all project-scoped credentials, optionally filtered by type."""
+    return get_vault_client().list_project_credentials(project_id, credential_type)
+
+
+def delete_project_credential(
+    project_id: str,
+    credential_type: str,
+    credential_name: str
+) -> bool:
+    """Delete a project-scoped credential from Vault."""
+    return get_vault_client().delete_project_credential(
+        project_id, credential_type, credential_name
     )

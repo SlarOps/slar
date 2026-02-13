@@ -2216,9 +2216,19 @@ class APIClient {
     return this.request('/api/credentials/types', {}, this.aiBaseURL);
   }
 
-  async listCredentials(type = null) {
+  /**
+   * Get user's role in project for credential authorization
+   * @param {string} projectId - Project ID
+   * @returns {Promise<{success: boolean, role: string|null}>}
+   */
+  async getCredentialRole(projectId) {
+    return this.request(`/api/credentials/role?project_id=${encodeURIComponent(projectId)}`, {}, this.aiBaseURL);
+  }
+
+  async listCredentials(type = null, projectId = null) {
     const params = new URLSearchParams();
     if (type) params.append('credential_type', type);
+    if (projectId) params.append('project_id', projectId);
     const queryString = params.toString();
     return this.request(`/api/credentials${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
   }
@@ -2237,8 +2247,11 @@ class APIClient {
     }, this.aiBaseURL);
   }
 
-  async deleteCredential(type, name) {
-    return this.request(`/api/credentials/${type}/${name}`, {
+  async deleteCredential(type, name, projectId = null) {
+    const params = new URLSearchParams();
+    if (projectId) params.append('project_id', projectId);
+    const queryString = params.toString();
+    return this.request(`/api/credentials/${type}/${name}${queryString ? `?${queryString}` : ''}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
   }

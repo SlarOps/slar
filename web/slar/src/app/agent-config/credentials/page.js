@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { PlusIcon, TrashIcon, KeyIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import apiClient from '@/lib/api';
 import Modal, { ModalFooter, ModalButton } from '@/components/ui/Modal';
 import Input from '@/components/ui/Input';
@@ -11,21 +12,36 @@ import Switch from '@/components/ui/Switch';
 
 const CredentialsPage = () => {
     const { session } = useAuth();
+    const { currentOrg, currentProject } = useOrg();
     const [credentials, setCredentials] = useState([]);
     const [loading, setLoading] = useState(true);
     const [vaultAvailable, setVaultAvailable] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [toast, setToast] = useState(null);
+    const [userRole, setUserRole] = useState(null);
+
+    const isAdmin = userRole === 'admin' || userRole === 'owner';
+    const projectId = currentProject?.id;
 
     useEffect(() => {
         if (!session?.access_token) return;
         apiClient.setToken(session.access_token);
 
+        if (!projectId) {
+            setLoading(false);
+            return;
+        }
+
         const init = async () => {
             try {
-                const status = await apiClient.getVaultStatus();
+                // Fetch role and vault status in parallel
+                const [status, roleResult] = await Promise.all([
+                    apiClient.getVaultStatus(),
+                    apiClient.getCredentialRole(projectId),
+                ]);
                 setVaultAvailable(status.vault_available);
-                if (status.vault_available) {
+                setUserRole(roleResult.role);
+                if (status.vault_available && roleResult.role) {
                     await fetchCredentials();
                 } else {
                     setLoading(false);
@@ -36,12 +52,12 @@ const CredentialsPage = () => {
             }
         };
         init();
-    }, [session?.access_token]);
+    }, [session?.access_token, projectId]);
 
     const fetchCredentials = async () => {
         setLoading(true);
         try {
-            const data = await apiClient.listCredentials();
+            const data = await apiClient.listCredentials(null, projectId);
             setCredentials(data.credentials || []);
         } catch (err) {
             showToast('Failed to load credentials', 'error');
@@ -52,7 +68,7 @@ const CredentialsPage = () => {
     const handleDeleteCredential = async (credential) => {
         if (!confirm(`Are you sure you want to delete "${credential.name}"?`)) return;
         try {
-            await apiClient.deleteCredential(credential.type, credential.name);
+            await apiClient.deleteCredential(credential.type, credential.name, projectId);
             showToast(`Credential "${credential.name}" deleted`, 'success');
             fetchCredentials();
         } catch (err) {
@@ -81,7 +97,7 @@ const CredentialsPage = () => {
             const result = await apiClient.updateCredentialMetadata(
                 credential.type,
                 credential.name,
-                { export_to_agent: newValue }
+                { export_to_agent: newValue, project_id: projectId }
             );
             if (result.credential) {
                 setCredentials(prev => prev.map(c =>
@@ -108,6 +124,23 @@ const CredentialsPage = () => {
         setTimeout(() => setToast(null), 3000);
     };
 
+    // No project selected
+    if (!projectId) {
+        return (
+            <div className="min-h-screen dark:bg-gray-900 p-6">
+                <div className="max-w-7xl mx-auto">
+                    <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <KeyIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Select a Project</h3>
+                        <p className="text-gray-500 dark:text-gray-400">
+                            Choose a project from the sidebar to manage credentials
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen dark:bg-gray-900 p-6">
             <div className="max-w-7xl mx-auto">
@@ -117,16 +150,23 @@ const CredentialsPage = () => {
                         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Credentials</h1>
                         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                             Securely manage secrets stored in Vault
+                            {userRole && !isAdmin && (
+                                <span className="ml-2 text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                                    Read-only ({userRole})
+                                </span>
+                            )}
                         </p>
                     </div>
-                    <button
-                        onClick={() => setShowAddModal(true)}
-                        disabled={!vaultAvailable}
-                        className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <PlusIcon className="h-5 w-5 mr-2" />
-                        Add Credential
-                    </button>
+                    {isAdmin && (
+                        <button
+                            onClick={() => setShowAddModal(true)}
+                            disabled={!vaultAvailable}
+                            className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <PlusIcon className="h-5 w-5 mr-2" />
+                            Add Credential
+                        </button>
+                    )}
                 </div>
 
                 {/* Vault Warning */}
@@ -142,6 +182,19 @@ const CredentialsPage = () => {
                     </div>
                 )}
 
+                {/* No access */}
+                {userRole === null && !loading && (
+                    <div className="mb-6 flex items-center gap-3 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                        <ExclamationTriangleIcon className="h-6 w-6 text-red-600 dark:text-red-400 flex-shrink-0" />
+                        <div>
+                            <p className="text-sm font-medium text-red-900 dark:text-red-100">No Access</p>
+                            <p className="text-xs text-red-700 dark:text-red-300">
+                                You don't have access to this project's credentials.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Credentials List */}
                 {loading ? (
                     <div className="flex items-center justify-center py-12">
@@ -152,16 +205,20 @@ const CredentialsPage = () => {
                         <KeyIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Credentials Yet</h3>
                         <p className="text-gray-500 dark:text-gray-400 mb-4">
-                            Add credentials to connect to services securely
+                            {isAdmin
+                                ? 'Add credentials to connect to services securely'
+                                : 'No credentials have been added to this project yet'}
                         </p>
-                        <button
-                            onClick={() => setShowAddModal(true)}
-                            disabled={!vaultAvailable}
-                            className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <PlusIcon className="h-5 w-5 mr-2" />
-                            Add Your First Credential
-                        </button>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setShowAddModal(true)}
+                                disabled={!vaultAvailable}
+                                className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <PlusIcon className="h-5 w-5 mr-2" />
+                                Add Your First Credential
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -169,6 +226,8 @@ const CredentialsPage = () => {
                             <CredentialCard
                                 key={`${credential.type}-${credential.name}`}
                                 credential={credential}
+                                isAdmin={isAdmin}
+                                projectId={projectId}
                                 onDelete={handleDeleteCredential}
                                 onToggleExport={handleToggleExport}
                                 onUpdate={(updated) => {
@@ -187,16 +246,19 @@ const CredentialsPage = () => {
                 )}
 
                 {/* Add Modal */}
-                <AddCredentialModal
-                    isOpen={showAddModal}
-                    onClose={() => setShowAddModal(false)}
-                    onSuccess={() => {
-                        setShowAddModal(false);
-                        fetchCredentials();
-                        showToast('Credential added successfully', 'success');
-                    }}
-                    onError={(msg) => showToast(msg, 'error')}
-                />
+                {isAdmin && (
+                    <AddCredentialModal
+                        isOpen={showAddModal}
+                        onClose={() => setShowAddModal(false)}
+                        projectId={projectId}
+                        onSuccess={() => {
+                            setShowAddModal(false);
+                            fetchCredentials();
+                            showToast('Credential added successfully', 'success');
+                        }}
+                        onError={(msg) => showToast(msg, 'error')}
+                    />
+                )}
 
                 {/* Toast */}
                 {toast && (
@@ -217,7 +279,7 @@ const CredentialsPage = () => {
 };
 
 // Credential Card with export toggle and env mappings
-const CredentialCard = ({ credential, onDelete, onToggleExport, onUpdate, showToast }) => {
+const CredentialCard = ({ credential, isAdmin, projectId, onDelete, onToggleExport, onUpdate, showToast }) => {
     const [showMappingEditor, setShowMappingEditor] = useState(false);
     const [mappings, setMappings] = useState({});
     const [newEnvVar, setNewEnvVar] = useState('');
@@ -264,7 +326,7 @@ const CredentialCard = ({ credential, onDelete, onToggleExport, onUpdate, showTo
             const result = await apiClient.updateCredentialMetadata(
                 credential.type,
                 credential.name,
-                { env_mappings: finalMappings }
+                { env_mappings: finalMappings, project_id: projectId }
             );
             setShowMappingEditor(false);
             showToast('Mappings saved', 'success');
@@ -283,12 +345,14 @@ const CredentialCard = ({ credential, onDelete, onToggleExport, onUpdate, showTo
                     <h3 className="font-semibold text-gray-900 dark:text-white truncate">{credential.name}</h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400">{credential.type_name}</p>
                 </div>
-                <button
-                    onClick={() => onDelete(credential)}
-                    className="text-gray-400 hover:text-red-600 transition-colors ml-2 flex-shrink-0"
-                >
-                    <TrashIcon className="h-5 w-5" />
-                </button>
+                {isAdmin && (
+                    <button
+                        onClick={() => onDelete(credential)}
+                        className="text-gray-400 hover:text-red-600 transition-colors ml-2 flex-shrink-0"
+                    >
+                        <TrashIcon className="h-5 w-5" />
+                    </button>
+                )}
             </div>
 
             {/* Data keys badge */}
@@ -317,22 +381,24 @@ const CredentialCard = ({ credential, onDelete, onToggleExport, onUpdate, showTo
                 ) : (
                     <p className="text-xs text-gray-400 italic">No env mappings</p>
                 )}
-                <button
-                    onClick={() => {
-                        if (!showMappingEditor) {
-                            // Sync from prop when opening editor
-                            setMappings(credential.env_mappings || {});
-                        }
-                        setShowMappingEditor(!showMappingEditor);
-                    }}
-                    className="mt-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                    {showMappingEditor ? 'Cancel' : displayMappings.length > 0 ? 'Edit mappings' : '+ Add mappings'}
-                </button>
+                {isAdmin && (
+                    <button
+                        onClick={() => {
+                            if (!showMappingEditor) {
+                                // Sync from prop when opening editor
+                                setMappings(credential.env_mappings || {});
+                            }
+                            setShowMappingEditor(!showMappingEditor);
+                        }}
+                        className="mt-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                        {showMappingEditor ? 'Cancel' : displayMappings.length > 0 ? 'Edit mappings' : '+ Add mappings'}
+                    </button>
+                )}
             </div>
 
-            {/* Mapping editor (inline) */}
-            {showMappingEditor && (
+            {/* Mapping editor (inline) - admin only */}
+            {isAdmin && showMappingEditor && (
                 <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded border border-gray-200 dark:border-gray-600">
                     {/* Existing mappings */}
                     {editorMappings.map(([envVar, jsonKey]) => (
@@ -390,20 +456,28 @@ const CredentialCard = ({ credential, onDelete, onToggleExport, onUpdate, showTo
                 </div>
             )}
 
-            {/* Export toggle */}
-            <Switch
-                checked={credential.export_to_agent}
-                onChange={(checked) => onToggleExport(credential, checked)}
-                label={"Export to Agent"}
-                size="sm"
-                className="pt-3 border-t border-gray-100 dark:border-gray-700"
-            />
+            {/* Export toggle - admin only can change, viewers see status */}
+            <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
+                {isAdmin ? (
+                    <Switch
+                        checked={credential.export_to_agent}
+                        onChange={(checked) => onToggleExport(credential, checked)}
+                        label={"Export to Agent"}
+                        size="sm"
+                    />
+                ) : (
+                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span className={`w-2 h-2 rounded-full ${credential.export_to_agent ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        Export to Agent: {credential.export_to_agent ? 'Enabled' : 'Disabled'}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
 
 // Add Credential Modal
-const AddCredentialModal = ({ isOpen, onClose, onSuccess, onError }) => {
+const AddCredentialModal = ({ isOpen, onClose, projectId, onSuccess, onError }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [value, setValue] = useState('');
@@ -464,6 +538,7 @@ const AddCredentialModal = ({ isOpen, onClose, onSuccess, onError }) => {
             await apiClient.storeCredential({
                 credential_type: 'generic_api_key',
                 credential_name: name.trim(),
+                project_id: projectId,
                 description: description.trim(),
                 data: dataPayload,
                 export_to_agent: exportToAgent,
