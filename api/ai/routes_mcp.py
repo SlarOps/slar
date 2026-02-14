@@ -125,9 +125,19 @@ async def get_mcp_servers(
                 fetch="all"
             )
 
+        # Convert datetime objects to ISO strings for Pydantic validation
+        serialized_servers = []
+        for server in (servers or []):
+            server_dict = dict(server)
+            if server_dict.get('created_at'):
+                server_dict['created_at'] = server_dict['created_at'].isoformat()
+            if server_dict.get('updated_at'):
+                server_dict['updated_at'] = server_dict['updated_at'].isoformat()
+            serialized_servers.append(server_dict)
+
         return MCPServersListResponse(
             success=True,
-            servers=servers or []
+            servers=serialized_servers
         )
 
     except Exception as e:

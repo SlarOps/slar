@@ -2006,11 +2006,16 @@ class APIClient {
 
   /**
    * Get MCP servers from AI backend
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} MCP servers result
    */
-  async getMCPServers(projectId = null) {
+  async getMCPServers(filters = {}) {
     const params = new URLSearchParams();
-    if (projectId) params.append('project_id', projectId);
+
+    // ReBAC: org_id MANDATORY, project_id optional
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
     const queryString = params.toString();
     return this.request(`/api/mcp-servers${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
   }
@@ -2019,16 +2024,23 @@ class APIClient {
    * Save MCP server to AI backend
    * @param {string} serverName - Server name
    * @param {object} config - Server configuration
-   * @param {string} [projectId] - Project ID (optional)
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} Save result
    */
-  async saveMCPServer(serverName, config, projectId = null) {
-    return this.request('/api/mcp-servers', {
+  async saveMCPServer(serverName, config, filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id MANDATORY
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers${queryString ? `?${queryString}` : ''}`, {
       method: 'POST',
       body: JSON.stringify({
         server_name: serverName,
-        ...config,
-        ...(projectId && { project_id: projectId })
+        project_id: filters.project_id,
+        ...config
       })
     }, this.aiBaseURL);
   }
@@ -2036,12 +2048,16 @@ class APIClient {
   /**
    * Delete MCP server from AI backend
    * @param {string} serverName - Server name
-   * @param {string} [projectId] - Project ID (optional)
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} Delete result
    */
-  async deleteMCPServer(serverName, projectId = null) {
+  async deleteMCPServer(serverName, filters = {}) {
     const params = new URLSearchParams();
-    if (projectId) params.append('project_id', projectId);
+
+    // ReBAC: org_id MANDATORY, project_id optional
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
     const queryString = params.toString();
     return this.request(`/api/mcp-servers/${serverName}${queryString ? `?${queryString}` : ''}`, {
       method: 'DELETE'
@@ -2391,6 +2407,107 @@ class APIClient {
     return this.request(`/conversations/${conversationId}/shares/${shareId}`, {
       method: 'DELETE'
     });
+  }
+
+  // ===========================
+  // SKILL REPOSITORIES (Option 1B)
+  // ===========================
+
+  /**
+   * Add a skill repository (clone and discover skills)
+   * @param {object} repo - Repository config
+   * @param {string} repo.repository_url - GitHub URL
+   * @param {string} [repo.branch] - Branch name (default: main)
+   * @param {string} [repo.credential_name] - Credential for private repos
+   * @returns {Promise<{success: boolean, repository: object, skills_count: number}>}
+   */
+  async addSkillRepository(repo) {
+    return this.request('/api/skills/add-repository', {
+      method: 'POST',
+      body: JSON.stringify(repo)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * List all skill repositories for current user
+   * @returns {Promise<{success: boolean, repositories: Array}>}
+   */
+  async getSkillRepositories() {
+    return this.request('/api/skills/repositories', {}, this.aiBaseURL);
+  }
+
+  /**
+   * List installed skills
+   * @param {string} [repositoryName] - Optional filter by repository
+   * @returns {Promise<{success: boolean, skills: Array}>}
+   */
+  async getInstalledSkills(repositoryName = null) {
+    const params = repositoryName ? `?repository_name=${encodeURIComponent(repositoryName)}` : '';
+    return this.request(`/api/skills/installed${params}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Install an individual skill
+   * @param {object} skill - Skill install config
+   * @param {string} skill.skill_name - Skill name
+   * @param {string} skill.repository_name - Repository name
+   * @param {string} skill.skill_path - Path to SKILL.md
+   * @param {string} [skill.version] - Skill version
+   * @returns {Promise<{success: boolean, skill: object}>}
+   */
+  async installSkill(skill) {
+    return this.request('/api/skills/install', {
+      method: 'POST',
+      body: JSON.stringify(skill)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Uninstall a skill
+   * @param {string} skillId - Installed skill ID (UUID)
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async uninstallSkill(skillId) {
+    return this.request(`/api/skills/uninstall/${skillId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Update skill repository (git fetch)
+   * @param {string} repositoryName - Repository name
+   * @returns {Promise<{success: boolean, had_changes: boolean}>}
+   */
+  async updateSkillRepository(repositoryName) {
+    return this.request('/api/skills/update', {
+      method: 'POST',
+      body: JSON.stringify({ repository_name: repositoryName })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete skill repository and all installed skills
+   * @param {string} repositoryName - Repository name
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async deleteSkillRepository(repositoryName) {
+    return this.request(`/api/skills/repositories/${encodeURIComponent(repositoryName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Install single skill directly from GitHub URL (sparse checkout)
+   * @param {object} options - Install options
+   * @param {string} options.skill_url - GitHub URL to skill folder
+   * @param {string} [options.credential_name] - Credential for private repos
+   * @returns {Promise<{success: boolean, skill: object}>}
+   */
+  async installSkillFromUrl(options) {
+    return this.request('/api/skills/install-from-url', {
+      method: 'POST',
+      body: JSON.stringify(options)
+    }, this.aiBaseURL);
   }
 }
 

@@ -15,6 +15,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict
+from config import config
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -85,6 +86,8 @@ from routes_mcp import router as mcp_router
 from routes_tools import router as tools_router
 from routes_memory import router as memory_router
 from routes_marketplace import router as marketplace_router
+from routes_skills import router as skills_router
+from routes_skills_direct import router as skills_direct_router
 from incident_analytics import start_pgmq_consumer, stop_pgmq_consumer
 
 # Configure logging
@@ -480,6 +483,12 @@ logger.info("[Memory] Memory routes loaded from routes_memory.py")
 
 app.include_router(marketplace_router)
 logger.info("[Marketplace] Marketplace routes loaded from routes_marketplace.py")
+
+app.include_router(skills_router)
+logger.info("[Skills] Skill repository routes loaded from routes_skills.py")
+
+app.include_router(skills_direct_router)
+logger.info("[Skills Direct] Direct skill installation routes loaded from routes_skills_direct.py")
 
 # Import and include Credential routes
 from routes_credentials import router as credentials_router
@@ -1217,6 +1226,8 @@ async def agent_task_streaming(
         agent_env = {}
         if context["user_id"]:
             agent_env = load_exported_credentials(context["user_id"], project_id=context.get("project_id"))
+        
+        system_prompt = config.ai_agent_system_prompt
 
         options = ClaudeAgentOptions(
             can_use_tool=permission_callback,
@@ -1230,6 +1241,7 @@ async def agent_task_streaming(
             allowed_tools=allowed_tools,
             hooks=actual_hooks_config,
             env=agent_env,
+            system_prompt=system_prompt,
         )
 
         print(f"🚀 Agent options: {options}")
@@ -1540,6 +1552,8 @@ async def agent_task(
             agent_env = {}
             if user_id:
                 agent_env = load_exported_credentials(user_id, project_id=current_project_id)
+            
+            system_prompt = config.ai_agent_system_prompt
 
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
@@ -1552,7 +1566,8 @@ async def agent_task(
                 setting_sources=["project"],
                 allowed_tools=allowed_tools,
                 hooks=actual_hooks_config,  # Audit hooks with org_id/project_id
-                env=agent_env if agent_env else None,
+                env=agent_env,
+                system_prompt=system_prompt,
             )
             async with ClaudeSDKClient(options) as client:
                 logger.info("\n📝 Sending query to Claude...")

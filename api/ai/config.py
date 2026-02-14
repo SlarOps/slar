@@ -81,6 +81,11 @@ class Config:
         # AI Analytics
         self.ai_analytics: Optional[AIAnalyticsConfig] = None
 
+        # AI Agent System Prompt
+        self.ai_agent_system_prompt: Optional[str] = """
+        You are an expert SRE agent.
+        """
+
         # Load configuration
         self._load_config()
 
@@ -144,6 +149,11 @@ class Config:
         # AI Analytics
         ai_analytics_dict = config_dict.get("ai_incident_analytics", {})
         self.ai_analytics = AIAnalyticsConfig(ai_analytics_dict)
+
+        # AI Agent System Prompt
+        self.ai_agent_system_prompt = os.getenv("AI_AGENT_SYSTEM_PROMPT") or config_dict.get("ai_agent_system_prompt", """
+        You are an expert SRE agent.
+        """)
 
         # Log what was loaded
         self._log_config()

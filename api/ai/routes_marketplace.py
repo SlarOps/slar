@@ -588,6 +588,16 @@ async def clone_marketplace(request: Request):
         repo_url = build_github_url(owner, repo)
         repository_url = f"https://github.com/{owner}/{repo}"
 
+        # If target directory exists, remove it first
+        # This handles cases like:
+        # - Clone succeeded but DB insert failed
+        # - Volume data loss requiring re-sync
+        # - Manual cleanup needed
+        if marketplace_dir.exists():
+            import shutil
+            logger.warning(f"Target directory exists, removing: {marketplace_dir}")
+            shutil.rmtree(marketplace_dir)
+
         logger.info(f"Cloning {repo_url} -> {marketplace_dir}" + (f" (credential: {credential_name})" if credential_name else ""))
 
         # Clone the repository (with automatic Vault credential injection if available)

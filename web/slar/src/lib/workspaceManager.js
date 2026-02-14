@@ -214,13 +214,18 @@ export async function getMCPConfig(userId) {
 /**
  * Get MCP servers from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, config: object, error?: string}>}
  */
-export async function getMCPServersFromDB(userId, projectId) {
+export async function getMCPServersFromDB(userId, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL', { projectId });
+    console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL', { orgId, projectId });
 
-    const result = await apiClient.getMCPServers(projectId);
+    const result = await apiClient.getMCPServers({
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get MCP servers');
@@ -257,13 +262,18 @@ export async function getMCPServersFromDB(userId, projectId) {
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} serverName - Server name
  * @param {object} serverConfig - Server configuration
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, server?: object, error?: string}>}
  */
-export async function saveMCPServerToDB(userId, serverName, serverConfig, projectId) {
+export async function saveMCPServerToDB(userId, serverName, serverConfig, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig, projectId });
+    console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig, orgId, projectId });
 
-    const result = await apiClient.saveMCPServer(serverName, serverConfig, projectId);
+    const result = await apiClient.saveMCPServer(serverName, serverConfig, {
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save MCP server');
@@ -281,13 +291,18 @@ export async function saveMCPServerToDB(userId, serverName, serverConfig, projec
  * Delete MCP server from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} serverName - Server name to delete
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, message?: string, error?: string}>}
  */
-export async function deleteMCPServerFromDB(userId, serverName, projectId) {
+export async function deleteMCPServerFromDB(userId, serverName, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', { serverName, projectId });
+    console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', { serverName, orgId, projectId });
 
-    const result = await apiClient.deleteMCPServer(serverName, projectId);
+    const result = await apiClient.deleteMCPServer(serverName, {
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete MCP server');

@@ -23,7 +23,7 @@ import MCPServerDetailModal from './MCPServerDetailModal';
 
 export default function MCPServersTab() {
   const { session } = useAuth();
-  const { currentProject } = useOrg();
+  const { currentOrg, currentProject } = useOrg();
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,12 +35,12 @@ export default function MCPServersTab() {
   const [selectedServer, setSelectedServer] = useState(null);
 
   const loadMCPServers = async () => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !currentOrg?.id) return;
 
     setLoading(true);
     try {
       // Load from PostgreSQL (instant, no S3 lag!)
-      const result = await getMCPServersFromDB(session.user.id, currentProject?.id);
+      const result = await getMCPServersFromDB(session.user.id, currentOrg.id, currentProject?.id);
       if (result.success && result.config) {
         // Convert mcpServers object to array
         const serversArray = Object.entries(result.config.mcpServers || {}).map(([name, config]) => ({
@@ -62,18 +62,18 @@ export default function MCPServersTab() {
 
   useEffect(() => {
     loadMCPServers();
-  }, [session, currentProject]);
+  }, [session, currentOrg, currentProject]);
 
 
   const handleToggleServer = async (serverName) => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !currentOrg?.id) return;
 
     try {
       const server = servers.find(s => s.name === serverName);
 
       if (server.enabled) {
         // Remove server (disable) - delete from PostgreSQL
-        const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentProject?.id);
+        const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentOrg.id, currentProject?.id);
         if (deleteResult.success) {
           // Remove from UI
           setServers(servers.filter(s => s.name !== serverName));
@@ -95,7 +95,7 @@ export default function MCPServersTab() {
           })
         };
 
-        const saveResult = await saveMCPServerToDB(session.user.id, serverName, serverConfig, currentProject?.id);
+        const saveResult = await saveMCPServerToDB(session.user.id, serverName, serverConfig, currentOrg.id, currentProject?.id);
         if (saveResult.success) {
           setServers(servers.map(s =>
             s.name === serverName ? { ...s, enabled: true } : s
@@ -112,12 +112,12 @@ export default function MCPServersTab() {
   };
 
   const handleDeleteServer = async (serverName) => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !currentOrg?.id) return;
     if (!confirm('Are you sure you want to remove this MCP server?')) return;
 
     try {
       // Delete from PostgreSQL (instant, no S3 lag!)
-      const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentProject?.id);
+      const deleteResult = await deleteMCPServerFromDB(session.user.id, serverName, currentOrg.id, currentProject?.id);
       if (deleteResult.success) {
         setServers(servers.filter(s => s.name !== serverName));
         toast.success('Server removed successfully');
@@ -299,6 +299,7 @@ export default function MCPServersTab() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         mode="create"
+        orgId={currentOrg?.id}
         projectId={currentProject?.id}
         onServerCreated={handleServerCreated}
       />
@@ -311,6 +312,7 @@ export default function MCPServersTab() {
         }}
         mode="edit"
         server={selectedServer}
+        orgId={currentOrg?.id}
         projectId={currentProject?.id}
         onServerUpdated={handleServerUpdated}
       />
