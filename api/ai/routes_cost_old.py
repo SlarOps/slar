@@ -1,20 +1,30 @@
-"""
-Cost tracking routes for AI Agent API (REFACTORED with dependency injection).
-Provides endpoints to query and export AI cost logs (project-scoped).
-"""
-
 import io
 import csv
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from dependencies import require_project_context, AuthContext
-from database_util import execute_query
+from database_util import execute_query, resolve_user_id_from_token
 
 router = APIRouter()
+
+
+def _get_user_id_from_request(request: Request) -> tuple:
+    """Extract user_id from Authorization header"""
+    auth_token = request.headers.get("authorization", "")
+    if not auth_token:
+        return None, {"success": False, "error": "Missing Authorization header"}
+
+    if auth_token.lower().startswith("bearer "):
+        auth_token = auth_token[7:]
+
+    user_id = resolve_user_id_from_token(auth_token)
+    if not user_id:
+        return None, {"success": False, "error": "Invalid token"}
+
+    return user_id, None
 
 
 def _parse_time_range(time_range: str) -> tuple:
@@ -36,28 +46,25 @@ def _parse_time_range(time_range: str) -> tuple:
 
 
 @router.get("/api/cost-logs")
-async def get_cost_logs(
-    ctx: AuthContext = Depends(require_project_context),
-    model: Optional[str] = None,
-    time_range: str = "24h",
-    limit: int = 50,
-    offset: int = 0,
-):
-    """
-    Get cost logs with filtering and pagination (project-scoped).
+async def get_cost_logs(request: Request):
+    """Get cost logs with filtering and pagination (project-scoped)"""
+    user_id, error = _get_user_id_from_request(request)
+    if error:
+        return error
 
-    Requires both org_id and project_id (enforced by dependency).
+    # Query parameters
+    org_id = request.query_params.get("org_id")
+    project_id = request.query_params.get("project_id")
+    model = request.query_params.get("model")
+    time_range = request.query_params.get("time_range", "24h")
+    limit = min(int(request.query_params.get("limit", 50)), 500)
+    offset = int(request.query_params.get("offset", 0))
 
-    Query Parameters:
-    - org_id: Organization ID (required)
-    - project_id: Project ID (required - cost logs are project-scoped)
-    - model: Filter by model name (optional)
-    - time_range: Time range (1h, 24h, 7d, 30d) - default 24h
-    - limit: Max results (default 50, max 500)
-    - offset: Pagination offset
-    """
-    # Limit to max 500
-    limit = min(limit, 500)
+    # ReBAC: Require org_id and project_id (project-scoped like credentials)
+    if not org_id:
+        return {"success": False, "error": "org_id is required"}
+    if not project_id:
+        return {"success": False, "error": "project_id is required (cost logs are project-scoped)"}
 
     # TODO: Add authorization check - verify user has access to this project
     # For now, trust that frontend sends correct project_id
@@ -65,7 +72,7 @@ async def get_cost_logs(
 
     # Build query conditions - show ALL costs for the project (not filtered by user)
     conditions = ["org_id = %s", "project_id = %s"]
-    params = [ctx.org_id, ctx.project_id]
+    params = [org_id, project_id]
 
     # Model filter
     if model:
@@ -124,31 +131,28 @@ async def get_cost_logs(
 
 
 @router.get("/api/cost-logs/stats")
-async def get_cost_stats(
-    ctx: AuthContext = Depends(require_project_context),
-    time_range: str = "24h",
-):
-    """
-    Get cost statistics (project-scoped).
+async def get_cost_stats(request: Request):
+    """Get cost statistics (project-scoped)"""
+    user_id, error = _get_user_id_from_request(request)
+    if error:
+        return error
 
-    Requires both org_id and project_id (enforced by dependency).
+    # Query parameters
+    org_id = request.query_params.get("org_id")
+    project_id = request.query_params.get("project_id")
+    time_range = request.query_params.get("time_range", "24h")
 
-    Query Parameters:
-    - org_id: Organization ID (required)
-    - project_id: Project ID (required - cost logs are project-scoped)
-    - time_range: Time range (1h, 24h, 7d, 30d) - default 24h
+    # ReBAC: Require org_id and project_id (project-scoped like credentials)
+    if not org_id:
+        return {"success": False, "error": "org_id is required"}
+    if not project_id:
+        return {"success": False, "error": "project_id is required (cost logs are project-scoped)"}
 
-    Returns:
-    - Overall stats (total cost, requests, tokens)
-    - Cost by model
-    - Cost by user
-    - Daily breakdown
-    """
     # TODO: Add authorization check - verify user has access to this project
 
     # Build conditions - aggregate ALL costs for the project (not filtered by user)
     conditions = ["org_id = %s", "project_id = %s"]
-    params = [ctx.org_id, ctx.project_id]
+    params = [org_id, project_id]
 
     # Time range
     start_date, end_date = _parse_time_range(time_range)
@@ -235,30 +239,29 @@ async def get_cost_stats(
 
 
 @router.get("/api/cost-logs/export")
-async def export_cost_logs(
-    ctx: AuthContext = Depends(require_project_context),
-    model: Optional[str] = None,
-    time_range: str = "30d",
-):
-    """
-    Export cost logs as CSV (project-scoped).
+async def export_cost_logs(request: Request):
+    """Export cost logs as CSV (project-scoped)"""
+    user_id, error = _get_user_id_from_request(request)
+    if error:
+        return error
 
-    Requires both org_id and project_id (enforced by dependency).
+    # Query parameters (similar to get_cost_logs)
+    org_id = request.query_params.get("org_id")
+    project_id = request.query_params.get("project_id")
+    model = request.query_params.get("model")
+    time_range = request.query_params.get("time_range", "30d")
 
-    Query Parameters:
-    - org_id: Organization ID (required)
-    - project_id: Project ID (required - cost logs are project-scoped)
-    - model: Filter by model name (optional)
-    - time_range: Time range (1h, 24h, 7d, 30d) - default 30d
+    # ReBAC: Require org_id and project_id (project-scoped like credentials)
+    if not org_id:
+        return {"success": False, "error": "org_id is required"}
+    if not project_id:
+        return {"success": False, "error": "project_id is required (cost logs are project-scoped)"}
 
-    Returns:
-    - CSV file download with cost logs (max 10000 rows)
-    """
     # TODO: Add authorization check - verify user has access to this project
 
     # Build query (limit to 10000 for export) - export ALL costs for the project
     conditions = ["org_id = %s", "project_id = %s"]
-    params = [ctx.org_id, ctx.project_id]
+    params = [org_id, project_id]
 
     if model:
         conditions.append("model = %s")

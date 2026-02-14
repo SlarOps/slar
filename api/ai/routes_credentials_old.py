@@ -1,5 +1,5 @@
 """
-Generic credential management API routes (REFACTORED with dependency injection).
+Generic credential management API routes.
 
 This module provides REST API endpoints for managing credentials of various types
 (git, database, monitoring, cloud) in HashiCorp Vault.
@@ -12,14 +12,14 @@ Authorization delegates to Go API via AuthzClient (Centralized Authority):
 
 import logging
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query, status
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from dependencies import get_current_user, UserContext
 from credential_types import (
     CredentialType,
     CREDENTIAL_TYPE_METADATA,
 )
+from workspace_service import extract_user_id_from_token
 from authz.dependencies import get_authz_client
 from authz.types import Role
 import vault_client
@@ -52,7 +52,6 @@ async def _require_project_admin(user_id: str, project_id: str):
     if role not in (Role.ADMIN, Role.OWNER):
         raise HTTPException(status_code=403, detail="Only project admins can manage credentials")
 
-
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
 
@@ -71,8 +70,34 @@ class StoreCredentialRequest(BaseModel):
     export_to_agent: bool = Field(False, description="Whether to export this credential to AI agent env")
     env_mappings: Optional[Dict[str, str]] = Field(
         None,
-        description="Mapping of ENV_VAR_NAME -> json_key in credential data"
+        description="Mapping of ENV_VAR_NAME -> json_key in credential data. "
+                    "e.g. {'OPENSEARCH_USERNAME': 'username', 'OPENSEARCH_PASSWORD': 'password'}"
     )
+
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "credential_type": "generic_api_key",
+                    "credential_name": "datadog_api_key",
+                    "data": {"value": "dd-api-xxxxxxxxxx"},
+                    "description": "Datadog API key",
+                    "export_to_agent": True,
+                    "env_mappings": {"DATADOG_API_KEY": "value"}
+                },
+                {
+                    "credential_type": "generic_api_key",
+                    "credential_name": "opensearch_creds",
+                    "data": {"username": "admin", "password": "secret123"},
+                    "description": "OpenSearch credentials",
+                    "export_to_agent": True,
+                    "env_mappings": {
+                        "OPENSEARCH_USERNAME": "username",
+                        "OPENSEARCH_PASSWORD": "password"
+                    }
+                }
+            ]
+        }
 
 
 class UpdateCredentialMetadataRequest(BaseModel):
@@ -114,11 +139,6 @@ class VaultStatusResponse(BaseModel):
     vault_enabled: bool
 
 
-class GetRoleRequest(BaseModel):
-    """Request for GET /role."""
-    project_id: str = Field(..., description="Project ID")
-
-
 # ==========================================
 # API Routes
 # ==========================================
@@ -127,17 +147,15 @@ class GetRoleRequest(BaseModel):
 async def list_credential_types():
     """
     List all available credential types and their metadata.
-
+    
     Returns information about each credential type including:
     - Name and description
     - Category (git, database, monitoring, cloud, generic)
     - Required fields
     - Documentation link
-
-    No authentication required (public endpoint).
     """
     types = []
-
+    
     for cred_type in CredentialType:
         metadata = CREDENTIAL_TYPE_METADATA.get(cred_type, {})
 
@@ -149,7 +167,7 @@ async def list_credential_types():
             "description": metadata.get("description", ""),
             "doc_url": metadata.get("doc_url"),
         })
-
+    
     return CredentialTypesResponse(
         success=True,
         types=types
@@ -157,44 +175,45 @@ async def list_credential_types():
 
 
 @router.get("/role")
-async def get_credential_role(
-    project_id: str = Query(..., description="Project ID"),
-    user: UserContext = Depends(get_current_user)
-):
+async def get_credential_role(request: Request, project_id: str = None):
     """
     Get the user's role in a project for credential authorization.
 
     Returns the user's effective role (owner, admin, member, viewer)
     which determines what credential operations they can perform.
-
-    Authentication:
-    - Requires valid Authorization header
-
-    Query params:
-    - project_id: Project ID (required)
     """
-    role = await _get_project_role(user.user_id, project_id)
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    role = await _get_project_role(user_id, project_id)
     return {"success": True, "role": role}
 
 
-@router.post("", response_model=CredentialResponse, status_code=status.HTTP_201_CREATED)
-async def store_credential(
-    body: StoreCredentialRequest,
-    user: UserContext = Depends(get_current_user)
-):
+@router.post("", response_model=CredentialResponse)
+async def store_credential(request: Request, body: StoreCredentialRequest):
     """
     Store a credential in Vault (project-scoped).
 
     Requires admin or owner role in the project.
     The credential data is validated against the schema for the specified type.
     Sensitive data is stored encrypted in Vault.
-
-    Authentication:
-    - Requires valid Authorization header
-    - Requires admin or owner role in project
     """
+    # Get user ID from auth token
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not body.project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
     # ReBAC: Only admin/owner can create credentials
-    await _require_project_admin(user.user_id, body.project_id)
+    await _require_project_admin(user_id, body.project_id)
 
     # Check if Vault is available
     vault = vault_client.get_vault_client()
@@ -239,9 +258,9 @@ async def store_credential(
 
 @router.get("", response_model=CredentialListResponse)
 async def list_credentials(
-    project_id: str = Query(..., description="Project ID"),
-    credential_type: Optional[str] = Query(None, description="Filter by credential type"),
-    user: UserContext = Depends(get_current_user)
+    request: Request,
+    credential_type: Optional[str] = None,
+    project_id: Optional[str] = None
 ):
     """
     List all credentials for a project.
@@ -249,17 +268,18 @@ async def list_credentials(
     Requires any role in the project (member, viewer, admin, owner).
     Optionally filter by credential type.
     Returns only metadata, not sensitive data.
-
-    Authentication:
-    - Requires valid Authorization header
-    - Requires project access (any role)
-
-    Query params:
-    - project_id: Project ID (required)
-    - credential_type: Filter by type (optional)
     """
+    # Get user ID from auth token
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
     # ReBAC: Any project role can list credentials
-    await _require_project_access(user.user_id, project_id)
+    await _require_project_access(user_id, project_id)
 
     # Check if Vault is available
     vault = vault_client.get_vault_client()
@@ -322,10 +342,10 @@ async def list_credentials(
 
 @router.get("/{credential_type}/{credential_name}", response_model=CredentialResponse)
 async def get_credential_metadata(
+    request: Request,
     credential_type: str,
     credential_name: str,
-    project_id: str = Query(..., description="Project ID"),
-    user: UserContext = Depends(get_current_user)
+    project_id: Optional[str] = None
 ):
     """
     Get metadata for a specific credential (project-scoped).
@@ -333,20 +353,18 @@ async def get_credential_metadata(
     Requires any role in the project.
     Does NOT return sensitive data (tokens, passwords, etc.).
     Only returns non-sensitive metadata.
-
-    Authentication:
-    - Requires valid Authorization header
-    - Requires project access (any role)
-
-    Path params:
-    - credential_type: Type of credential
-    - credential_name: Name of credential
-
-    Query params:
-    - project_id: Project ID (required)
     """
+    # Get user ID from auth token
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
     # ReBAC: Any project role can view credentials
-    await _require_project_access(user.user_id, project_id)
+    await _require_project_access(user_id, project_id)
 
     # Check if Vault is available
     vault = vault_client.get_vault_client()
@@ -394,27 +412,27 @@ async def get_credential_metadata(
 
 @router.patch("/{credential_type}/{credential_name}", response_model=CredentialResponse)
 async def update_credential_metadata(
+    request: Request,
     credential_type: str,
     credential_name: str,
-    body: UpdateCredentialMetadataRequest,
-    user: UserContext = Depends(get_current_user)
+    body: UpdateCredentialMetadataRequest
 ):
     """
     Update credential metadata (export settings) without re-submitting sensitive data.
 
     Requires admin or owner role in the project.
     Use this to toggle export_to_agent or change env_var_name.
-
-    Authentication:
-    - Requires valid Authorization header
-    - Requires admin or owner role in project
-
-    Path params:
-    - credential_type: Type of credential
-    - credential_name: Name of credential
     """
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not body.project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
     # ReBAC: Only admin/owner can update credentials
-    await _require_project_admin(user.user_id, body.project_id)
+    await _require_project_admin(user_id, body.project_id)
 
     vault = vault_client.get_vault_client()
     if not vault.is_available():
@@ -478,30 +496,28 @@ async def update_credential_metadata(
 
 @router.delete("/{credential_type}/{credential_name}", response_model=CredentialResponse)
 async def delete_credential(
+    request: Request,
     credential_type: str,
     credential_name: str,
-    project_id: str = Query(..., description="Project ID"),
-    user: UserContext = Depends(get_current_user)
+    project_id: Optional[str] = None
 ):
     """
     Delete a credential from Vault (project-scoped).
 
     Requires admin or owner role in the project.
     This permanently removes the credential and all its versions.
-
-    Authentication:
-    - Requires valid Authorization header
-    - Requires admin or owner role in project
-
-    Path params:
-    - credential_type: Type of credential
-    - credential_name: Name of credential
-
-    Query params:
-    - project_id: Project ID (required)
     """
+    # Get user ID from auth token
+    auth_token = request.headers.get("authorization", "")
+    user_id = extract_user_id_from_token(auth_token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
     # ReBAC: Only admin/owner can delete credentials
-    await _require_project_admin(user.user_id, project_id)
+    await _require_project_admin(user_id, project_id)
 
     # Check if Vault is available
     vault = vault_client.get_vault_client()
@@ -535,13 +551,11 @@ async def delete_credential(
 async def get_vault_status():
     """
     Check Vault connection status.
-
+    
     Returns whether Vault is available and configured.
-
-    No authentication required (public endpoint).
     """
     vault = vault_client.get_vault_client()
-
+    
     return VaultStatusResponse(
         success=True,
         vault_available=vault.is_available(),

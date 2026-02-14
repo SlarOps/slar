@@ -1,5 +1,5 @@
 """
-Allowed tools routes for AI Agent API.
+Allowed tools routes for AI Agent API (REFACTORED with dependency injection).
 
 Handles:
 - GET /api/allowed-tools - List allowed tools
@@ -8,131 +8,158 @@ Handles:
 """
 
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
+from dependencies import get_current_user, UserContext
 from workspace_service import (
     get_user_allowed_tools,
     add_user_allowed_tool,
     delete_user_allowed_tool,
 )
-from database_util import resolve_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["tools"])
 
 
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """Sanitize error messages to prevent information disclosure."""
-    logger.error(f"Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
-    return f"An error occurred {context}. Please try again."
+# ============================================================================
+# Pydantic Schemas
+# ============================================================================
+
+class AddToolRequest(BaseModel):
+    """Request to add an allowed tool."""
+    tool_name: str = Field(..., description="Name of the tool to allow")
 
 
-@router.post("/allowed-tools")
-async def add_allowed_tool(request: Request):
+class ToolsListResponse(BaseModel):
+    """Response for GET /allowed-tools."""
+    success: bool
+    tools: list[str]
+
+
+class ToolActionResponse(BaseModel):
+    """Response for POST/DELETE /allowed-tools."""
+    success: bool
+    message: str
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
+
+@router.post("/allowed-tools", response_model=ToolActionResponse)
+async def add_allowed_tool(
+    body: AddToolRequest,
+    user: UserContext = Depends(get_current_user)
+):
     """
     Add a tool to the user's allowed tools list.
 
+    Authentication:
+    - Requires valid Authorization header with Bearer token
+
     Request body:
-        {
-            "auth_token": "Bearer ...",
-            "tool_name": "tool_name"
-        }
+    - tool_name: Name of the tool to allow
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
     try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        tool_name = body.get("tool_name")
-
-        if not auth_token:
-            return {"success": False, "message": "Missing auth_token"}
-
-        if not tool_name:
-            return {"success": False, "message": "Missing tool_name"}
-
-        user_id = resolve_user_id_from_token(auth_token)
-
-        if not user_id:
-            return {"success": False, "message": "Invalid auth_token"}
-
-        success = await add_user_allowed_tool(user_id, tool_name)
+        success = await add_user_allowed_tool(user.user_id, body.tool_name)
 
         if success:
-            return {"success": True, "message": f"Tool {tool_name} added to allowed list"}
+            return ToolActionResponse(
+                success=True,
+                message=f"Tool {body.tool_name} added to allowed list"
+            )
         else:
-            return {"success": False, "message": "Failed to add tool to allowed list"}
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to add tool to allowed list"
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"success": False, "message": sanitize_error_message(e, "adding allowed tool")}
+        logger.error(f"Error adding allowed tool for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred adding allowed tool. Please try again."
+        )
 
 
-@router.get("/allowed-tools")
-async def get_allowed_tools(request: Request):
+@router.get("/allowed-tools", response_model=ToolsListResponse)
+async def get_allowed_tools(
+    user: UserContext = Depends(get_current_user)
+):
     """
     Get list of allowed tools for the user.
 
-    Query params:
-        auth_token: Bearer token
+    Authentication:
+    - Requires valid Authorization header with Bearer token
 
     Returns:
-        {"success": bool, "tools": [str]}
+    - List of allowed tool names
     """
     try:
-        # SECURITY: Only accept token from Authorization header, not URL query params
-        auth_token = request.headers.get("authorization", "")
+        allowed_tools = await get_user_allowed_tools(user.user_id)
 
-        if not auth_token:
-            return {"success": False, "error": "Missing Authorization header"}
-
-        user_id = resolve_user_id_from_token(auth_token)
-
-        if not user_id:
-            return {"success": False, "error": "Invalid auth_token"}
-
-        allowed_tools = await get_user_allowed_tools(user_id)
-        return {"success": True, "tools": allowed_tools}
+        return ToolsListResponse(
+            success=True,
+            tools=allowed_tools
+        )
 
     except Exception as e:
-        return {"success": False, "error": sanitize_error_message(e, "getting allowed tools")}
+        logger.error(f"Error getting allowed tools for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred getting allowed tools. Please try again."
+        )
 
 
-@router.delete("/allowed-tools")
-async def remove_allowed_tool(request: Request):
+@router.delete("/allowed-tools", response_model=ToolActionResponse)
+async def remove_allowed_tool(
+    tool_name: str,
+    user: UserContext = Depends(get_current_user)
+):
     """
     Remove a tool from the user's allowed tools list.
 
+    Authentication:
+    - Requires valid Authorization header with Bearer token
+
     Query params:
-        auth_token: Bearer token
-        tool_name: Name of tool to remove
+    - tool_name: Name of tool to remove
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
+    if not tool_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing tool_name query parameter"
+        )
+
     try:
-        # SECURITY: Only accept token from Authorization header, not URL query params
-        auth_token = request.headers.get("authorization", "")
-        tool_name = request.query_params.get("tool_name")
-
-        if not auth_token:
-            return {"success": False, "message": "Missing Authorization header"}
-
-        if not tool_name:
-            return {"success": False, "message": "Missing tool_name"}
-
-        user_id = resolve_user_id_from_token(auth_token)
-
-        if not user_id:
-            return {"success": False, "message": "Invalid auth_token"}
-
-        success = await delete_user_allowed_tool(user_id, tool_name)
+        success = await delete_user_allowed_tool(user.user_id, tool_name)
 
         if success:
-            return {"success": True, "message": f"Tool {tool_name} removed from allowed list"}
+            return ToolActionResponse(
+                success=True,
+                message=f"Tool {tool_name} removed from allowed list"
+            )
         else:
-            return {"success": False, "message": "Failed to remove tool from allowed list"}
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to remove tool from allowed list"
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"success": False, "message": sanitize_error_message(e, "removing allowed tool")}
+        logger.error(f"Error removing allowed tool for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred removing allowed tool. Please try again."
+        )

@@ -1,5 +1,5 @@
 """
-MCP Server management routes for AI Agent API.
+MCP Server management routes for AI Agent API (REFACTORED with dependency injection).
 
 Handles:
 - GET /api/mcp-servers - List all MCP servers
@@ -9,92 +9,140 @@ Handles:
 
 import json
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 
-from database_util import execute_query, resolve_user_id_from_token
+from dependencies import require_org_context, AuthContext
+from database_util import execute_query
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["mcp"])
 
 
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """Sanitize error messages to prevent information disclosure."""
-    logger.error(f"Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
-    return f"An error occurred {context}. Please try again."
+# ============================================================================
+# Pydantic Schemas (Request/Response Models)
+# ============================================================================
+
+class MCPServerResponse(BaseModel):
+    """MCP Server model for API responses."""
+    id: Optional[str] = None
+    server_name: str
+    server_type: str
+    status: str
+    command: Optional[str] = None
+    args: Optional[List[str]] = None
+    env: Optional[Dict[str, str]] = None
+    url: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    project_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
-@router.get("/mcp-servers")
-async def get_mcp_servers(request: Request):
+class CreateMCPServerRequest(BaseModel):
+    """Request body for creating/updating MCP server."""
+    server_name: str = Field(..., description="Unique name for the MCP server")
+    server_type: str = Field(..., description="Server type: stdio, sse, or http")
+
+    # stdio server fields
+    command: Optional[str] = Field(None, description="Command for stdio server (required for stdio)")
+    args: Optional[List[str]] = Field(default_factory=list, description="Command arguments")
+    env: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables")
+
+    # sse/http server fields
+    url: Optional[str] = Field(None, description="URL for sse/http server (required for sse/http)")
+    headers: Optional[Dict[str, str]] = Field(default_factory=dict, description="HTTP headers")
+
+    # Optional project scoping
+    project_id: Optional[str] = Field(None, description="Project ID to scope this server to")
+
+
+class MCPServersListResponse(BaseModel):
+    """Response for GET /mcp-servers."""
+    success: bool
+    servers: List[MCPServerResponse]
+
+
+class MCPServerCreateResponse(BaseModel):
+    """Response for POST /mcp-servers."""
+    success: bool
+    server: MCPServerResponse
+
+
+class MCPServerDeleteResponse(BaseModel):
+    """Response for DELETE /mcp-servers/{server_name}."""
+    success: bool
+    message: str
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
+
+@router.get("/mcp-servers", response_model=MCPServersListResponse)
+async def get_mcp_servers(
+    ctx: AuthContext = Depends(require_org_context)
+):
     """
     Get all MCP servers for current user from PostgreSQL.
 
-    Query params:
-        auth_token: Bearer token (or from Authorization header)
+    Authentication:
+    - Requires valid Authorization header with Bearer token
+    - Requires org_id for tenant isolation
+
+    Query params (via dependency):
+    - org_id: Organization ID (REQUIRED)
+    - project_id: Optional - filter by specific project
 
     Returns:
-        {
-            "success": bool,
-            "servers": [
-                {
-                    "id": "uuid",
-                    "server_name": "context7",
-                    "command": "npx",
-                    "args": ["-y", "@uptudev/mcp-context7"],
-                    "env": {},
-                    "status": "active"
-                }
-            ]
-        }
+    - List of MCP servers accessible to user
+    - If project_id provided: returns project servers
+    - If no project_id: returns personal servers (project_id IS NULL)
     """
     try:
-        # SECURITY: Only accept token from Authorization header, not URL query params
-        auth_token = request.headers.get("authorization", "")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing Authorization header"}
-
-        user_id = resolve_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token or failed to resolve user"}
-
-        project_id = request.query_params.get("project_id")
-        
-        # If project_id provided, fetch project servers
-        if project_id:
-            # TODO: Verify user is member of project (for now assuming if they have valid token they can access)
+        # Project-scoped servers
+        if ctx.project_id:
             servers = execute_query(
                 """
                 SELECT * FROM user_mcp_servers
                 WHERE project_id = %s
                 ORDER BY created_at DESC
                 """,
-                (project_id,),
+                (ctx.project_id,),
                 fetch="all"
             )
+        # Personal servers only (legacy behavior)
         else:
-            # Fetch personal servers only (legacy behavior)
             servers = execute_query(
                 """
                 SELECT * FROM user_mcp_servers
                 WHERE user_id = %s AND project_id IS NULL
                 ORDER BY created_at DESC
                 """,
-                (user_id,),
+                (ctx.user_id,),
                 fetch="all"
             )
 
-        return {"success": True, "servers": servers or []}
+        return MCPServersListResponse(
+            success=True,
+            servers=servers or []
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting MCP servers")
-        }
+        logger.error(f"Error getting MCP servers for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred getting MCP servers. Please try again."
+        )
 
 
-@router.post("/mcp-servers")
-async def create_mcp_server(request: Request):
+@router.post("/mcp-servers", response_model=MCPServerCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_mcp_server(
+    request: CreateMCPServerRequest,
+    ctx: AuthContext = Depends(require_org_context)
+):
     """
     Create or update MCP server configuration.
 
@@ -103,85 +151,60 @@ async def create_mcp_server(request: Request):
     2. sse (server-sent events): Requires url field
     3. http (HTTP API): Requires url field
 
-    Request body (stdio):
-        {
-            "auth_token": "Bearer ...",
-            "server_name": "context7",
-            "server_type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@uptudev/mcp-context7"],
-            "env": {"API_KEY": "..."}
-        }
+    Authentication:
+    - Requires valid Authorization header
+    - Requires org_id for tenant isolation
 
-    Request body (sse/http):
-        {
-            "auth_token": "Bearer ...",
-            "server_name": "remote-api",
-            "server_type": "sse",
-            "url": "https://api.example.com/mcp/sse",
-            "headers": {"Authorization": "Bearer ${API_TOKEN}"}
-        }
+    Request body:
+    - See CreateMCPServerRequest schema
 
     Returns:
-        {"success": bool, "server": {...}}
+    - Created/updated server configuration
     """
     try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        server_name = body.get("server_name")
-        server_type = body.get("server_type", "stdio")
+        # Validate server type
+        if request.server_type not in ["stdio", "sse", "http"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid server_type: {request.server_type}. Must be 'stdio', 'sse', or 'http'"
+            )
 
-        if not auth_token or not server_name:
-            return {
-                "success": False,
-                "error": "Missing required fields: auth_token, server_name",
-            }
+        # Validate required fields per server type
+        if request.server_type == "stdio":
+            if not request.command:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Missing required field for stdio server: command"
+                )
+        else:  # sse or http
+            if not request.url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Missing required field for {request.server_type} server: url"
+                )
 
-        if server_type not in ["stdio", "sse", "http"]:
-            return {
-                "success": False,
-                "error": f"Invalid server_type: {server_type}. Must be 'stdio', 'sse', or 'http'",
-            }
+        # Use project_id from request body, or fallback to context
+        final_project_id = request.project_id or ctx.project_id
 
-        if server_type == "stdio":
-            command = body.get("command")
-            if not command:
-                return {
-                    "success": False,
-                    "error": "Missing required field for stdio server: command",
-                }
-        else:
-            url = body.get("url")
-            if not url:
-                return {
-                    "success": False,
-                    "error": f"Missing required field for {server_type} server: url",
-                }
-
-        project_id = body.get("project_id")
-
-        user_id = resolve_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token or failed to resolve user"}
-
+        # Build server record
         server_record = {
-            "user_id": user_id,
-            "project_id": project_id,
-            "server_name": server_name,
-            "server_type": server_type,
+            "user_id": ctx.user_id,
+            "project_id": final_project_id,
+            "server_name": request.server_name,
+            "server_type": request.server_type,
             "status": "active",
         }
 
-        if server_type == "stdio":
-            server_record["command"] = body.get("command")
-            server_record["args"] = body.get("args", [])
-            server_record["env"] = body.get("env", {})
+        if request.server_type == "stdio":
+            server_record["command"] = request.command
+            server_record["args"] = request.args
+            server_record["env"] = request.env
         else:
-            server_record["url"] = body.get("url")
-            server_record["headers"] = body.get("headers", {})
+            server_record["url"] = request.url
+            server_record["headers"] = request.headers
 
         # Construct INSERT query based on whether project_id is present
-        if project_id:
+        if final_project_id:
             # Project server
             query = """
                 INSERT INTO user_mcp_servers (user_id, project_id, server_name, server_type, status, command, args, env, url, headers)
@@ -197,10 +220,10 @@ async def create_mcp_server(request: Request):
                     updated_at = NOW()
             """
             params = (
-                user_id,
-                project_id,
-                server_name,
-                server_type,
+                ctx.user_id,
+                final_project_id,
+                request.server_name,
+                request.server_type,
                 "active",
                 server_record.get("command"),
                 json.dumps(server_record.get("args", [])),
@@ -224,9 +247,9 @@ async def create_mcp_server(request: Request):
                     updated_at = NOW()
             """
             params = (
-                user_id,
-                server_name,
-                server_type,
+                ctx.user_id,
+                request.server_name,
+                request.server_type,
                 "active",
                 server_record.get("command"),
                 json.dumps(server_record.get("args", [])),
@@ -237,72 +260,78 @@ async def create_mcp_server(request: Request):
 
         execute_query(query, params, fetch="none")
 
-        logger.info(f"Saved MCP server ({server_type}): {server_name} for user {user_id} (project: {project_id})")
+        logger.info(
+            f"Saved MCP server ({request.server_type}): {request.server_name} "
+            f"for user {ctx.user_id} (project: {final_project_id})"
+        )
 
-        return {
-            "success": True,
-            "server": server_record,
-        }
+        return MCPServerCreateResponse(
+            success=True,
+            server=MCPServerResponse(**server_record)
+        )
 
+    except HTTPException:
+        # Re-raise FastAPI HTTPExceptions
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "creating MCP server")
-        }
+        logger.error(f"Error creating MCP server for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred creating MCP server. Please try again."
+        )
 
 
-@router.delete("/mcp-servers/{server_name}")
-async def delete_mcp_server(server_name: str, request: Request):
+@router.delete("/mcp-servers/{server_name}", response_model=MCPServerDeleteResponse)
+async def delete_mcp_server(
+    server_name: str,
+    ctx: AuthContext = Depends(require_org_context)
+):
     """
     Delete MCP server configuration.
 
-    Path params:
-        server_name: Name of server to delete
+    Authentication:
+    - Requires valid Authorization header
+    - Requires org_id for tenant isolation
 
-    Query params:
-        auth_token: Bearer token
+    Path params:
+    - server_name: Name of server to delete
+
+    Query params (via dependency):
+    - project_id: Optional - delete project server vs personal server
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
     try:
-        # SECURITY: Only accept token from Authorization header, not URL query params
-        auth_token = request.headers.get("authorization", "")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing Authorization header"}
-
-        user_id = resolve_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token or failed to resolve user"}
-
-        project_id = request.query_params.get("project_id")
-
-        if project_id:
+        if ctx.project_id:
             # Delete project server
             # TODO: Add permission check (only project admin/owner can delete shared servers?)
             execute_query(
                 "DELETE FROM user_mcp_servers WHERE project_id = %s AND server_name = %s",
-                (project_id, server_name),
+                (ctx.project_id, server_name),
                 fetch="none"
             )
-            logger.info(f"Deleted MCP server: {server_name} for project {project_id} (by user {user_id})")
+            logger.info(
+                f"Deleted MCP server: {server_name} for project {ctx.project_id} "
+                f"(by user {ctx.user_id})"
+            )
         else:
             # Delete personal server
             execute_query(
                 "DELETE FROM user_mcp_servers WHERE user_id = %s AND project_id IS NULL AND server_name = %s",
-                (user_id, server_name),
+                (ctx.user_id, server_name),
                 fetch="none"
             )
-            logger.info(f"Deleted MCP server: {server_name} for user {user_id}")
+            logger.info(f"Deleted MCP server: {server_name} for user {ctx.user_id}")
 
-        return {
-            "success": True,
-            "message": f"Server {server_name} deleted successfully",
-        }
+        return MCPServerDeleteResponse(
+            success=True,
+            message=f"Server {server_name} deleted successfully"
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting MCP server")
-        }
+        logger.error(f"Error deleting MCP server for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred deleting MCP server. Please try again."
+        )
