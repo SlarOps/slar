@@ -15,6 +15,16 @@ credentials.json
 firebase-credentials.json
 service-account.json
 
+# Deploy config files with real credentials
+# Use *.ex.yaml or config.dev.yaml as templates
+deploy/docker/volumes/config/dev.config.yaml
+deploy/docker/volumes/config/config.yaml
+deploy/helm/slar/config.local.yaml
+deploy/helm/slar/config.prod.yaml
+deploy/helm/slar/.env.value.yaml
+deploy/helm/slar/values.local.yaml
+deploy/helm/slar/secrets.yaml
+
 # ==========================================
 # Python
 # ==========================================

@@ -1,0 +1,15 @@
+# Local environment overrides with real credentials
+.env
+.env.local
+.env.production
+
+# Real config files (use cfg.ex.yaml as template)
+volumes/config/dev.config.yaml
+volumes/config/config.yaml
+volumes/config/config.local.yaml
+
+# Dex database (auto-created at runtime)
+volumes/config/dex.db
+
+# Generated data
+volumes/data/
