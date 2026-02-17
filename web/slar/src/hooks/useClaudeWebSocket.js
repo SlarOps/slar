@@ -1,5 +1,10 @@
 /**
- * Claude WebSocket Hook - Connects to api/ai/claude_agent_api.py
+ * Claude WebSocket Hook - Connects via Control Plane Proxy
+ *
+ * Architecture:
+ * - Client → Control Plane (/ws/proxy) → AI Agent
+ * - Control Plane handles routing, health checks, and agent discovery
+ * - Supports multi-agent architecture (project-based routing)
  *
  * Features:
  * - WebSocket connection with automatic reconnection
@@ -16,16 +21,19 @@ import { getConfigSync } from '../lib/config';
 /**
  * Get WebSocket URL from runtime config
  * Falls back to current host with appropriate protocol
+ *
+ * NEW: Routes through Control Plane /ws/proxy instead of direct /ws/chat
+ * This enables multi-agent routing, health monitoring, and centralized auth
  */
 function getWsUrl() {
   const config = getConfigSync();
   if (config.aiWsUrl) {
     return config.aiWsUrl;
   }
-  // Fallback: derive from current host
-  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8002';
+  // Fallback: Use Control Plane proxy endpoint (not direct to AI Agent)
+  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8080';
   const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${protocol}://${host}/ws/chat`;
+  return `${protocol}://${host}/ws/proxy`;  // Changed from /ws/chat to /ws/proxy
 }
 
 /**
@@ -135,6 +143,7 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
 
       // Build query params
       const params = new URLSearchParams();
+      params.append('protocol', 'jwt');  // NEW: Specify protocol for Control Plane routing
       if (token) params.append('token', token);
       if (currentOrgId) params.append('org_id', currentOrgId);
       if (currentProjectId) params.append('project_id', currentProjectId);

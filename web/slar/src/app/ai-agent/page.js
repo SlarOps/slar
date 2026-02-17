@@ -44,7 +44,7 @@ function AIAgentContent() {
     syncMessage,
     syncBucket,
     retrySync
-  } = useSyncBucket(authToken, { projectId: currentProject?.id });
+  } = useSyncBucket(authToken, { projectId: currentProject?.id, orgId: currentOrg?.id });
 
   // Step 2: Use WebSocket connection (manual connect)
   const {

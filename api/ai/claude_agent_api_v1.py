@@ -6,6 +6,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx  # For Control Plane registration
+
 # Load config from YAML (unifies config with Go API)
 import config_loader
 config_loader.load_config()
@@ -133,7 +135,7 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 # Credential Export to Agent Env
 # ==========================================
 
-def load_exported_credentials(user_id: str, project_id: str = None) -> Dict[str, str]:
+async def load_exported_credentials(user_id: str, project_id: str = None) -> Dict[str, str]:
     """
     Load all credentials marked as export_to_agent=True from Vault.
 
@@ -168,20 +170,32 @@ def load_exported_credentials(user_id: str, project_id: str = None) -> Dict[str,
 
         # Try project-scoped credentials first
         if project_id:
-            credentials = vault_client.list_project_credentials(project_id)
-            for cred in credentials:
-                cred_type = cred.get("type", "")
-                cred_name = cred.get("name", "")
-
-                cred_detail = vault_client.get_project_credential(
-                    project_id=project_id,
-                    credential_type=cred_type,
-                    credential_name=cred_name
+            # SECURITY: Verify user has access to project before loading credentials
+            authz = get_authz_client()
+            role = await authz.get_project_role(user_id, project_id)
+            if not role:
+                logger.warning(
+                    f"🔒 Authorization failed: User {user_id} has no access to project {project_id}. "
+                    "Skipping project credentials."
                 )
-                if not cred_detail:
-                    continue
+                # Don't load project credentials if user has no access
+                # Continue to load user-scoped credentials only
+            else:
+                logger.info(f"✅ Authorization passed: User {user_id} has role {role} in project {project_id}")
+                credentials = vault_client.list_project_credentials(project_id)
+                for cred in credentials:
+                    cred_type = cred.get("type", "")
+                    cred_name = cred.get("name", "")
 
-                _resolve_credential_env(cred_detail, cred_name, exported_env)
+                    cred_detail = vault_client.get_project_credential(
+                        project_id=project_id,
+                        credential_type=cred_type,
+                        credential_name=cred_name
+                    )
+                    if not cred_detail:
+                        continue
+
+                    _resolve_credential_env(cred_detail, cred_name, exported_env)
 
         # Fall back to user-scoped credentials (backward compat)
         user_credentials = vault_client.list_credentials(user_id)
@@ -334,12 +348,143 @@ async def rate_limit_middleware(request: Request, call_next):
 cleanup_worker_task = None
 
 
+# ============================================================
+# Control Plane Registration Functions
+# ============================================================
+
+async def register_with_control_plane():
+    """
+    Register this agent with Control Plane on startup.
+    Agent initiates connection (outbound only) to register itself.
+
+    Registration modes:
+    - If AI_PROJECT_ID is set: Registers as project-specific (dedicated) agent
+    - If AI_PROJECT_ID is empty: Registers as org-level (default) agent
+    """
+    if not AI_ORG_ID:
+        logger.warning(
+            "⚠️  AI_ORG_ID not set - skipping CP registration. "
+            "This agent will not be discoverable by Control Plane."
+        )
+        return
+
+    # Determine scope
+    if AI_PROJECT_ID:
+        scope = f"project-specific (Project: {AI_PROJECT_ID})"
+    else:
+        scope = f"org-level default (Org: {AI_ORG_ID})"
+
+    payload = {
+        "project_id": AI_PROJECT_ID if AI_PROJECT_ID else "",  # Empty for org-level
+        "org_id": AI_ORG_ID,
+        "host": AI_HOST,
+        "port": AI_PORT,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{CONTROL_PLANE_URL}/internal/agents/register",
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(
+                f"✅ Registered with Control Plane: {result.get('message')} "
+                f"(Scope: {scope}, Org: {AI_ORG_ID})"
+            )
+    except Exception as e:
+        logger.error(f"❌ Failed to register with Control Plane: {e}")
+        raise  # Fail startup if can't register
+
+
+async def send_heartbeat():
+    """
+    Send heartbeat to Control Plane every 30 seconds.
+    This maintains the agent's "healthy" status.
+
+    Sends project_id if available (project-specific agent),
+    otherwise sends org_id (org-level agent).
+    """
+    if not AI_ORG_ID:
+        return
+
+    while True:
+        try:
+            await asyncio.sleep(30)
+
+            # Build payload based on scope
+            payload = {
+                "org_id": AI_ORG_ID,
+            }
+            if AI_PROJECT_ID:
+                payload["project_id"] = AI_PROJECT_ID
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{CONTROL_PLANE_URL}/internal/agents/heartbeat",
+                    json=payload,
+                    timeout=5.0,
+                )
+                response.raise_for_status()
+                logger.debug("💓 Heartbeat sent to Control Plane")
+        except asyncio.CancelledError:
+            logger.info("🛑 Heartbeat task cancelled")
+            break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                # CP restarted and lost registry - re-register
+                logger.warning("⚠️  Agent not registered in CP (404), attempting re-registration...")
+                try:
+                    await register_with_control_plane()
+                    logger.info("✅ Re-registered with Control Plane after restart")
+                except Exception as re_err:
+                    logger.error(f"❌ Re-registration failed: {re_err}")
+            else:
+                logger.warning(f"⚠️  Heartbeat failed: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️  Heartbeat failed: {e}")
+
+
+async def unregister_from_control_plane():
+    """
+    Unregister from Control Plane on graceful shutdown.
+    """
+    if not AI_ORG_ID:
+        return
+
+    try:
+        # Build payload based on scope
+        payload = {
+            "org_id": AI_ORG_ID,
+        }
+        if AI_PROJECT_ID:
+            payload["project_id"] = AI_PROJECT_ID
+
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{CONTROL_PLANE_URL}/internal/agents/unregister",
+                json=payload,
+                timeout=5.0,
+            )
+            logger.info("👋 Unregistered from Control Plane")
+    except Exception as e:
+        logger.warning(f"⚠️  Unregister failed (non-critical): {e}")
+
+
+# ============================================================
+# FastAPI Lifespan Management
+# ============================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI.
     Handles startup and shutdown events.
     """
+    global cp_heartbeat_task
+
     # Startup
     logger.info("🚀 Starting application...")
 
@@ -355,6 +500,14 @@ async def lifespan(app: FastAPI):
     # Initialize cost tracking service
     await init_cost_tracking_service()
     logger.info("💰 Cost tracking service initialized")
+
+    # Register with Control Plane (agent self-registration)
+    await register_with_control_plane()
+
+    # Start CP heartbeat task (if registered)
+    if AI_ORG_ID:
+        cp_heartbeat_task = asyncio.create_task(send_heartbeat())
+        logger.info("💓 CP Heartbeat task started (30s interval)")
 
     # Start PGMQ consumer for incident analytics
     await start_pgmq_consumer()
@@ -393,6 +546,19 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Stopping application...")
 
+    # Stop CP heartbeat task
+    if cp_heartbeat_task:
+        logger.info("🛑 Stopping CP heartbeat task...")
+        cp_heartbeat_task.cancel()
+        try:
+            await cp_heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✅ CP Heartbeat task stopped")
+
+    # Unregister from Control Plane
+    await unregister_from_control_plane()
+
     # Stop Slack Worker
     if slack_worker_thread and slack_worker_thread.is_alive():
         logger.info("🛑 Stopping Slack Worker...")
@@ -429,6 +595,16 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# Control Plane registration configuration
+CONTROL_PLANE_URL = os.getenv("CONTROL_PLANE_URL", "http://localhost:8080")
+AI_PROJECT_ID = os.getenv("AI_PROJECT_ID")  # REQUIRED for CP registration
+AI_ORG_ID = os.getenv("AI_ORG_ID")  # REQUIRED for CP registration
+AI_HOST = os.getenv("AI_HOST", "localhost")  # Agent host (use "ai" in Docker)
+AI_PORT = os.getenv("AI_PORT", "8002")  # Agent port
+
+# Global CP heartbeat task reference (renamed to avoid conflict with heartbeat_task function)
+cp_heartbeat_task = None
 
 # CORS middleware - Configure allowed origins from environment
 # For development: use specific localhost domains
@@ -1225,7 +1401,7 @@ async def agent_task_streaming(
         # Load exported credentials from Vault into env
         agent_env = {}
         if context["user_id"]:
-            agent_env = load_exported_credentials(context["user_id"], project_id=context.get("project_id"))
+            agent_env = await load_exported_credentials(context["user_id"], project_id=context.get("project_id"))
         
         system_prompt = config.ai_agent_system_prompt
 
@@ -1551,7 +1727,7 @@ async def agent_task(
             # Load exported credentials from Vault into env
             agent_env = {}
             if user_id:
-                agent_env = load_exported_credentials(user_id, project_id=current_project_id)
+                agent_env = await load_exported_credentials(user_id, project_id=current_project_id)
             
             system_prompt = config.ai_agent_system_prompt
 
@@ -2640,7 +2816,9 @@ if __name__ == "__main__":
     # Auto-reload can cause server restarts during file operations (like sync)
     # which leads to background tasks hanging
     reload_enabled = os.getenv("DEV_MODE", "false").lower() == "true"
+    port = int(os.getenv("AI_PORT", "8002"))
+    host = os.getenv("AI_HOST", "localhost")
 
     uvicorn.run(
-        "claude_agent_api_v1:app", host="0.0.0.0", port=8002, reload=reload_enabled
+        "claude_agent_api_v1:app", host=host, port=port, reload=reload_enabled
     )

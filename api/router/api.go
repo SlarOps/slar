@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -105,6 +106,29 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 	projectHandler := handlers.NewProjectHandler(projectService)                                                    // Project management
 	conversationShareHandler := handlers.NewConversationShareHandler(pg)                                            // Conversation sharing
 	internalAuthzHandler := handlers.NewInternalAuthzHandler(authzBackend)                                          // Internal authz for AI Agent
+
+	// AI Agent Registry - Multi-agent routing with self-registration
+	agentRegistry := services.NewAgentRegistry()
+	log.Println("✅ Agent registry initialized (agents will self-register)")
+
+	// Start background health checker - marks agents as unhealthy if no heartbeat for 90s
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			agentRegistry.MarkStaleAgentsUnhealthy(90 * time.Second)
+		}
+	}()
+	log.Println("🔄 Agent health checker started (checking every 30s)")
+
+	// AI Proxy Handler - Control Plane WebSocket Proxy
+	aiProxyHandler := handlers.NewAIProxyHandler(agentRegistry)
+
+	// AI Agent Registration Handler - For agent self-registration
+	agentRegHandler := handlers.NewAgentRegistrationHandler(agentRegistry)
+
+	// AI API Proxy Handler - Proxy HTTP API requests to AI Agent
+	aiAPIProxyHandler := handlers.NewAIAPIProxyHandler(agentRegistry)
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
@@ -208,6 +232,16 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 		internalAuthzRoutes.GET("/project/:project_id/role", internalAuthzHandler.GetProjectRole)
 		internalAuthzRoutes.POST("/check", internalAuthzHandler.CheckAccess)
 	}
+
+	// AI Agent self-registration endpoints (no auth - agents call these on startup)
+	internalAgentRoutes := r.Group("/internal/agents")
+	{
+		internalAgentRoutes.POST("/register", agentRegHandler.RegisterAgent)
+		internalAgentRoutes.POST("/heartbeat", agentRegHandler.Heartbeat)
+		internalAgentRoutes.POST("/unregister", agentRegHandler.UnregisterAgent)
+		internalAgentRoutes.GET("", agentRegHandler.ListAgents) // Admin: view all agents
+	}
+	log.Println("✅ Agent registration endpoints initialized: /internal/agents/*")
 
 	// PROTECTED ENDPOINTS (require OIDC authentication)
 	protected := r.Group("/")
@@ -609,6 +643,10 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 			c.JSON(200, gin.H{"message": "Token is valid"})
 		})
 
+		// AI Agent API Proxy (route HTTP API calls through CP)
+		protected.POST("/api/sync-bucket", aiAPIProxyHandler.ProxySyncBucket)
+		log.Println("✅ AI Agent sync-bucket proxy registered: POST /api/sync-bucket")
+
 		// MOBILE APP CONNECTION (protected - requires Supabase JWT)
 		mobileRoutes := protected.Group("/mobile")
 		{
@@ -655,6 +693,12 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 
 	// PUBLIC SHARED CONVERSATION VIEW (no auth - anyone with link can view)
 	r.GET("/shared/:token", conversationShareHandler.GetSharedConversation)
+
+	// PoC: AI PROXY WebSocket (Control Plane pattern)
+	// Route: /ws/proxy?token=xxx&org_id=xxx&project_id=xxx
+	// This proxies WebSocket connections to internal AI Agent
+	r.GET("/ws/proxy", aiProxyHandler.ProxyWebSocket)
+	log.Println("✅ AI Proxy WebSocket endpoint registered: GET /ws/proxy")
 
 	return r
 }

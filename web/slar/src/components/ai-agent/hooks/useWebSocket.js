@@ -32,11 +32,11 @@ export const useWebSocket = (session, setMessages, setIsSending) => {
       // Update sessionId state
       setSessionId(currentSessionId);
 
-      // Build WebSocket URL - Claude Agent API v1
+      // Build WebSocket URL - Routes through Control Plane proxy
       const config = getConfigSync();
-      let wsUrl = config.aiWsUrl || `/ws/chat`;
+      let wsUrl = config.aiWsUrl || `/ws/proxy?protocol=jwt`;  // Changed from /ws/chat to /ws/proxy
 
-      console.log("Connecting to Claude Agent API:", wsUrl);
+      console.log("Connecting to Control Plane proxy:", wsUrl);
       setConnectionStatus("connecting");
 
       try {

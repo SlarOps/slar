@@ -17,7 +17,7 @@
 import { useState, useCallback } from 'react';
 import { getConfigSync } from '../lib/config';
 
-export function useSyncBucket(authToken, { projectId } = {}) {
+export function useSyncBucket(authToken, { projectId, orgId } = {}) {
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'ready' | 'error'
   const [syncMessage, setSyncMessage] = useState('');
   const [syncResult, setSyncResult] = useState(null);
@@ -39,14 +39,15 @@ export function useSyncBucket(authToken, { projectId } = {}) {
       const startTime = performance.now();
 
       // SECURITY: Send token via Authorization header, not in request body
-      const aiApiUrl = getConfigSync().aiApiUrl;
-      const response = await fetch(`${aiApiUrl}/api/sync-bucket`, {
+      // Route through Control Plane proxy (not direct to AI Agent)
+      const apiUrl = getConfigSync().apiUrl;
+      const response = await fetch(`${apiUrl}/api/sync-bucket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ project_id: projectId || '' }),
+        body: JSON.stringify({ project_id: projectId || '', org_id: orgId || '' }),
         signal: AbortSignal.timeout(30000) // 30 second timeout
       });
 
@@ -102,7 +103,7 @@ export function useSyncBucket(authToken, { projectId } = {}) {
 
       return false;
     }
-  }, [authToken, projectId]);
+  }, [authToken, projectId, orgId]);
 
   /**
    * Retry sync (useful for error recovery)
