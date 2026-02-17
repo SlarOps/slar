@@ -28,55 +28,27 @@ All traffic from the browser goes through Kong on port `8000`.
 
 ### Step 1 — Configure authentication
 
-SLAR uses Dex as a built-in OIDC provider. You need to connect it to at least one identity source.
+SLAR uses standard OIDC — bring your own provider, no bundled IDP required.
 
-**Option A: Google OAuth (most common)**
-
-1. Go to [Google Cloud Console → APIs & Credentials](https://console.cloud.google.com/apis/credentials)
-2. Create **OAuth 2.0 Client ID** (Web application type)
-3. Add redirect URI: `http://localhost:5556/dex/callback`
-4. Copy Client ID and Client Secret
-
-Edit `volumes/config/dex-config.yaml` — uncomment and fill in the Google connector:
-
-```yaml
-connectors:
-  - type: google
-    id: google
-    name: Google
-    config:
-      clientID: YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com
-      clientSecret: YOUR_GOOGLE_CLIENT_SECRET
-      redirectURI: http://localhost:5556/dex/callback
-      # Optional: restrict to your company domain
-      hostedDomains:
-        - yourcompany.com
+**Register a new OIDC application** with any provider below, then set the redirect URI to:
+```
+http://localhost:8000/api/auth/callback/oidc
 ```
 
-**Option B: GitHub OAuth**
+| Provider | Sign-up / App creation |
+|----------|------------------------|
+| Cloudflare Access | [dash.cloudflare.com → Access → Applications](https://dash.cloudflare.com) |
+| Google | [console.cloud.google.com → APIs & Credentials](https://console.cloud.google.com/apis/credentials) → OAuth 2.0 Client ID |
+| Zitadel | [zitadel.com](https://zitadel.com) → New Project → New Application |
+| Auth0 | [manage.auth0.com](https://manage.auth0.com) → Applications → Create Application |
+| Okta | [developer.okta.com](https://developer.okta.com) → Applications → Create App Integration |
+| Keycloak | Admin console → Clients → Create |
 
-1. Go to [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)
-2. Create new OAuth App, set callback to: `http://localhost:5556/dex/callback`
-3. Copy Client ID and Client Secret
-
-```yaml
-connectors:
-  - type: github
-    id: github
-    name: GitHub
-    config:
-      clientID: YOUR_GITHUB_CLIENT_ID
-      clientSecret: YOUR_GITHUB_CLIENT_SECRET
-      redirectURI: http://localhost:5556/dex/callback
-```
-
-**Option C: External OIDC (Okta, Auth0, Keycloak...)**
-
-Skip Dex entirely — set environment variables in `.env`:
+Once you have the credentials, set them in `.env` (Step 3):
 ```bash
-OIDC_ISSUER=https://your-org.okta.com
+OIDC_ISSUER=https://your-provider.example.com
 OIDC_CLIENT_ID=your-client-id
-OIDC_CLIENT_SECRET=your-client-secret
+OIDC_CLIENT_SECRET=your-client-secret   # leave empty if using PKCE
 ```
 
 ---
@@ -105,21 +77,14 @@ cd deploy/docker
 cp .env.example .env
 ```
 
-Edit `.env` — the only value you must change:
+Edit `.env` — fill in your OIDC credentials (from Step 1) and generate a secret:
 ```bash
+OIDC_ISSUER=https://your-provider.example.com
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-client-secret
+
 # Generate a random 32+ char secret:
-openssl rand -base64 32
-
-NEXTAUTH_SECRET=<paste-the-output-above>
-```
-
-If using Google/GitHub connectors, also set:
-```bash
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-# or
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
+NEXTAUTH_SECRET=$(openssl rand -base64 32)
 ```
 
 ---
@@ -147,12 +112,13 @@ Open **http://localhost:8000** → Sign in → Done.
 docker compose logs -f
 ```
 
-**Dex fails to start — "no connectors configured":**
-→ Make sure you uncommented at least one connector in `dex-config.yaml`
-
 **Can't log in — redirect error:**
-→ Verify the redirect URI in your OAuth app matches exactly:
-`http://localhost:5556/dex/callback`
+→ Verify the redirect URI registered with your OIDC provider matches exactly:
+`http://localhost:8000/api/auth/callback/oidc`
+
+**Can't log in — OIDC discovery failed:**
+→ Check `OIDC_ISSUER` in `.env` is correct and reachable from the container
+→ Test: `curl ${OIDC_ISSUER}/.well-known/openid-configuration`
 
 **AI agent not responding:**
 → Check `anthropic_api_key` is set in `dev.config.yaml`

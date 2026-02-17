@@ -68,22 +68,24 @@ backend_url: "http://slar-api:8081"
 # =============================================================================
 # AUTHENTICATION — OIDC [REQUIRED]
 # =============================================================================
-# SLAR uses OIDC for authentication. Works with any OIDC-compliant provider:
+# SLAR uses standard OIDC for authentication.
+# Use any OIDC-compliant provider — no bundled IDP required.
 #
-#   Provider       | oidc_issuer example
-#   ---------------|-------------------------------------------------------
-#   Zitadel        | http://zitadel:8080  (bundled in Docker Compose)
-#   Keycloak       | https://keycloak.example.com/realms/your-realm
-#   Auth0          | https://your-tenant.auth0.com
-#   Okta           | https://your-org.okta.com
-#   Google         | https://accounts.google.com
-#   Azure AD       | https://login.microsoftonline.com/{tenant}/v2.0
+#   Provider            | oidc_issuer example
+#   --------------------|-------------------------------------------------------
+#   Cloudflare Access   | https://<team>.cloudflareaccess.com
+#   Google              | https://accounts.google.com
+#   Zitadel             | https://your-instance.zitadel.cloud
+#   Auth0               | https://your-tenant.auth0.com
+#   Okta                | https://your-org.okta.com
+#   Keycloak            | https://keycloak.example.com/realms/your-realm
+#   Azure AD            | https://login.microsoftonline.com/{tenant}/v2.0
 #
-# Note: oidc_client_secret is only needed for "Basic" auth method.
-#       Leave empty if using PKCE (recommended).
-oidc_issuer: "http://zitadel:8080"
-oidc_client_id: "your-client-id"
-oidc_client_secret: ""
+# Note: oidc_client_secret is only needed for the "client_secret_basic" method.
+#       Leave empty if using PKCE (public client).
+oidc_issuer: ""        # e.g. "https://your-team.cloudflareaccess.com"
+oidc_client_id: ""     # Client ID from your OIDC provider
+oidc_client_secret: "" # Client secret (leave empty for PKCE)
 
 
 # =============================================================================

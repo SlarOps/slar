@@ -54,16 +54,17 @@ services:
     ports:
       - "3001:3000"
     extra_hosts:
-      # Allow container to reach host's localhost (for external OIDC if needed)
+      # Allow container to reach host's OIDC provider if running locally
       - "localhost:host-gateway"
     environment:
-      # OIDC Authentication - Dex IDP (or any OIDC-compliant provider)
-      - OIDC_ISSUER=${OIDC_ISSUER:-http://dex:5556/dex}
-      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-slar-web}
-      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-slar-dex-secret}
+      # OIDC Authentication - use any OIDC-compliant provider
+      # (Cloudflare Access, Google, Zitadel, Auth0, Okta, Keycloak, ...)
+      - OIDC_ISSUER=${OIDC_ISSUER}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       # NextAuth.js
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3001}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-me-in-production}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:8000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       # API URLs - all through Kong proxy (port 8000)
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
       - NEXT_PUBLIC_AI_API_URL=${NEXT_PUBLIC_AI_API_URL:-http://localhost:8000/ai}
@@ -72,8 +73,6 @@ services:
     networks:
       - slar-network
     depends_on:
-      dex:
-        condition: service_healthy
       api:
         condition: service_started
 
@@ -109,37 +108,6 @@ services:
       timeout: 10s
       retries: 5
 
-  # =============================================================================
-  # DEX IDP - Lightweight OIDC Provider
-  # Supports: Google, GitHub, LDAP, Microsoft, and more
-  # Configure connectors in: volumes/config/dex-config.yaml
-  # =============================================================================
-  dex:
-    container_name: slar-dex
-    image: ghcr.io/dexidp/dex:v2.41.1
-    command: ["dex", "serve", "/etc/dex/config.yaml"]
-    ports:
-      - "5556:5556"
-    volumes:
-      - ./volumes/config/dex-config.yaml:/etc/dex/config.yaml:ro
-      - dex_data:/var/dex
-    environment:
-      # Google connector (set in .env or here)
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      # GitHub connector (set in .env or here)
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:5556/dex/healthz/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - slar-network
-
   db:
     restart: unless-stopped
     image: quay.io/tembo/pg17-pgmq:latest
@@ -171,5 +139,4 @@ networks:
 
 volumes:
   claude_data:
-  dex_data:
   data:
