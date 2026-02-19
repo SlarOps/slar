@@ -229,8 +229,8 @@ export default function CostPage() {
               {stats.by_user.map((user) => (
                 <div key={user.user_id} className="flex items-center justify-between">
                   <div>
-                    <div className="font-medium text-sm truncate" title={user.user_id}>
-                      {user.user_id?.substring(0, 8)}...
+                    <div className="font-medium text-sm truncate" title={user.user_email || user.user_id}>
+                      {user.user_email || `${user.user_id?.substring(0, 8)}...`}
                     </div>
                     <div className="text-sm text-gray-600">
                       {formatNumber(user.requests)} requests
@@ -332,8 +332,8 @@ export default function CostPage() {
                     {formatDate(log.created_at)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                    <div className="truncate max-w-[120px]" title={log.user_id}>
-                      {log.user_id?.substring(0, 8)}...
+                    <div className="truncate max-w-[160px]" title={log.user_email || log.user_id}>
+                      {log.user_email || `${log.user_id?.substring(0, 8)}...`}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

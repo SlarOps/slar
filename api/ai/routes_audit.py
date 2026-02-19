@@ -64,85 +64,87 @@ async def get_audit_logs(
         params = []
 
         # User can see all their own logs (regardless of org_id/project_id)
-        conditions.append("user_id = %s")
+        conditions.append("aal.user_id = %s")
         params.append(ctx.user_id)
 
         if ctx.org_id:
-            conditions.append("org_id = %s")
+            conditions.append("aal.org_id = %s")
             params.append(ctx.org_id)
 
         if ctx.project_id:
-            conditions.append("project_id = %s")
+            conditions.append("aal.project_id = %s")
             params.append(ctx.project_id)
 
         if event_category:
-            conditions.append("event_category = %s")
+            conditions.append("aal.event_category = %s")
             params.append(event_category)
 
         if event_type:
-            conditions.append("event_type = %s")
+            conditions.append("aal.event_type = %s")
             params.append(event_type)
 
         if status_filter:
-            conditions.append("status = %s")
+            conditions.append("aal.status = %s")
             params.append(status_filter)
 
         if filter_user_id:
-            conditions.append("user_id = %s")
+            conditions.append("aal.user_id = %s")
             params.append(filter_user_id)
 
         if session_id:
-            conditions.append("session_id = %s")
+            conditions.append("aal.session_id = %s")
             params.append(session_id)
 
         if start_date:
-            conditions.append("event_time >= %s")
+            conditions.append("aal.event_time >= %s")
             params.append(start_date)
 
         if end_date:
-            conditions.append("event_time <= %s")
+            conditions.append("aal.event_time <= %s")
             params.append(end_date)
 
         where_clause = " AND ".join(conditions)
 
-        # Count total
+        # Count total (strip alias prefix for simple count — no JOIN needed)
+        count_where = where_clause.replace("aal.", "")
         count_query = f"""
             SELECT COUNT(*) as total
             FROM agent_audit_logs
-            WHERE {where_clause}
+            WHERE {count_where}
         """
         count_result = execute_query(count_query, tuple(params), fetch="one")
         total = count_result["total"] if count_result else 0
 
-        # Get logs with pagination
+        # Get logs with pagination — JOIN users to get email for all records
         query = f"""
             SELECT
-                event_id,
-                event_time,
-                event_type,
-                event_category,
-                user_id,
-                user_email,
-                org_id,
-                project_id,
-                session_id,
-                device_cert_id,
-                source_ip,
-                user_agent,
-                instance_id,
-                action,
-                resource_type,
-                resource_id,
-                request_params,
-                status,
-                error_code,
-                error_message,
-                response_data,
-                duration_ms,
-                metadata
-            FROM agent_audit_logs
+                aal.event_id,
+                aal.event_time,
+                aal.event_type,
+                aal.event_category,
+                aal.user_id,
+                COALESCE(u.email, aal.user_email) AS user_email,
+                aal.org_id,
+                aal.project_id,
+                aal.session_id,
+                aal.device_cert_id,
+                aal.source_ip,
+                aal.user_agent,
+                aal.instance_id,
+                aal.action,
+                aal.resource_type,
+                aal.resource_id,
+                aal.request_params,
+                aal.status,
+                aal.error_code,
+                aal.error_message,
+                aal.response_data,
+                aal.duration_ms,
+                aal.metadata
+            FROM agent_audit_logs aal
+            LEFT JOIN users u ON u.id = aal.user_id
             WHERE {where_clause}
-            ORDER BY event_time DESC
+            ORDER BY aal.event_time DESC
             LIMIT %s OFFSET %s
         """
         params.extend([limit, offset])
@@ -318,53 +320,54 @@ async def export_audit_logs(
         params = []
 
         # User can see all their own logs
-        conditions.append("user_id = %s")
+        conditions.append("aal.user_id = %s")
         params.append(ctx.user_id)
 
         if ctx.org_id:
-            conditions.append("org_id = %s")
+            conditions.append("aal.org_id = %s")
             params.append(ctx.org_id)
 
         if ctx.project_id:
-            conditions.append("project_id = %s")
+            conditions.append("aal.project_id = %s")
             params.append(ctx.project_id)
 
         if event_category:
-            conditions.append("event_category = %s")
+            conditions.append("aal.event_category = %s")
             params.append(event_category)
 
         if start_date:
-            conditions.append("event_time >= %s")
+            conditions.append("aal.event_time >= %s")
             params.append(start_date)
 
         if end_date:
-            conditions.append("event_time <= %s")
+            conditions.append("aal.event_time <= %s")
             params.append(end_date)
 
         where_clause = " AND ".join(conditions)
 
-        # Get logs (limit to 10000 for export)
+        # Get logs (limit to 10000 for export) — JOIN users for email
         query = f"""
             SELECT
-                event_id,
-                event_time,
-                event_type,
-                event_category,
-                user_id,
-                user_email,
-                org_id,
-                session_id,
-                action,
-                resource_type,
-                resource_id,
-                status,
-                error_code,
-                error_message,
-                duration_ms,
-                source_ip
-            FROM agent_audit_logs
+                aal.event_id,
+                aal.event_time,
+                aal.event_type,
+                aal.event_category,
+                aal.user_id,
+                COALESCE(u.email, aal.user_email) AS user_email,
+                aal.org_id,
+                aal.session_id,
+                aal.action,
+                aal.resource_type,
+                aal.resource_id,
+                aal.status,
+                aal.error_code,
+                aal.error_message,
+                aal.duration_ms,
+                aal.source_ip
+            FROM agent_audit_logs aal
+            LEFT JOIN users u ON u.id = aal.user_id
             WHERE {where_clause}
-            ORDER BY event_time DESC
+            ORDER BY aal.event_time DESC
             LIMIT 10000
         """
 

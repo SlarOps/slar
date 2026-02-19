@@ -264,7 +264,7 @@ class CostTrackingService:
                     event.message_id,  # SDK message ID for deduplication
                     event.model,
                     event.request_type,
-                    event.step_number,  # Changed from num_turns
+                    event.step_number,
                     event.input_tokens,
                     event.output_tokens,
                     event.cache_creation_input_tokens,

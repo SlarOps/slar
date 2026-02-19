@@ -106,6 +106,8 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 	projectHandler := handlers.NewProjectHandler(projectService)                                                    // Project management
 	conversationShareHandler := handlers.NewConversationShareHandler(pg)                                            // Conversation sharing
 	internalAuthzHandler := handlers.NewInternalAuthzHandler(authzBackend)                                          // Internal authz for AI Agent
+	policyService := services.NewPolicyService(pg)              // Agent policy engine
+	policyHandler := handlers.NewPolicyHandler(policyService)    // Agent policy handler
 
 	// AI Agent Registry - Multi-agent routing with self-registration
 	agentRegistry := services.NewAgentRegistry()
@@ -232,6 +234,14 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 		internalAuthzRoutes.GET("/project/:project_id/role", internalAuthzHandler.GetProjectRole)
 		internalAuthzRoutes.POST("/check", internalAuthzHandler.CheckAccess)
 	}
+
+	// Internal policy endpoints (no OIDC auth - network-isolated, called by Python agent)
+	internalPolicyRoutes := r.Group("/internal/policies")
+	{
+		internalPolicyRoutes.GET("", policyHandler.ListPolicies)
+		internalPolicyRoutes.GET("/version", policyHandler.GetPolicyVersion)
+	}
+	log.Println("✅ Internal policy endpoints initialized: /internal/policies/*")
 
 	// AI Agent self-registration endpoints (no auth - agents call these on startup)
 	internalAgentRoutes := r.Group("/internal/agents")
@@ -680,6 +690,18 @@ func NewGinRouter(pg *sql.DB) *gin.Engine {
 			conversationRoutes.DELETE("/:id/shares/:shareId", conversationShareHandler.RevokeShare)
 			log.Println("Conversation share routes registered: POST /:id/share, GET /:id/shares, DELETE /:id/shares/:shareId")
 		}
+
+		// AGENT POLICY ENGINE (declarative tool access control)
+		policyRoutes := protected.Group("/policies")
+		{
+			policyRoutes.GET("", policyHandler.ListPolicies)
+			policyRoutes.GET("/version", policyHandler.GetPolicyVersion)
+			policyRoutes.GET("/:id", policyHandler.GetPolicy)
+			policyRoutes.POST("", policyHandler.CreatePolicy)
+			policyRoutes.PATCH("/:id", policyHandler.UpdatePolicy)
+			policyRoutes.DELETE("/:id", policyHandler.DeletePolicy)
+		}
+		log.Println("✅ Agent policy routes initialized: /policies/*")
 	}
 
 	// PUBLIC MOBILE ENDPOINTS (no auth - used during QR connection flow)

@@ -676,6 +676,9 @@ from routes_cost import router as cost_router
 app.include_router(cost_router)
 logger.info("[Cost] Cost tracking routes loaded from routes_cost.py")
 
+# Import policy engine
+from policy_evaluator import PolicyEvaluator
+
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
 user_mcp_cache: Dict[str, Dict[str, Any]] = {}
@@ -870,6 +873,7 @@ async def agent_task_streaming(
     hooks_config: Dict[str, Any] = None,
     initial_user_id: str = None,  # User ID from WebSocket auth (for early init)
     initial_auth_token: str = None,  # Auth token from WebSocket
+    policy_evaluator=None,  # PolicyEvaluator for filtering allowed_tools bypass list
 ):
     """
     TRUE Streaming Mode - Uses AsyncGenerator with ONE long-lived ClaudeSDKClient.
@@ -1003,7 +1007,7 @@ async def agent_task_streaming(
                         conversation_id=context["conversation_id"],
                         message_preview=prompt,
                         org_id=context["org_id"],
-                        project_id=context["project_id"]
+                        project_id=context["project_id"],
                     )
 
                 # Yield message in SDK streaming input format
@@ -1375,6 +1379,20 @@ async def agent_task_streaming(
             if user_allowed:
                 allowed_tools.extend(user_allowed)
 
+        # POLICY ENGINE: Filter allowed_tools — tools in this list bypass permission_callback entirely.
+        # Remove tools covered by a DENY policy so the callback is still invoked for them.
+        if policy_evaluator:
+            try:
+                filtered_allowed = []
+                for tool in allowed_tools:
+                    if await policy_evaluator.is_denied(tool):
+                        logger.info(f"🚫 Policy: removing '{tool}' from allowed_tools bypass list (DENY policy)")
+                    else:
+                        filtered_allowed.append(tool)
+                allowed_tools = filtered_allowed
+            except Exception as _fe:
+                logger.warning(f"Policy allowed_tools filter failed: {_fe} — using unfiltered list")
+
         # Build hooks config
         actual_hooks_config = build_hooks_config(
             user_id=context["user_id"],
@@ -1619,7 +1637,7 @@ async def agent_task(
                     conversation_id=conversation_id or current_conversation_id,
                     message_preview=prompt,
                     org_id=org_id or current_org_id,
-                    project_id=project_id or current_project_id
+                    project_id=project_id or current_project_id,
                 )
 
             # Note: Bucket sync is now handled by frontend via /api/sync-bucket
@@ -2239,6 +2257,22 @@ async def websocket_chat(websocket: WebSocket):
         project_id=ws_project_id
     )
 
+    # Initialize Policy Evaluator (declarative tool access control)
+    # Loads policies from Go API and resolves user role once per session.
+    policy_evaluator = None
+    if ws_org_id:
+        try:
+            policy_evaluator = PolicyEvaluator(
+                org_id=ws_org_id,
+                project_id=ws_project_id,
+                user_id=authenticated_user_id,
+                go_api_url=CONTROL_PLANE_URL,
+            )
+            await policy_evaluator.load_for_session()
+        except Exception as _pe:
+            logger.warning(f"PolicyEvaluator init failed: {_pe} — proceeding without policy enforcement")
+            policy_evaluator = None
+
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)
     interrupt_queue = asyncio.Queue(maxsize=10)
@@ -2285,6 +2319,37 @@ async def websocket_chat(websocket: WebSocket):
                 tool_input=input_data,
                 request_id=request_id
             )
+
+            # Policy Engine: evaluate declarative policies before prompting user
+            if policy_evaluator:
+                try:
+                    await policy_evaluator.refresh_if_stale()
+                    policy_result = await policy_evaluator.evaluate(tool_name)
+                    if policy_result.matched:
+                        if policy_result.effect == "deny":
+                            logger.info(f"🚫 Policy DENY: {policy_result.reason}")
+                            await audit.log_tool_denied(
+                                user_id=authenticated_user_id,
+                                session_id=ws_session_id,
+                                tool_name=tool_name,
+                                request_id=request_id
+                            )
+                            return PermissionResultDeny(
+                                message=f"Denied by policy: {policy_result.reason}"
+                            )
+                        elif policy_result.effect == "allow":
+                            logger.info(f"✅ Policy ALLOW: {policy_result.reason}")
+                            await audit.log_tool_approved(
+                                user_id=authenticated_user_id,
+                                session_id=ws_session_id,
+                                tool_name=tool_name,
+                                request_id=request_id
+                            )
+                            return PermissionResultAllow()
+                except Exception as _eval_err:
+                    logger.warning(
+                        f"PolicyEvaluator.evaluate failed for {tool_name}: {_eval_err} — falling through to user prompt"
+                    )
 
             # Send permission request with unique ID via output queue
             await output_queue.put(
@@ -2374,6 +2439,7 @@ async def websocket_chat(websocket: WebSocket):
                 hooks_config,  # Audit hooks for tool execution logging
                 initial_user_id=authenticated_user_id,
                 initial_auth_token=ws_auth_token,
+                policy_evaluator=policy_evaluator,  # Policy Engine: filter allowed_tools bypass
             ),
             name="agent",
         )
@@ -2446,6 +2512,13 @@ async def websocket_chat(websocket: WebSocket):
                 del stop_events[session_id]
         except Exception:
             pass
+
+        # Clean up policy evaluator HTTP client
+        if policy_evaluator:
+            try:
+                await policy_evaluator.close()
+            except Exception:
+                pass
 
         logger.info("🧹 All tasks cleaned up")
 

@@ -64,50 +64,53 @@ async def get_cost_logs(
     # Future: Call Go API to verify project access like credentials do
 
     # Build query conditions - show ALL costs for the project (not filtered by user)
-    conditions = ["org_id = %s", "project_id = %s"]
+    conditions = ["acl.org_id = %s", "acl.project_id = %s"]
     params = [ctx.org_id, ctx.project_id]
 
     # Model filter
     if model:
-        conditions.append("model = %s")
+        conditions.append("acl.model = %s")
         params.append(model)
 
     # Time range
     start_date, end_date = _parse_time_range(time_range)
-    conditions.append("created_at >= %s")
-    conditions.append("created_at <= %s")
+    conditions.append("acl.created_at >= %s")
+    conditions.append("acl.created_at <= %s")
     params.extend([start_date, end_date])
 
     where_clause = " AND ".join(conditions)
 
-    # Count total
-    count_query = f"SELECT COUNT(*) as total FROM ai_cost_logs WHERE {where_clause}"
+    # Count total (no JOIN needed for count)
+    count_where = where_clause.replace("acl.", "")
+    count_query = f"SELECT COUNT(*) as total FROM ai_cost_logs WHERE {count_where}"
     count_result = execute_query(count_query, tuple(params), fetch="one")
     total = count_result.get("total", 0) if count_result else 0
 
-    # Get logs
+    # Get logs (JOIN users to get email for all records including historical)
     query = f"""
         SELECT
-            event_id,
-            created_at,
-            user_id,
-            org_id,
-            project_id,
-            session_id,
-            conversation_id,
-            message_id,
-            model,
-            request_type,
-            step_number,
-            input_tokens,
-            output_tokens,
-            cache_creation_input_tokens,
-            cache_read_input_tokens,
-            total_tokens,
-            total_cost_usd
-        FROM ai_cost_logs
+            acl.event_id,
+            acl.created_at,
+            acl.user_id,
+            u.email AS user_email,
+            acl.org_id,
+            acl.project_id,
+            acl.session_id,
+            acl.conversation_id,
+            acl.message_id,
+            acl.model,
+            acl.request_type,
+            acl.step_number,
+            acl.input_tokens,
+            acl.output_tokens,
+            acl.cache_creation_input_tokens,
+            acl.cache_read_input_tokens,
+            acl.total_tokens,
+            acl.total_cost_usd
+        FROM ai_cost_logs acl
+        LEFT JOIN users u ON u.id = acl.user_id
         WHERE {where_clause}
-        ORDER BY created_at DESC
+        ORDER BY acl.created_at DESC
         LIMIT %s OFFSET %s
     """
     params.extend([limit, offset])
@@ -157,8 +160,10 @@ async def get_cost_stats(
     params.extend([start_date, end_date])
 
     where_clause = " AND ".join(conditions)
+    # Aliased version for queries that JOIN users (avoids ambiguous column errors)
+    where_clause_acl = " AND ".join(f"acl.{c}" for c in conditions)
 
-    # Overall stats
+    # Overall stats (no JOIN needed)
     stats_query = f"""
         SELECT
             COUNT(*) as total_requests,
@@ -177,7 +182,7 @@ async def get_cost_stats(
 
     stats = execute_query(stats_query, tuple(params), fetch="one")
 
-    # Cost by model
+    # Cost by model (no JOIN needed)
     model_query = f"""
         SELECT
             model,
@@ -193,24 +198,26 @@ async def get_cost_stats(
 
     by_model = execute_query(model_query, tuple(params), fetch="all")
 
-    # Cost by user (project-level visibility)
+    # Cost by user — JOIN users to get email for all records including historical
     user_query = f"""
         SELECT
-            user_id,
+            acl.user_id,
+            u.email AS user_email,
             COUNT(*) as requests,
-            COALESCE(SUM(total_cost_usd), 0) as total_cost,
-            COALESCE(SUM(input_tokens), 0) as input_tokens,
-            COALESCE(SUM(output_tokens), 0) as output_tokens
-        FROM ai_cost_logs
-        WHERE {where_clause}
-        GROUP BY user_id
+            COALESCE(SUM(acl.total_cost_usd), 0) as total_cost,
+            COALESCE(SUM(acl.input_tokens), 0) as input_tokens,
+            COALESCE(SUM(acl.output_tokens), 0) as output_tokens
+        FROM ai_cost_logs acl
+        LEFT JOIN users u ON u.id = acl.user_id
+        WHERE {where_clause_acl}
+        GROUP BY acl.user_id, u.email
         ORDER BY total_cost DESC
         LIMIT 20
     """
 
     by_user = execute_query(user_query, tuple(params), fetch="all")
 
-    # Daily breakdown
+    # Daily breakdown (no JOIN needed)
     daily_query = f"""
         SELECT
             DATE_TRUNC('day', created_at) as date,
@@ -257,36 +264,38 @@ async def export_cost_logs(
     # TODO: Add authorization check - verify user has access to this project
 
     # Build query (limit to 10000 for export) - export ALL costs for the project
-    conditions = ["org_id = %s", "project_id = %s"]
+    conditions = ["acl.org_id = %s", "acl.project_id = %s"]
     params = [ctx.org_id, ctx.project_id]
 
     if model:
-        conditions.append("model = %s")
+        conditions.append("acl.model = %s")
         params.append(model)
 
     start_date, end_date = _parse_time_range(time_range)
-    conditions.append("created_at >= %s")
-    conditions.append("created_at <= %s")
+    conditions.append("acl.created_at >= %s")
+    conditions.append("acl.created_at <= %s")
     params.extend([start_date, end_date])
 
     where_clause = " AND ".join(conditions)
 
     query = f"""
         SELECT
-            created_at,
-            message_id,
-            model,
-            request_type,
-            step_number,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-            total_cost_usd,
-            session_id,
-            conversation_id
-        FROM ai_cost_logs
+            acl.created_at,
+            u.email AS user_email,
+            acl.message_id,
+            acl.model,
+            acl.request_type,
+            acl.step_number,
+            acl.input_tokens,
+            acl.output_tokens,
+            acl.total_tokens,
+            acl.total_cost_usd,
+            acl.session_id,
+            acl.conversation_id
+        FROM ai_cost_logs acl
+        LEFT JOIN users u ON u.id = acl.user_id
         WHERE {where_clause}
-        ORDER BY created_at DESC
+        ORDER BY acl.created_at DESC
         LIMIT 10000
     """
 
@@ -299,6 +308,7 @@ async def export_cost_logs(
     # Header
     writer.writerow([
         "Timestamp",
+        "User",
         "Message ID",
         "Model",
         "Request Type",
@@ -315,6 +325,7 @@ async def export_cost_logs(
     for log in logs or []:
         writer.writerow([
             log.get("created_at", "").isoformat() if log.get("created_at") else "",
+            log.get("user_email", ""),
             log.get("message_id", ""),
             log.get("model", ""),
             log.get("request_type", ""),

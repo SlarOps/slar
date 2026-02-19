@@ -2509,6 +2509,85 @@ class APIClient {
       body: JSON.stringify(options)
     }, this.aiBaseURL);
   }
+
+  // ========================================
+  // Agent Policy Engine
+  // ========================================
+
+  /**
+   * List agent policies for an org (with optional project scoping).
+   * Computed Scope: returns org-wide policies + project-specific policies.
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} [filters.project_id] - Project ID (optional)
+   * @param {boolean} [filters.active_only] - Return only active policies
+   * @returns {Promise<{policies: object[], total: number}>}
+   */
+  async getPolicies(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.active_only !== undefined) params.append('active_only', String(filters.active_only));
+    const qs = params.toString();
+    return this.request(`/policies${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * Get a single policy by ID.
+   * @param {string} id - Policy ID
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<object>} Policy
+   */
+  async getPolicy(id, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`);
+  }
+
+  /**
+   * Create a new agent policy (admin/owner only).
+   * @param {object} data - Policy data
+   * @param {string} data.org_id - Organization ID (required)
+   * @param {string} [data.project_id] - Project ID (null = org-wide)
+   * @param {string} data.name - Policy name (unique per org)
+   * @param {string} [data.description] - Description
+   * @param {string} data.effect - "allow" | "deny"
+   * @param {string} data.principal_type - "role" | "user" | "*"
+   * @param {string} [data.principal_value] - Role name or user_id (null for "*")
+   * @param {string} data.tool_pattern - fnmatch glob (e.g. "mcp__bash__*")
+   * @param {number} [data.priority] - Priority (higher wins, default 0)
+   * @returns {Promise<object>} Created policy
+   */
+  async createPolicy(data) {
+    return this.request('/policies', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Update an existing policy (admin/owner only).
+   * @param {string} id - Policy ID
+   * @param {object} data - Fields to update (all optional)
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<object>} Updated policy
+   */
+  async updatePolicy(id, data, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Delete a policy (admin/owner only).
+   * @param {string} id - Policy ID
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<{message: string}>}
+   */
+  async deletePolicy(id, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 export const apiClient = new APIClient();
