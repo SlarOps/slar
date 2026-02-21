@@ -285,15 +285,46 @@ async def install_plugin_from_marketplace(request: Request):
                 "error": f"Marketplace '{marketplace_name}' not found. Please clone it first.",
             }
 
-        # Verify git repository exists
+        # Verify git repository exists — auto re-clone if directory is missing
         workspace_path = get_user_workspace_path(user_id)
         marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
         if not await is_git_repository(marketplace_dir):
-            return {
-                "success": False,
-                "error": f"Marketplace '{marketplace_name}' not cloned. Please clone it first.",
-            }
+            repository_url = marketplace_record.get("repository_url", "")
+            branch = marketplace_record.get("branch", "main")
+            stored_credential = marketplace_record.get("credential_name")
+
+            if not repository_url:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' is not on disk and repository_url is missing. Please delete and re-add this marketplace.",
+                }
+
+            logger.warning(
+                f"Marketplace '{marketplace_name}' not found on disk during install — auto re-cloning from {repository_url}"
+            )
+
+            if marketplace_dir.exists():
+                shutil.rmtree(marketplace_dir)
+
+            clone_kwargs = dict(
+                repo_url=repository_url,
+                target_dir=marketplace_dir,
+                branch=branch,
+                depth=1,
+                user_id=user_id,
+            )
+            if stored_credential:
+                clone_kwargs["credential_name"] = stored_credential
+
+            clone_ok, clone_result = await clone_repository(**clone_kwargs)
+            if not clone_ok:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' was missing and auto re-clone failed: {clone_result}",
+                }
+
+            logger.info(f"Auto re-clone successful before install (commit: {clone_result[:8]})")
 
         # Calculate install path from marketplace metadata
         # We use a Path object and ensure it's relative to the marketplace
@@ -884,14 +915,99 @@ async def update_marketplace(request: Request):
 
         branch = marketplace.get("branch", "main")
         stored_credential = marketplace.get("credential_name")
+        repository_url = marketplace.get("repository_url", "")
         workspace_path = get_user_workspace_path(user_id)
         marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
-        # Verify it's a git repository
+        # Auto-recover: if directory is missing or not a git repo, re-clone instead of failing.
+        # This handles volume wipes and partial installs without requiring manual intervention.
         if not await is_git_repository(marketplace_dir):
+            if not repository_url:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' directory is missing and repository_url is not stored. Please delete and re-add this marketplace.",
+                }
+
+            logger.warning(
+                f"Marketplace '{marketplace_name}' not found on disk — auto re-cloning from {repository_url}"
+            )
+
+            # Remove stale directory if it exists but isn't a valid git repo
+            if marketplace_dir.exists():
+                shutil.rmtree(marketplace_dir)
+
+            clone_kwargs = dict(
+                repo_url=repository_url,
+                target_dir=marketplace_dir,
+                branch=branch,
+                depth=1,
+                user_id=user_id,
+            )
+            if stored_credential:
+                clone_kwargs["credential_name"] = stored_credential
+
+            clone_ok, clone_result = await clone_repository(**clone_kwargs)
+            if not clone_ok:
+                return {
+                    "success": False,
+                    "error": f"Auto re-clone failed: {clone_result}",
+                }
+
+            new_commit_sha = clone_result
+            logger.info(f"Auto re-clone successful (commit: {new_commit_sha[:8]})")
+
+            # Re-read marketplace.json and rescan skills
+            marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
+            marketplace_metadata = None
+            if marketplace_json_path.exists():
+                try:
+                    marketplace_metadata = json.loads(marketplace_json_path.read_text())
+                    raw_plugins = marketplace_metadata.get("plugins", [])
+                    enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+                    marketplace_metadata["plugins"] = enriched_plugins
+                except Exception as e:
+                    logger.warning(f"Failed to parse marketplace.json after re-clone: {e}")
+
+            def update_db_after_reclone():
+                if marketplace_metadata:
+                    execute_query(
+                        """
+                        UPDATE marketplaces SET
+                            plugins = %s,
+                            git_commit_sha = %s,
+                            last_synced_at = NOW(),
+                            updated_at = NOW()
+                        WHERE user_id = %s AND name = %s
+                        """,
+                        (
+                            json.dumps(marketplace_metadata.get("plugins", [])),
+                            new_commit_sha,
+                            user_id, marketplace_name,
+                        ),
+                        fetch="none",
+                    )
+                else:
+                    execute_query(
+                        """
+                        UPDATE marketplaces SET
+                            git_commit_sha = %s,
+                            last_synced_at = NOW(),
+                            updated_at = NOW()
+                        WHERE user_id = %s AND name = %s
+                        """,
+                        (new_commit_sha, user_id, marketplace_name),
+                        fetch="none",
+                    )
+
+            await asyncio.get_event_loop().run_in_executor(None, update_db_after_reclone)
+
             return {
-                "success": False,
-                "error": f"Marketplace '{marketplace_name}' is not a git repository. Please re-clone it.",
+                "success": True,
+                "message": f"Marketplace '{marketplace_name}' was missing and has been re-cloned",
+                "had_changes": True,
+                "old_commit_sha": marketplace.get("git_commit_sha", "unknown"),
+                "new_commit_sha": new_commit_sha,
+                "re_cloned": True,
             }
 
         # Fetch and reset (with automatic Vault credential injection if available)

@@ -157,26 +157,34 @@ class PolicyEvaluator:
 
         Algorithm:
           1. Filter policies matching this principal AND this tool
-          2. Sort by priority DESC (already sorted from fetch)
+          2. Sort by priority DESC (explicit, not relying on cache order)
           3. At each priority level, DENY beats ALLOW
           4. Return the first decision found
         """
         matching: list[Policy] = [
             p for p in self._cache
-            if p.is_active
+            if p is not None
+            and p.is_active
             and p.matches_principal(self._user_id, self._user_role)
             and p.matches_tool(tool_name)
         ]
 
         if not matching:
+            logger.debug(
+                f"PolicyEvaluator.evaluate: no matching policy for '{tool_name}' "
+                f"(user_role={self._user_role}, cache_size={len(self._cache)})"
+            )
             return EvaluationResult(
                 matched=False, effect=None,
                 policy_id=None, policy_name=None,
                 reason="no matching policy"
             )
 
+        # Sort explicitly by priority DESC so higher-priority policies are evaluated first.
+        # This is defensive: SQL also sorts DESC but we don't rely on it here.
+        matching.sort(key=lambda p: p.priority, reverse=True)
+
         # Group by priority level and pick DENY > ALLOW within same level
-        # matching is already sorted by priority DESC from SQL
         best: Optional[Policy] = None
         current_priority = matching[0].priority
 
@@ -201,7 +209,8 @@ class PolicyEvaluator:
             f"policy '{best.id}' ({best.effect}) "
             f"principal={best.principal_type}:{best.principal_value} "
             f"pattern={best.tool_pattern} "
-            f"priority={best.priority}"
+            f"priority={best.priority} "
+            f"(matched {len(matching)} policies, user_role={self._user_role})"
         )
         return EvaluationResult(
             matched=True,
@@ -259,7 +268,12 @@ class PolicyEvaluator:
         data = resp.json()
 
         raw_policies = data.get("policies") or []
-        policies = [self._parse_policy(p) for p in raw_policies if p]
+        policies = [
+            parsed for raw in raw_policies
+            if raw
+            for parsed in [self._parse_policy(raw)]
+            if parsed is not None
+        ]
 
         # Fetch version in the same call batch
         version = await self._fetch_version()

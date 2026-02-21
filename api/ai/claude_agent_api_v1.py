@@ -2338,14 +2338,10 @@ async def websocket_chat(websocket: WebSocket):
                                 message=f"Denied by policy: {policy_result.reason}"
                             )
                         elif policy_result.effect == "allow":
-                            logger.info(f"✅ Policy ALLOW: {policy_result.reason}")
-                            await audit.log_tool_approved(
-                                user_id=authenticated_user_id,
-                                session_id=ws_session_id,
-                                tool_name=tool_name,
-                                request_id=request_id
-                            )
-                            return PermissionResultAllow()
+                            # Layer 1 passed: user has permission for this tool.
+                            # Do NOT auto-execute — fall through to Layer 2 (user confirmation).
+                            # Only allowed_tools bypass list grants auto-execution without prompt.
+                            logger.info(f"✅ Policy ALLOW (layer 1 passed, proceeding to user confirmation): {policy_result.reason}")
                 except Exception as _eval_err:
                     logger.warning(
                         f"PolicyEvaluator.evaluate failed for {tool_name}: {_eval_err} — falling through to user prompt"
