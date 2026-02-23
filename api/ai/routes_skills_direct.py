@@ -95,6 +95,15 @@ async def clone_skill_folder(
         (success: bool, commit_sha_or_error: str)
     """
     try:
+        # Resolve target_dir and validate skill_path to prevent traversal attacks
+        target_dir = target_dir.resolve()
+        # Validate skill_path: must be a relative, non-traversing path
+        if not re.match(r"^[A-Za-z0-9._-][A-Za-z0-9._/-]*$", skill_path or ""):
+            return False, "Invalid skill path"
+        skill_folder_resolved = (target_dir / skill_path).resolve()
+        if not skill_folder_resolved.is_relative_to(target_dir):
+            return False, "Invalid skill path: directory traversal detected"
+
         # If target directory exists, remove it first
         # This handles cases like:
         # - Clone succeeded but DB insert failed
@@ -180,7 +189,8 @@ async def clone_skill_folder(
         # Step 8: Move skill folder contents to root of target_dir
         # After sparse checkout: target_dir/skills/frontend-design/SKILL.md
         # We want: target_dir/SKILL.md
-        skill_folder_in_checkout = target_dir / skill_path
+        # skill_folder_resolved was already computed and validated above
+        skill_folder_in_checkout = skill_folder_resolved
 
         if skill_folder_in_checkout.exists() and skill_folder_in_checkout != target_dir:
             import shutil
@@ -300,9 +310,14 @@ async def install_skill_from_url(request: Request):
                 "error": f"Skill '{skill_name}' is already installed"
             }
 
-        # Build paths
+        # Build paths — validate skill_name to prevent path traversal
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", skill_name or ""):
+            return {"success": False, "error": "Invalid skill name"}
         workspace_path = get_user_workspace_path(user_id)
-        skill_dir = workspace_path / ".claude" / "skills" / skill_name
+        skills_root = (workspace_path / ".claude" / "skills").resolve()
+        skill_dir = (skills_root / skill_name).resolve()
+        if not skill_dir.is_relative_to(skills_root):
+            return {"success": False, "error": "Invalid skill name"}
         repo_url = f"https://github.com/{owner}/{repo}"
 
         logger.info(f"Cloning skill folder: {skill_path} → {skill_dir}")
@@ -318,9 +333,10 @@ async def install_skill_from_url(request: Request):
         )
 
         if not success:
+            logger.error(f"Failed to clone skill '{skill_name}': {result}")
             return {
                 "success": False,
-                "error": f"Failed to clone skill: {result}"
+                "error": "Failed to clone skill. Check server logs for details."
             }
 
         commit_sha = result

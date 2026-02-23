@@ -202,10 +202,11 @@ async def sync_marketplaces(request: Request):
                     "commit_sha": result,
                 })
             else:
+                logger.error(f"Failed to sync marketplace '{mp_name}': {result}")
                 results.append({
                     "marketplace": mp_name,
                     "success": False,
-                    "error": result,
+                    "error": "Failed to sync marketplace. Check server logs for details.",
                 })
 
         updated_count = sum(1 for r in results if r.get("success") and r.get("had_changes"))

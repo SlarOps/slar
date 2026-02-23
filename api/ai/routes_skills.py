@@ -104,9 +104,18 @@ def discover_all_skills_in_repo(repo_dir: Path) -> list:
     return skills
 
 
+_SKILL_REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
 def get_skill_repo_dir(workspace_path: Path, repo_name: str) -> Path:
-    """Get skill repository directory path."""
-    return workspace_path / ".claude" / "skills" / repo_name
+    """Get skill repository directory path with path traversal protection."""
+    if not repo_name or not _SKILL_REPO_NAME_PATTERN.fullmatch(repo_name):
+        raise ValueError(f"Invalid repository name: {repo_name!r}")
+    skills_root = (workspace_path / ".claude" / "skills").resolve()
+    candidate = (skills_root / repo_name).resolve()
+    if not candidate.is_relative_to(skills_root) or candidate == skills_root:
+        raise ValueError(f"Invalid repository name: {repo_name!r}")
+    return candidate
 
 
 def parse_github_url(url: str) -> Optional[dict]:
@@ -235,9 +244,10 @@ async def add_skill_repository(request: Request):
         success, result = await clone_repository(**clone_kwargs)
 
         if not success:
+            logger.error(f"Failed to clone repository '{repo_name}': {result}")
             return {
                 "success": False,
-                "error": f"Failed to clone repository: {result}"
+                "error": "Failed to clone repository. Check server logs for details."
             }
 
         commit_sha = result
@@ -661,9 +671,10 @@ async def update_skill_repository(request: Request):
         success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
         if not success:
+            logger.error(f"Failed to update repository '{repository_name}': {result}")
             return {
                 "success": False,
-                "error": f"Failed to update: {result}"
+                "error": "Failed to update repository. Check server logs for details."
             }
 
         new_commit_sha = result

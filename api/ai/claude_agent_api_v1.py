@@ -249,8 +249,7 @@ def _resolve_credential_env(cred_detail: dict, cred_name: str, exported_env: Dic
             exported_env[env_var] = str(data[json_key])
         else:
             logger.warning(
-                f"Credential {cred_name}: key '{json_key}' not found in data "
-                f"(available: {list(data.keys())}), skipping {env_var}"
+                f"Credential {cred_name}: mapping key not found in data, skipping {env_var}"
             )
 
 

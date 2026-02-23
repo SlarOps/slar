@@ -692,7 +692,6 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 			incident.AssignedTo = onCallUser.ID
 			now := time.Now()
 			incident.AssignedAt = &now // Set AssignedAt so assignment event will be created
-			log.Printf("DEBUG: Auto-assigned incident to on-call user %s at %v", onCallUser.ID, now)
 		}
 	}
 
@@ -710,40 +709,30 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 	// Handle UUID fields properly - convert empty strings to NULL
 	var assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam, organizationIDParam, projectIDParam interface{}
 
-	log.Printf("DEBUG: Incident UUID fields before processing - AssignedTo: '%s', EscalationPolicyID: '%s', GroupID: '%s', IntegrationID: '%s', ServiceID: '%s', APIKeyID: '%s', OrganizationID: '%s', ProjectID: '%s'",
-		incident.AssignedTo, incident.EscalationPolicyID, incident.GroupID, incident.IntegrationID, incident.ServiceID, incident.APIKeyID, incident.OrganizationID, incident.ProjectID)
 
 	if incident.AssignedTo != "" {
 		assignedToParam = incident.AssignedTo
-		log.Printf("DEBUG: Setting assignedToParam to: %s", incident.AssignedTo)
 	}
 	if incident.EscalationPolicyID != "" {
 		escalationPolicyIDParam = incident.EscalationPolicyID
-		log.Printf("DEBUG: Setting escalationPolicyIDParam to: %s", incident.EscalationPolicyID)
 	}
 	if incident.GroupID != "" {
 		groupIDParam = incident.GroupID
-		log.Printf("DEBUG: Setting groupIDParam to: %s", incident.GroupID)
 	}
 	if incident.IntegrationID != "" {
 		integrationIDParam = incident.IntegrationID
-		log.Printf("DEBUG: Setting integrationIDParam to: %s", incident.IntegrationID)
 	}
 	if incident.ServiceID != "" {
 		serviceIDParam = incident.ServiceID
-		log.Printf("DEBUG: Setting serviceIDParam to: %s", incident.ServiceID)
 	}
 	if incident.APIKeyID != "" {
 		apiKeyIDParam = incident.APIKeyID
-		log.Printf("DEBUG: Setting apiKeyIDParam to: %s", incident.APIKeyID)
 	}
 	if incident.OrganizationID != "" {
 		organizationIDParam = incident.OrganizationID
-		log.Printf("DEBUG: Setting organizationIDParam to: %s", incident.OrganizationID)
 	}
 	if incident.ProjectID != "" {
 		projectIDParam = incident.ProjectID
-		log.Printf("DEBUG: Setting projectIDParam to: %s", incident.ProjectID)
 	}
 
 	if incident.CurrentEscalationLevel == 0 {
@@ -770,15 +759,13 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 			if serviceOrgID.Valid && serviceOrgID.String != "" {
 				incident.OrganizationID = serviceOrgID.String
 				organizationIDParam = serviceOrgID.String
-				log.Printf("DEBUG: Auto-filled OrganizationID from Service: %s", incident.OrganizationID)
 			}
 			if serviceProjectID.Valid && serviceProjectID.String != "" && incident.ProjectID == "" {
 				incident.ProjectID = serviceProjectID.String
 				projectIDParam = serviceProjectID.String
-				log.Printf("DEBUG: Auto-filled ProjectID from Service: %s", incident.ProjectID)
 			}
 		} else if err != sql.ErrNoRows {
-			log.Printf("WARNING: Failed to lookup context from Service %s: %v", incident.ServiceID, err)
+			log.Printf("WARNING: Failed to lookup context from Service: %v", err)
 		}
 	}
 
@@ -795,26 +782,21 @@ func (s *IncidentService) CreateIncident(incident *db.Incident) (*db.Incident, e
 			if groupOrgID.Valid && groupOrgID.String != "" {
 				incident.OrganizationID = groupOrgID.String
 				organizationIDParam = groupOrgID.String
-				log.Printf("DEBUG: Auto-filled OrganizationID from Group: %s", incident.OrganizationID)
 			}
 			if groupProjectID.Valid && groupProjectID.String != "" && incident.ProjectID == "" {
 				incident.ProjectID = groupProjectID.String
 				projectIDParam = groupProjectID.String
-				log.Printf("DEBUG: Auto-filled ProjectID from Group: %s", incident.ProjectID)
 			}
 		} else if err != sql.ErrNoRows {
-			log.Printf("WARNING: Failed to lookup context from Group %s: %v", incident.GroupID, err)
+			log.Printf("WARNING: Failed to lookup context from Group: %v", err)
 		}
 	}
 
 	// Step 3: Log warning if context still missing (for monitoring/debugging)
 	if incident.OrganizationID == "" {
-		log.Printf("WARNING: Incident created without organization_id - Source: %s, ServiceID: %s, GroupID: %s",
-			incident.Source, incident.ServiceID, incident.GroupID)
+		log.Printf("WARNING: Incident created without organization_id")
 	}
 
-	log.Printf("DEBUG: Final params - assignedToParam: %v, escalationPolicyIDParam: %v, groupIDParam: %v, integrationIDParam: %v, serviceIDParam: %v, apiKeyIDParam: %v, organizationIDParam: %v, projectIDParam: %v",
-		assignedToParam, escalationPolicyIDParam, groupIDParam, integrationIDParam, serviceIDParam, apiKeyIDParam, organizationIDParam, projectIDParam)
 
 	_, err := s.PG.Exec(`
 		INSERT INTO incidents (
@@ -1189,10 +1171,8 @@ func (s *IncidentService) GetIncidentStats() (map[string]interface{}, error) {
 
 // GetAssigneeFromEscalationPolicy determines who should be assigned to an incident based on escalation policy
 func (s *IncidentService) GetAssigneeFromEscalationPolicy(escalationPolicyID, groupID string) (string, error) {
-	log.Printf("DEBUG: GetAssigneeFromEscalationPolicy called with escalationPolicyID='%s', groupID='%s'", escalationPolicyID, groupID)
 
 	if escalationPolicyID == "" {
-		log.Printf("DEBUG: escalationPolicyID is empty, returning no assignment")
 		return "", nil // No escalation policy, no auto-assignment
 	}
 
@@ -1205,47 +1185,38 @@ func (s *IncidentService) GetAssigneeFromEscalationPolicy(escalationPolicyID, gr
 		LIMIT 1
 	`
 
-	log.Printf("DEBUG: Querying escalation_levels table for policy_id='%s' and level_number=1", escalationPolicyID)
 
 	var targetType, targetID string
 	err := s.PG.QueryRow(query, escalationPolicyID).Scan(&targetType, &targetID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("DEBUG: No escalation levels found for policy_id='%s'", escalationPolicyID)
 			return "", nil // No escalation levels defined
 		}
-		log.Printf("DEBUG: Database error querying escalation levels: %v", err)
 		return "", fmt.Errorf("failed to get escalation level: %w", err)
 	}
 
-	log.Printf("DEBUG: Found escalation level - target_type='%s', target_id='%s'", targetType, targetID)
 
 	// Determine assignee based on target type
 	switch targetType {
 	case "user":
 		// Direct user assignment
-		log.Printf("DEBUG: Target type is 'user', returning target_id='%s'", targetID)
 		return targetID, nil
 
 	case "scheduler":
 		// Find current on-call user for this scheduler
-		log.Printf("DEBUG: Target type is 'scheduler', calling getCurrentOnCallUserFromScheduler with schedulerID='%s'", targetID)
 		return s.getCurrentOnCallUserFromScheduler(targetID, groupID)
 
 	case "current_schedule":
 		// Find current on-call user for the group
-		log.Printf("DEBUG: Target type is 'current_schedule', calling getCurrentOnCallUserFromGroup")
 		return s.getCurrentOnCallUserFromGroup(groupID)
 
 	case "group":
 		// For group assignment, we could assign to group leader or current on-call
 		// For now, let's assign to current on-call user in the group
-		log.Printf("DEBUG: Target type is 'group', calling getCurrentOnCallUserFromGroup")
 		return s.getCurrentOnCallUserFromGroup(groupID)
 
 	default:
 		// External or unknown target types don't have direct user assignment
-		log.Printf("DEBUG: Unknown target type '%s', returning no assignment", targetType)
 		return "", nil
 	}
 }
@@ -1253,7 +1224,6 @@ func (s *IncidentService) GetAssigneeFromEscalationPolicy(escalationPolicyID, gr
 // getCurrentOnCallUserFromScheduler gets the current on-call user from a specific scheduler
 // This uses the effective_shifts view which automatically handles schedule overrides
 func (s *IncidentService) getCurrentOnCallUserFromScheduler(schedulerID, groupID string) (string, error) {
-	log.Printf("DEBUG: getCurrentOnCallUserFromScheduler called with schedulerID='%s', groupID='%s'", schedulerID, groupID)
 
 	query := `
 		SELECT effective_user_id
@@ -1266,27 +1236,22 @@ func (s *IncidentService) getCurrentOnCallUserFromScheduler(schedulerID, groupID
 		LIMIT 1
 	`
 
-	log.Printf("DEBUG: Querying effective_shifts view for current on-call user in scheduler")
 
 	var userID string
 	err := s.PG.QueryRow(query, schedulerID, groupID).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("DEBUG: No current on-call user found for scheduler '%s' in group '%s'", schedulerID, groupID)
 			return "", nil // No one currently on-call for this scheduler
 		}
-		log.Printf("DEBUG: Database error querying effective_shifts: %v", err)
 		return "", fmt.Errorf("failed to get current on-call user from scheduler: %w", err)
 	}
 
-	log.Printf("DEBUG: Found current on-call user (effective) '%s' for scheduler '%s'", userID, schedulerID)
 	return userID, nil
 }
 
 // getCurrentOnCallUserFromGroup gets the current on-call user from the group
 // This uses the effective_shifts view which automatically handles schedule overrides
 func (s *IncidentService) getCurrentOnCallUserFromGroup(groupID string) (string, error) {
-	log.Printf("DEBUG: getCurrentOnCallUserFromGroup called with groupID='%s'", groupID)
 
 	query := `
 		SELECT effective_user_id
@@ -1298,27 +1263,22 @@ func (s *IncidentService) getCurrentOnCallUserFromGroup(groupID string) (string,
 		LIMIT 1
 	`
 
-	log.Printf("DEBUG: Querying effective_shifts view for current on-call user in group")
 
 	var userID string
 	err := s.PG.QueryRow(query, groupID).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("DEBUG: No current on-call user found for group '%s'", groupID)
 			return "", nil // No one currently on-call for this group
 		}
-		log.Printf("DEBUG: Database error querying effective_shifts: %v", err)
 		return "", fmt.Errorf("failed to get current on-call user from group: %w", err)
 	}
 
-	log.Printf("DEBUG: Found current on-call user (effective) '%s' for group '%s'", userID, groupID)
 	return userID, nil
 }
 
 // ManualEscalateIncident handles manual escalation triggered by user action
 // Returns the new escalation level, assigned user ID, and any error
 func (s *IncidentService) ManualEscalateIncident(incidentID, userID string) (*db.EscalationResult, error) {
-	log.Printf("DEBUG: ManualEscalateIncident called for incident %s by user %s", incidentID, userID)
 
 	// Get current incident state
 	var incident struct {
@@ -1368,8 +1328,6 @@ func (s *IncidentService) ManualEscalateIncident(incidentID, userID string) (*db
 
 	// Determine next level
 	nextLevel := incident.CurrentEscalationLevel + 1
-	log.Printf("DEBUG: Current level %d, next level %d, total levels %d",
-		incident.CurrentEscalationLevel, nextLevel, len(escalationLevels))
 
 	// Check if there's a next level available
 	var targetLevel *db.EscalationLevel
@@ -1410,7 +1368,6 @@ func (s *IncidentService) ManualEscalateIncident(incidentID, userID string) (*db
 		}
 	case "external":
 		// External escalation doesn't assign to a user
-		log.Printf("DEBUG: External escalation to target %s", targetLevel.TargetID)
 	default:
 		log.Printf("WARNING: Unknown target type: %s", targetLevel.TargetType)
 	}
@@ -1550,7 +1507,6 @@ func (s *IncidentService) getEscalationLevels(policyID string) ([]db.EscalationL
 
 // FindIncidentByFingerprint finds an incident by fingerprint in labels
 func (s *IncidentService) FindIncidentByFingerprint(fingerprint string) (*db.Incident, error) {
-	log.Printf("DEBUG: Searching for incident with fingerprint: %s", fingerprint)
 
 	query := `
 		SELECT id, title, description, status, urgency, priority,
@@ -1588,7 +1544,6 @@ func (s *IncidentService) FindIncidentByFingerprint(fingerprint string) (*db.Inc
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("DEBUG: No incident found with fingerprint: %s", fingerprint)
 			return nil, nil
 		}
 		log.Printf("ERROR: Database error searching for fingerprint %s: %v", fingerprint, err)
@@ -1654,6 +1609,5 @@ func (s *IncidentService) FindIncidentByFingerprint(fingerprint string) (*db.Inc
 		}
 	}
 
-	log.Printf("DEBUG: Found incident %s with fingerprint %s", incident.ID, fingerprint)
 	return &incident, nil
 }

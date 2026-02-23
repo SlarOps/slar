@@ -103,8 +103,14 @@ export default function SkillsTab() {
       return;
     }
 
-    // Basic GitHub URL validation
-    if (!newRepoUrl.includes('github.com')) {
+    // Validate GitHub URL using proper URL parsing (not substring check)
+    try {
+      const parsed = new URL(newRepoUrl.startsWith('http') ? newRepoUrl : `https://${newRepoUrl}`);
+      if (parsed.hostname !== 'github.com') {
+        toast.error('Invalid GitHub URL');
+        return;
+      }
+    } catch {
       toast.error('Invalid GitHub URL');
       return;
     }

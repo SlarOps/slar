@@ -14,6 +14,7 @@ This module handles:
 import os
 import json
 import logging
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -66,6 +67,9 @@ CLAUDE_PLUGINS_DIR = ".claude/plugins"  # Plugins location in workspace
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
 
 
+_UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+
 def get_user_workspace_path(user_id: str) -> Path:
     """
     Get workspace directory path for user.
@@ -74,11 +78,18 @@ def get_user_workspace_path(user_id: str) -> Path:
         user_id: User's UUID
 
     Returns:
-        Path to user's workspace directory
+        Path to user's workspace directory (validated against traversal)
+
+    Raises:
+        ValueError: If user_id is not a valid UUID
     """
-    workspace_root = Path(USER_WORKSPACES_DIR)
-    user_workspace = workspace_root / user_id
-    return user_workspace
+    if not user_id or not _UUID_PATTERN.match(user_id):
+        raise ValueError(f"Invalid user_id format: {user_id!r}")
+    workspace_root = Path(USER_WORKSPACES_DIR).resolve()
+    candidate = (workspace_root / user_id).resolve()
+    if not candidate.is_relative_to(workspace_root):
+        raise ValueError(f"Invalid user_id: path traversal detected")
+    return candidate
 
 
 def ensure_user_workspace(user_id: str) -> Path:

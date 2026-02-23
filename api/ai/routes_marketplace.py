@@ -156,6 +156,7 @@ def enrich_plugins_with_skills(marketplace_dir: Path, plugins: list) -> list:
     """
     enriched_plugins = []
 
+    marketplace_dir_resolved = marketplace_dir.resolve()
     for plugin in plugins:
         plugin_copy = dict(plugin)
         source = plugin.get("source", "./")
@@ -164,9 +165,15 @@ def enrich_plugins_with_skills(marketplace_dir: Path, plugins: list) -> list:
         source_clean = source.replace("./", "").strip("/")
 
         if source_clean:
-            plugin_dir = marketplace_dir / source_clean
+            candidate_dir = (marketplace_dir / source_clean).resolve()
+            # Prevent path traversal: ensure plugin dir stays within marketplace dir
+            if candidate_dir.is_relative_to(marketplace_dir_resolved):
+                plugin_dir = candidate_dir
+            else:
+                logger.warning(f"Plugin source path traversal attempt blocked: {source_clean}")
+                plugin_dir = marketplace_dir_resolved
         else:
-            plugin_dir = marketplace_dir
+            plugin_dir = marketplace_dir_resolved
 
         if plugin_dir.exists() and plugin_dir.is_dir():
             discovered_skills = discover_skills_in_plugin(plugin_dir)
@@ -249,6 +256,12 @@ async def install_plugin_from_marketplace(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
+        if not _is_valid_marketplace_name(plugin_name):
+            return {
+                "success": False,
+                "error": f"Invalid plugin name: {plugin_name}",
+            }
+
         provider_id = extract_user_id_from_token(auth_token)
         logger.info(f"User {provider_id}: Installing plugin {plugin_name} from {marketplace_name}")
 
@@ -319,15 +332,17 @@ async def install_plugin_from_marketplace(request: Request):
 
             clone_ok, clone_result = await clone_repository(**clone_kwargs)
             if not clone_ok:
+                logger.error(f"Auto re-clone failed for '{marketplace_name}': {clone_result}")
                 return {
                     "success": False,
-                    "error": f"Marketplace '{marketplace_name}' was missing and auto re-clone failed: {clone_result}",
+                    "error": "Marketplace was missing and auto re-clone failed. Check server logs for details.",
                 }
 
             logger.info(f"Auto re-clone successful before install (commit: {clone_result[:8]})")
 
         # Calculate install path from marketplace metadata
         # We use a Path object and ensure it's relative to the marketplace
+        plugins_root = (workspace_path / ".claude" / "plugins" / "marketplaces").resolve()
         base_plugins_path = Path(".claude") / "plugins" / "marketplaces" / marketplace_name
         install_path = base_plugins_path / plugin_name
 
@@ -337,7 +352,7 @@ async def install_plugin_from_marketplace(request: Request):
                     source_path = plugin_def.get("source", "./")
                     logger.info(f"Found plugin '{plugin_name}' with source: {source_path}")
 
-                    source_path_clean = source_path.replace("./", "")
+                    source_path_clean = source_path.replace("./", "").strip("/")
 
                     if source_path_clean:
                         install_path = base_plugins_path / source_path_clean
@@ -348,13 +363,17 @@ async def install_plugin_from_marketplace(request: Request):
                     break
             else:
                 logger.warning(f"Plugin '{plugin_name}' not found in marketplace metadata")
-        
-        # Convert back to string for database/compatibility if needed, 
+
+        # Validate install_path stays within workspace (prevents path traversal from source_path)
+        plugin_full_path = (workspace_path / install_path).resolve()
+        if not plugin_full_path.is_relative_to(plugins_root):
+            return {"success": False, "error": "Invalid plugin path"}
+
+        # Convert back to string for database/compatibility if needed,
         # but keep it as a Path for the exists() check
         install_path_str = str(install_path)
 
         # Verify plugin directory exists in git repo
-        plugin_full_path = workspace_path / install_path
         if not plugin_full_path.exists():
             logger.warning(f"Plugin directory not found: {plugin_full_path}")
             # Don't fail - plugin might use different structure
@@ -451,7 +470,8 @@ async def fetch_marketplace_metadata(request: Request):
             provider_id = extract_user_id_from_token(auth_token)
             logger.info(f"User {provider_id}: Fetching metadata for {owner}/{repo}@{branch}")
         except Exception as e:
-            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
+            logger.warning(f"Invalid auth token: {type(e).__name__}")
+            return {"success": False, "error": "Invalid auth token"}
 
         # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
@@ -600,7 +620,8 @@ async def clone_marketplace(request: Request):
             provider_id = extract_user_id_from_token(auth_token)
             logger.info(f"User {provider_id}: Cloning {owner}/{repo}@{branch}")
         except Exception as e:
-            return {"success": False, "error": f"Invalid auth token: {str(e)}"}
+            logger.warning(f"Invalid auth token: {type(e).__name__}")
+            return {"success": False, "error": "Invalid auth token"}
 
         # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
@@ -645,9 +666,10 @@ async def clone_marketplace(request: Request):
         success, result = await clone_repository(**clone_kwargs)
 
         if not success:
+            logger.error(f"Failed to clone marketplace repository: {result}")
             return {
                 "success": False,
-                "error": f"Failed to clone repository: {result}",
+                "error": "Failed to clone repository. Check server logs for details.",
             }
 
         commit_sha = result
@@ -818,9 +840,10 @@ async def refresh_marketplace_skills(request: Request):
         try:
             marketplace_metadata = json.loads(marketplace_json_path.read_text())
         except Exception as e:
+            logger.error(f"Failed to parse marketplace.json for '{marketplace_name}': {e}")
             return {
                 "success": False,
-                "error": f"Failed to parse marketplace.json: {str(e)}",
+                "error": "Failed to parse marketplace.json",
             }
 
         # Re-discover skills for all plugins
@@ -948,9 +971,10 @@ async def update_marketplace(request: Request):
 
             clone_ok, clone_result = await clone_repository(**clone_kwargs)
             if not clone_ok:
+                logger.error(f"Auto re-clone failed for '{marketplace_name}': {clone_result}")
                 return {
                     "success": False,
-                    "error": f"Auto re-clone failed: {clone_result}",
+                    "error": "Auto re-clone failed. Check server logs for details.",
                 }
 
             new_commit_sha = clone_result
@@ -1023,9 +1047,10 @@ async def update_marketplace(request: Request):
         success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
         if not success:
+            logger.error(f"Failed to update marketplace '{marketplace_name}': {result}")
             return {
                 "success": False,
-                "error": f"Failed to update: {result}",
+                "error": "Failed to update marketplace. Check server logs for details.",
             }
 
         new_commit_sha = result
@@ -1198,10 +1223,11 @@ async def update_all_marketplaces(request: Request):
                     "commit_sha": result,
                 })
             else:
+                logger.error(f"Failed to update marketplace '{mp_name}': {result}")
                 results.append({
                     "marketplace": mp_name,
                     "success": False,
-                    "error": result,
+                    "error": "Failed to update marketplace. Check server logs for details.",
                 })
 
         updated_count = sum(1 for r in results if r.get("success") and r.get("had_changes"))

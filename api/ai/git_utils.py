@@ -586,4 +586,4 @@ def sanitize_git_url(url: str) -> str:
     Returns:
         URL with credentials replaced by ***
     """
-    return re.sub(r"://([^:]+):([^@]+)@", "://***:***@", url)
+    return re.sub(r"://[^@]+@", "://***@", url)

@@ -87,8 +87,8 @@ async def test_credential_storage(client: VaultClient):
     
     if credential:
         print_result(True, "Retrieved credential")
-        print(f"   Username: {credential.get('username')}")
-        print(f"   Provider: {credential.get('provider')}")
+        print(f"   Has username: {bool(credential.get('username'))}")
+        print(f"   Has provider: {bool(credential.get('provider'))}")
         print(f"   Has token: {bool(credential.get('token'))}")
         
         # Verify data
