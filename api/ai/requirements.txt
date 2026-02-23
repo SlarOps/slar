@@ -9,7 +9,7 @@ certifi==2025.10.5
 cffi==2.0.0
 claude-agent-sdk==0.1.20
 click==8.3.0
-cryptography==46.0.3
+cryptography==46.0.5
 fastapi==0.120.4
 frozenlist==1.8.0
 h11==0.16.0
@@ -30,7 +30,7 @@ pydantic_core==2.41.4
 PyJWT==2.10.1
 Authlib==1.6.6
 python-dotenv==1.2.1
-python-multipart==0.0.20
+python-multipart==0.0.22
 PyYAML==6.0.3
 referencing==0.37.0
 rpds-py==0.28.0

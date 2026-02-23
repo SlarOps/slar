@@ -66,13 +66,13 @@ opentelemetry-exporter-otlp-proto-grpc==1.37.0
 opentelemetry-proto==1.37.0
 opentelemetry-sdk==1.37.0
 opentelemetry-semantic-conventions==0.58b0
-orjson==3.11.3
+orjson==3.11.5
 overrides==7.7.0
 packaging==25.0
-pillow==11.3.0
+pillow==12.1.1
 posthog==5.4.0
 propcache==0.3.2
-protobuf==5.29.5
+protobuf==5.29.6
 psycopg2==2.9.10
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
@@ -85,7 +85,7 @@ PyPika==0.48.9
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
-python-multipart==0.0.20
+python-multipart==0.0.22
 PyYAML==6.0.2
 referencing==0.36.2
 regex==2025.9.1
