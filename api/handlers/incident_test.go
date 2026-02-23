@@ -91,9 +91,9 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 
 	// Create Service with mocked DB
 	// Note: We need to initialize the service with dependencies.
-	// Since we can't easily mock the internal fields of IncidentService (like Redis/FCM),
+	// Since we can't easily mock the internal fields of IncidentService (like FCM),
 	// we'll pass nil for them as they shouldn't be used in GetIncident (read-only).
-	incidentService := services.NewIncidentService(db, nil, nil)
+	incidentService := services.NewIncidentService(db, nil)
 	serviceService := services.NewServiceService(db) // For routing_key lookup
 
 	// Create Handler
@@ -229,8 +229,9 @@ func TestIncidentHandler_GetIncident_ReBAC(t *testing.T) {
 
 		mockDB.ExpectQuery("SELECT .* FROM incidents").WithArgs("inc-3").WillReturnRows(rows)
 
-		// Mock Authorizer NOT called because ad-hoc check passes first
-		// (No expectation set for Check)
+		// Authorizer is still called - ad-hoc access is not implemented in checkIncidentAccess
+		// The user needs project-level access to view the incident
+		mockAuthorizer.On("Check", mock.Anything, "user-1", authz.ActionView, authz.ResourceProject, "proj-3").Return(true)
 
 		// Make Request
 		w := httptest.NewRecorder()

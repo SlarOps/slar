@@ -1,160 +1,304 @@
 <p align="center">
-  <img src="./images/icon.svg" alt="SLAR Icon" width="80">
+  <img src="./images/icon.svg" alt="SLAR Icon" width="100">
 </p>
 
-<h1 align="center">SLAR - Smart Live Alert & Response</h1>
+<h1 align="center">SLAR</h1>
 
 <p align="center">
-  <strong>AI-powered incident analysis — understand issues faster, resolve smarter</strong>
+  <strong>The open-source AI on-call platform that resolves incidents, not just pages you about them</strong>
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#why-slar">Why SLAR</a> •
-  <a href="#features">Features</a> •
-  <a href="#roadmap">Roadmap</a>
+  <a href="https://github.com/SlarOps/slar/stargazers"><img src="https://img.shields.io/github/stars/SlarOps/slar?style=flat-square&logo=github&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/SlarOps/slar/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/SlarOps/slar/actions/workflows/lint.yml"><img src="https://github.com/SlarOps/slar/actions/workflows/lint.yml/badge.svg?branch=main" alt="Lint"></a>
+  <a href="https://github.com/SlarOps/slar/actions/workflows/build.yaml"><img src="https://github.com/SlarOps/slar/actions/workflows/build.yaml/badge.svg?branch=main" alt="Build"></a>
+  <a href="https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql"><img src="https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql/badge.svg" alt="CodeQL"></a>
+</p>
+
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-why-slar">Why SLAR</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#%EF%B8%8F-roadmap">Roadmap</a>
+</p>
+
+<p align="center">
+  <img src="./images/web.png" alt="SLAR Web Interface" width="700">
 </p>
 
 ---
 
-### Why SLAR?
+## The Problem with On-Call Today
 
-Most on-call tools just **notify** you. SLAR **resolves** incidents.
+It's 3 AM. An alert fires. Your engineer wakes up, spends 45 minutes digging through dashboards, runbooks, and logs — only to find it was a cache miss that needed a single command to fix.
+
+**SLAR changes this.** Your AI agent is already awake, already investigating, already has a remediation plan waiting for your approval.
+
+---
+
+## Why SLAR?
 
 | Traditional On-Call | With SLAR |
 |---------------------|-----------|
-| Alert fires → You wake up → Investigate → Fix | **AI Pilot** investigates & remediates while you sleep |
-| Manually write post-mortem after incident | **Automated RCA** generates root cause analysis in real-time |
-| Search through runbooks and dashboards | **Chat with your infrastructure** - AI understands your context |
-| Hope the on-call engineer knows what to do | **AI-guided troubleshooting** with approval workflows |
-
-### Key Differentiators
-
-- **AI Pilot** - Autonomous remediation for routine incidents
-- **Automated RCA** - Instant root cause analysis when incidents occur
-- **Chat with Infra** - Context-aware AI that understands your stack
-- **Zero-Trust Security** - End-to-end encryption for all AI conversations
-- **Human-in-the-Loop** - Approval workflows ensure AI actions are verified
-- **Open Source** - Self-host, customize, no vendor lock-in (AGPLv3)
-
----
-[![Lint](https://github.com/SlarOps/slar/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/SlarOps/slar/actions/workflows/lint.yml)
-[![CodeQL](https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/SlarOps/slar/actions/workflows/github-code-scanning/codeql)
-[![Build Docker](https://github.com/SlarOps/slar/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/SlarOps/slar/actions/workflows/build.yaml)
-
-### What is SLAR?
-
-SLAR is an open-source, AI-native on-call management platform. It combines traditional on-call features (rotations, escalations, integrations) with AI-powered incident response that can investigate, diagnose, and remediate issues autonomously.
-
-<p align="center">
-<img src="./images/mobile.png" alt="SLAR Mobile" width="200"> <img src="./images/web.png" alt="SLAR Web" width="600">
-</p>
+| Alert fires → Engineer wakes up → Investigate → Fix | AI investigates while you sleep, wakes you only if needed |
+| Manually correlate logs, metrics, traces | AI Chat understands your entire infrastructure context |
+| Write post-mortem hours after the incident | Automated RCA generated in real-time as it happens |
+| Hope the on-call engineer has the right runbook | AI-guided troubleshooting with human-in-the-loop approval |
+| PagerDuty/OpsGenie costs $20-40/user/month | Self-hosted, $0/user, full control |
 
 ---
 
-### Configuration via Config File
+## Features
 
-For more granular control, especially in production or when managing multiple services, you can use a `config.yaml` file instead of (or alongside) environment variables.
+### AI-Powered Incident Response
+
+- **AI Pilot** — Autonomous Claude-powered agent that investigates alerts, suggests fixes, and executes remediations with your approval
+- **Real-time AI Chat** — WebSocket-based chat with your infrastructure. Ask "why is payment service slow?" and get answers
+- **MCP Tools** — Extend AI capabilities with [Model Context Protocol](https://modelcontextprotocol.io) servers. Connect Kubernetes, databases, cloud APIs — anything
+- **Tool Approval** — Human-in-the-loop security. AI proposes actions, you approve before execution
+- **Multi-Agent Architecture** — Route different projects to specialized AI agents. Critical services get dedicated agents; others share a default
+- **Automated RCA** — Root cause analysis generated automatically as incidents unfold
+
+### On-Call Management
+
+- **Smart Schedules** — Visual rotation builder with overrides, holidays, and timezone support
+- **Escalation Policies** — Multi-stage escalation with configurable timeouts
+- **Incident Lifecycle** — Trigger, acknowledge, resolve — full PagerDuty-compatible workflow
+- **Teams & Groups** — Organize responders with relationship-based access control (ReBAC)
+
+### Integrations
+
+- **Alertmanager / Prometheus** — Native webhook receiver
+- **Datadog** — Webhook integration for all Datadog monitors
+- **Slack** — Bidirectional: receive alerts, take actions from Slack
+- **Generic Webhooks** — Works with any tool that can send HTTP
+
+### Security & Enterprise
+
+- **OIDC Authentication** — Works with Zitadel, Keycloak, Auth0, Okta, Google, Azure AD
+- **Zero-Trust AI Channel** — End-to-end encrypted channel between mobile and AI agent
+- **Multi-tenant** — Full org and project isolation with ReBAC
+- **Audit Logs** — Every AI action and tool execution is logged
+- **Credential Vault** — Per-project credential management for AI agents
+
+### Infrastructure
+
+- **Edge Monitoring** — Global uptime checks via Cloudflare Workers
+- **Mobile App** — iOS/Android with push notifications and QR-code device pairing
+- **Self-hosted** — Docker Compose for local, Helm chart for Kubernetes
+- **Open Source** — AGPLv3, no vendor lock-in
 
 ---
 
-### Docker Compose (Local / Staging)
+## Architecture
 
-The easiest way to get started. Migrations are applied automatically.
+```
+┌─────────────────────────────────────────────────────┐
+│                    Clients                          │
+│           Web (Next.js)   Mobile App                │
+└──────────────┬──────────────────┬───────────────────┘
+               │                  │ Zero-Trust (E2E encrypted)
+               ▼                  ▼
+┌─────────────────────────────────────────────────────┐
+│              Control Plane (Go API)                 │
+│  • REST API    • WebSocket Proxy   • Agent Registry │
+│  • JWT Auth    • Incident Engine   • Alert Routing  │
+└──────────────┬──────────────────────────────────────┘
+               │ Multi-agent routing
+       ┌───────┴────────┐
+       ▼                ▼
+  ┌─────────┐      ┌─────────┐
+  │ AI Agent│      │ AI Agent│   Claude Agent SDK
+  │(Project)│      │  (Org)  │   + MCP Servers
+  └─────────┘      └─────────┘
+       │
+  ┌────┴─────────────────────┐
+  │     MCP Tool Servers     │
+  │  Incidents │ Memory │ …  │
+  └──────────────────────────┘
+```
 
-#### Step 1: Clone and Configure
+**Tech Stack:**
+- **API**: Go + Gin — fast, low-overhead control plane
+- **AI Agent**: Python + FastAPI + [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents) (Anthropic)
+- **Frontend**: Next.js 15 + React 19
+- **Database**: PostgreSQL + PGMQ (async queue, no Redis required)
+- **Auth**: OIDC-native, bring your own provider
+
+---
+
+## Quick Start
+
+Get SLAR running locally in ~5 minutes with built-in Zitadel authentication.
+
+### 1. Clone and Start
 
 ```bash
-# Get the code
 git clone https://github.com/slarops/slar.git
+cd slar/deploy/docker
 
-# Make your new project directory
-mkdir slar-project
+cp volumes/config/cfg.ex.yaml volumes/config/dev.config.yaml
 
-# Tree should look like this
-# .
-# ├── slar
-# └── slar-project
-
-# Copy the compose files over to your project
-cp -r slar/deploy/docker slar-project/
-
-# Copy config
-cp slar-project/docker/volumes/config/cfg.ex.yaml slar-project/docker/volumes/config/dev.config.yaml
-
-# Switch to your project directory
-cd slar-project/docker
 docker compose up -d
 ```
 
-**Access Points:**
-*   **console**: http://localhost:8080
+Wait ~2 minutes, then check:
+```bash
+docker compose ps
+```
+
+### 2. Create OIDC App in Zitadel
+
+1. Open **http://localhost:8080/ui/console**
+2. Login: `zitadel-admin@zitadel.localhost` / `Password1!`
+3. Create Project → **New Application**
+   - Type: **Web**, Auth Method: **PKCE**
+   - Redirect URI: `http://localhost:3001/api/auth/callback/oidc`
+   - Post Logout URI: `http://localhost:3001/login`
+4. Copy the **Client ID**
+
+### 3. Configure
+
+Create `deploy/docker/.env`:
+
+```bash
+OIDC_ISSUER=http://localhost:8080
+OIDC_CLIENT_ID=<your-client-id>
+NEXTAUTH_URL=http://localhost:3001
+NEXTAUTH_SECRET=$(openssl rand -base64 32)
+
+# For AI features:
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 4. Start
+
+```bash
+docker compose up -d web --force-recreate
+```
+
+Open **http://localhost:3001** → Sign in with SSO → Done.
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Web | http://localhost:3001 | Frontend |
+| API | http://localhost:8081 | Go API |
+| AI Agent | http://localhost:8002 | Claude Agent |
+| Gateway | http://localhost:8000 | Kong |
 
 ---
 
-### 3. Kubernetes (Production)
+## Bring Your Own OIDC Provider
 
-We provide a specialized Helm chart for production deployments.
+No lock-in to any auth provider:
 
-#### Step 1: Create Secrets
+| Provider | `OIDC_ISSUER` |
+|----------|---------------|
+| Zitadel (bundled) | `http://localhost:8080` |
+| Keycloak | `https://keycloak.example.com/realms/master` |
+| Auth0 | `https://your-tenant.auth0.com` |
+| Okta | `https://your-org.okta.com` |
+| Google | `https://accounts.google.com` |
+| Azure AD | `https://login.microsoftonline.com/{tenant}/v2.0` |
 
-Avoid putting sensitive data in `values.yaml`. Use Kubernetes Secrets:
+---
+
+## Kubernetes / Production
 
 ```bash
-# Get the code
-git clone https://github.com/slarops/slar.git
+cp -r deploy/helm/slar your-infra/
+cp your-infra/slar/cfg.ex.yaml your-infra/slar/config.yaml
+# edit config.yaml
 
-# Make your new project directory
-mkdir slar-project
-
-# Tree should look like this
-# .
-# ├── slar
-# └── slar-project
-
-# Copy the compose files over to your project
-cp -r slar/deploy/helm slar-project/
-
-# Copy config
-cp slar-project/helm/slar/cfg.ex.yaml slar-project/helm/slar/dev.config.yaml
-
-# Switch to your project directory
-cd slar-project/helm/slar
-helm install slar . -f values.yaml
+helm install slar your-infra/slar -f your-infra/slar/values.yaml
 ```
 
-For advanced configuration (Ingress, Persistent Storage, Resources), see [helm](deploy/helm/slar/README.md).
+See [Helm README](deploy/helm/slar/README.md) for Ingress, TLS, resource tuning.
 
 ---
 
 ## Roadmap
 
-We are constantly working to make SLAR the most powerful and intuitive on-call management platform. Here's what we've built and where we're headed.
+### On-Call Management
+- [x] Visual on-call scheduler with rotation overrides
+- [x] Multi-stage escalation policies
+- [x] Incident lifecycle (trigger → acknowledge → resolve)
+- [x] Teams, groups, and ReBAC access control
+- [ ] PagerDuty / OpsGenie migration import
 
-### Core On-Call Management
-- [x] **Groups & Teams**: Organize your responders into logical units.
-- [x] **Flexible Scheduler**: Visual on-call rotation management with override support.
-- [x] **Escalation Policies**: Define multi-stage escalation rules for critical incidents.
-- [ ] **Advanced Routing**: Route alerts based on service, severity, or custom tags.
+### AI & Automation
+- [x] Claude-powered AI Chat (real-time WebSocket)
+- [x] MCP tool servers (extensible AI capabilities)
+- [x] Human-in-the-loop tool approval
+- [x] Autonomous AI Pilot for incident remediation
+- [x] Multi-agent routing (project-specific + org-level)
+- [x] AI cost tracking and analytics
+- [ ] Runbook execution via AI
+- [ ] AI learns from past incidents (knowledge base)
+- [ ] AI Chat on Mobile
 
-### Integrations & Notifications
-- [x] **Datasources**: Native support for **Datadog** and **Prometheus**.
-- [x] **Slack Notification**: Get alerts and interact with incidents directly from Slack.
-- [x] **Webhooks**: Generic webhook support for any third-party tool.
+### Integrations
+- [x] Alertmanager / Prometheus
+- [x] Datadog
+- [x] Slack (bidirectional)
+- [x] Generic webhooks
+- [ ] PagerDuty compatible webhook receiver
 
-### AI-Powered Incident Response
-- [x] **AI Chat (Chat with Infra)**: Context-aware AI that understands your infrastructure.
-- [x] **Real-time Incident Resolution**: AI-guided troubleshooting and automated suggestions.
-- [x] **Approval Workflows**: Ensure AI-driven actions are approved by human operators.
-- [x] **Zero-Trust Security (E2EE)**: End-to-end encryption for sensitive AI conversations.
-- [x] **AI Pilot**: Let the AI handle routine remediation steps autonomously.
-- [x] **Automated Root Cause Analysis**: Instant post-mortems and analysis when an incident occurs.
+### Security & Enterprise
+- [x] OIDC (Zitadel, Keycloak, Auth0, Okta, Google, Azure AD)
+- [x] Zero-Trust AI channel (E2E encrypted)
+- [x] Audit logs
+- [x] Per-project credential vault
+- [ ] SAML SSO
 
-### Mobile Experience
-- [ ] **Mobile App** (Coming Soon): Manage on-call, acknowledge alerts, and chat with AI on the go.
+### Monitoring
+- [x] Edge monitoring via Cloudflare Workers
+- [x] HTTP/HTTPS uptime checks
+- [x] Status dashboard
+- [ ] Public status page
+
+---
+
+## Contributing
+
+We welcome contributions! SLAR is built by engineers who got tired of paying for PagerDuty.
+
+```bash
+# Backend (Go)
+cd api && air          # hot reload
+
+# AI Agent (Python)
+cd api/ai && python claude_agent_api_v1.py
+
+# Frontend (Next.js)
+cd web/slar && npm run dev
+```
+
+See [CLAUDE.md](CLAUDE.md) for architecture details and development guide.
+
+---
+
+## Self-Hosted vs. Cloud
+
+SLAR is designed to run **on your infrastructure**:
+
+- Your data never leaves your environment
+- No per-seat pricing — scale to 1000 engineers for free
+- Customize AI prompts, tools, and workflows
+- Integrate with internal systems AI agents can't access from the cloud
 
 ---
 
 ## License
 
-AGPLv3 License - see [LICENSE](LICENSE) for details.
+AGPLv3 — see [LICENSE](LICENSE). Self-host freely. Modifications to the source must be open-sourced under the same license.
+
+---
+
+<p align="center">
+  <strong>If SLAR saves your team from a 3 AM incident, consider giving it a star.</strong>
+  <br>
+  <a href="https://github.com/SlarOps/slar/stargazers">⭐ Star on GitHub</a>
+</p>

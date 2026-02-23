@@ -1,0 +1,331 @@
+{{/*
+Dex IDP - Lightweight OIDC Provider for SLAR
+Supports: Google, GitHub, LDAP, SAML, and other identity providers
+*/}}
+{{- if .Values.dex.enabled }}
+---
+# Dex ConfigMap - OIDC Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "slar.fullname" . }}-dex-config
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+data:
+  config.yaml: |
+    issuer: {{ .Values.dex.config.issuer | default (printf "http://%s-dex:5556/dex" .Release.Name) }}
+
+    storage:
+      type: {{ .Values.dex.config.storage.type | default "sqlite3" }}
+      config:
+        {{- if eq (.Values.dex.config.storage.type | default "sqlite3") "sqlite3" }}
+        file: /var/dex/dex.db
+        {{- else if eq .Values.dex.config.storage.type "postgres" }}
+        host: {{ .Values.dex.config.storage.config.host | default (printf "%s-postgresql" .Release.Name) }}
+        port: {{ .Values.dex.config.storage.config.port | default 5432 }}
+        database: {{ .Values.dex.config.storage.config.database | default "dex" }}
+        user: {{ .Values.dex.config.storage.config.user | default "dex" }}
+        password: {{ .Values.dex.config.storage.config.password | default "dex" }}
+        ssl:
+          mode: {{ .Values.dex.config.storage.config.sslMode | default "disable" }}
+        {{- end }}
+
+    web:
+      http: 0.0.0.0:5556
+
+    telemetry:
+      http: 0.0.0.0:5558
+
+    {{- if .Values.dex.config.grpc }}
+    grpc:
+      addr: 0.0.0.0:5557
+    {{- end }}
+
+    {{- if .Values.dex.config.expiry }}
+    expiry:
+      signingKeys: {{ .Values.dex.config.expiry.signingKeys | default "6h" | quote }}
+      idTokens: {{ .Values.dex.config.expiry.idTokens | default "24h" | quote }}
+      refreshTokens:
+        validIfNotUsedFor: {{ .Values.dex.config.expiry.refreshTokens.validIfNotUsedFor | default "168h" | quote }}
+        absoluteLifetime: {{ .Values.dex.config.expiry.refreshTokens.absoluteLifetime | default "720h" | quote }}
+    {{- end }}
+
+    oauth2:
+      skipApprovalScreen: {{ .Values.dex.config.oauth2.skipApprovalScreen | default true }}
+      {{- if .Values.dex.config.oauth2.responseTypes }}
+      responseTypes:
+        {{- toYaml .Values.dex.config.oauth2.responseTypes | nindent 8 }}
+      {{- end }}
+
+    # Static clients for SLAR
+    staticClients:
+      # Web client - confidential (with secret)
+      - id: {{ .Values.dex.config.staticClients.slar.id | default "slar-web" }}
+        name: {{ .Values.dex.config.staticClients.slar.name | default "SLAR Web Application" }}
+        secret: {{ .Values.dex.config.staticClients.slar.secret | default "slar-dex-secret" }}
+        redirectURIs:
+          {{- if .Values.dex.config.staticClients.slar.redirectURIs }}
+          {{- toYaml .Values.dex.config.staticClients.slar.redirectURIs | nindent 10 }}
+          {{- else }}
+          - {{ printf "http://%s-kong:8000/api/auth/callback/oidc" .Release.Name }}
+          {{- end }}
+      {{- if and .Values.dex.config.staticClients.mobile .Values.dex.config.staticClients.mobile.enabled }}
+      # Mobile client - PUBLIC (no secret, supports PKCE)
+      # This allows mobile apps to authenticate via Google without needing a client secret
+      - id: {{ .Values.dex.config.staticClients.mobile.id | default "slar-mobile" }}
+        name: {{ .Values.dex.config.staticClients.mobile.name | default "SLAR Mobile App" }}
+        {{- if .Values.dex.config.staticClients.mobile.public }}
+        public: true
+        {{- end }}
+        redirectURIs:
+          {{- if .Values.dex.config.staticClients.mobile.redirectURIs }}
+          {{- toYaml .Values.dex.config.staticClients.mobile.redirectURIs | nindent 10 }}
+          {{- else }}
+          - "slar://auth/callback"
+          - "io.slar.app://callback"
+          {{- end }}
+      {{- end }}
+      {{- if .Values.dex.config.staticClients.additional }}
+      {{- toYaml .Values.dex.config.staticClients.additional | nindent 6 }}
+      {{- end }}
+
+    # Identity Provider Connectors
+    connectors:
+      {{- if .Values.dex.connectors.google.enabled }}
+      - type: google
+        id: google
+        name: {{ .Values.dex.connectors.google.name | default "Google" }}
+        config:
+          clientID: {{ .Values.dex.connectors.google.clientID | required "dex.connectors.google.clientID is required when Google connector is enabled" }}
+          clientSecret: {{ .Values.dex.connectors.google.clientSecret | required "dex.connectors.google.clientSecret is required when Google connector is enabled" }}
+          redirectURI: {{ .Values.dex.connectors.google.redirectURI | default (printf "%s/callback" (.Values.dex.config.issuer | default (printf "http://%s-dex:5556/dex" .Release.Name))) }}
+          {{- if .Values.dex.connectors.google.hostedDomains }}
+          hostedDomains:
+            {{- toYaml .Values.dex.connectors.google.hostedDomains | nindent 12 }}
+          {{- end }}
+          {{- if .Values.dex.connectors.google.serviceAccountFilePath }}
+          serviceAccountFilePath: {{ .Values.dex.connectors.google.serviceAccountFilePath }}
+          adminEmail: {{ .Values.dex.connectors.google.adminEmail }}
+          {{- end }}
+      {{- end }}
+
+      {{- if .Values.dex.connectors.github.enabled }}
+      - type: github
+        id: github
+        name: {{ .Values.dex.connectors.github.name | default "GitHub" }}
+        config:
+          clientID: {{ .Values.dex.connectors.github.clientID | required "dex.connectors.github.clientID is required when GitHub connector is enabled" }}
+          clientSecret: {{ .Values.dex.connectors.github.clientSecret | required "dex.connectors.github.clientSecret is required when GitHub connector is enabled" }}
+          redirectURI: {{ .Values.dex.connectors.github.redirectURI | default (printf "%s/callback" (.Values.dex.config.issuer | default (printf "http://%s-dex:5556/dex" .Release.Name))) }}
+          {{- if .Values.dex.connectors.github.orgs }}
+          orgs:
+            {{- toYaml .Values.dex.connectors.github.orgs | nindent 12 }}
+          {{- end }}
+          {{- if .Values.dex.connectors.github.loadAllGroups }}
+          loadAllGroups: {{ .Values.dex.connectors.github.loadAllGroups }}
+          {{- end }}
+          {{- if .Values.dex.connectors.github.teamNameField }}
+          teamNameField: {{ .Values.dex.connectors.github.teamNameField }}
+          {{- end }}
+          {{- if .Values.dex.connectors.github.useLoginAsID }}
+          useLoginAsID: {{ .Values.dex.connectors.github.useLoginAsID }}
+          {{- end }}
+      {{- end }}
+
+      {{- if .Values.dex.connectors.ldap.enabled }}
+      - type: ldap
+        id: ldap
+        name: {{ .Values.dex.connectors.ldap.name | default "LDAP" }}
+        config:
+          host: {{ .Values.dex.connectors.ldap.host | required "dex.connectors.ldap.host is required when LDAP connector is enabled" }}
+          {{- if .Values.dex.connectors.ldap.insecureNoSSL }}
+          insecureNoSSL: {{ .Values.dex.connectors.ldap.insecureNoSSL }}
+          {{- end }}
+          {{- if .Values.dex.connectors.ldap.insecureSkipVerify }}
+          insecureSkipVerify: {{ .Values.dex.connectors.ldap.insecureSkipVerify }}
+          {{- end }}
+          bindDN: {{ .Values.dex.connectors.ldap.bindDN }}
+          bindPW: {{ .Values.dex.connectors.ldap.bindPW }}
+          userSearch:
+            baseDN: {{ .Values.dex.connectors.ldap.userSearch.baseDN }}
+            filter: {{ .Values.dex.connectors.ldap.userSearch.filter | default "(objectClass=person)" }}
+            username: {{ .Values.dex.connectors.ldap.userSearch.username | default "uid" }}
+            idAttr: {{ .Values.dex.connectors.ldap.userSearch.idAttr | default "uid" }}
+            emailAttr: {{ .Values.dex.connectors.ldap.userSearch.emailAttr | default "mail" }}
+            nameAttr: {{ .Values.dex.connectors.ldap.userSearch.nameAttr | default "cn" }}
+          {{- if .Values.dex.connectors.ldap.groupSearch }}
+          groupSearch:
+            baseDN: {{ .Values.dex.connectors.ldap.groupSearch.baseDN }}
+            filter: {{ .Values.dex.connectors.ldap.groupSearch.filter | default "(objectClass=groupOfNames)" }}
+            userMatchers:
+              {{- toYaml .Values.dex.connectors.ldap.groupSearch.userMatchers | nindent 14 }}
+            nameAttr: {{ .Values.dex.connectors.ldap.groupSearch.nameAttr | default "cn" }}
+          {{- end }}
+      {{- end }}
+
+      {{- if .Values.dex.connectors.oidc.enabled }}
+      - type: oidc
+        id: {{ .Values.dex.connectors.oidc.id | default "upstream-oidc" }}
+        name: {{ .Values.dex.connectors.oidc.name | default "Upstream OIDC" }}
+        config:
+          issuer: {{ .Values.dex.connectors.oidc.issuer | required "dex.connectors.oidc.issuer is required when OIDC connector is enabled" }}
+          clientID: {{ .Values.dex.connectors.oidc.clientID | required "dex.connectors.oidc.clientID is required when OIDC connector is enabled" }}
+          clientSecret: {{ .Values.dex.connectors.oidc.clientSecret | required "dex.connectors.oidc.clientSecret is required when OIDC connector is enabled" }}
+          redirectURI: {{ .Values.dex.connectors.oidc.redirectURI | default (printf "%s/callback" (.Values.dex.config.issuer | default (printf "http://%s-dex:5556/dex" .Release.Name))) }}
+          {{- if .Values.dex.connectors.oidc.scopes }}
+          scopes:
+            {{- toYaml .Values.dex.connectors.oidc.scopes | nindent 12 }}
+          {{- end }}
+      {{- end }}
+
+      {{- if .Values.dex.connectors.additional }}
+      {{- toYaml .Values.dex.connectors.additional | nindent 6 }}
+      {{- end }}
+
+    {{- if .Values.dex.config.enablePasswordDB }}
+    enablePasswordDB: true
+    {{- if .Values.dex.config.staticPasswords }}
+    staticPasswords:
+      {{- toYaml .Values.dex.config.staticPasswords | nindent 6 }}
+    {{- end }}
+    {{- end }}
+
+---
+# Dex Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "slar.fullname" . }}-dex
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+spec:
+  replicas: {{ .Values.dex.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "slar.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dex
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toYaml .Values.dex.config | sha256sum }}
+      labels:
+        {{- include "slar.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dex
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "slar.serviceAccountName" . }}
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: dex
+          image: "{{ .Values.dex.image.repository | default "ghcr.io/dexidp/dex" }}:{{ .Values.dex.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.dex.image.pullPolicy | default "IfNotPresent" }}
+          command: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 5556
+              protocol: TCP
+            - name: telemetry
+              containerPort: 5558
+              protocol: TCP
+            {{- if .Values.dex.config.grpc }}
+            - name: grpc
+              containerPort: 5557
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: telemetry
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: telemetry
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml (.Values.dex.resources | default (dict "limits" (dict "cpu" "100m" "memory" "128Mi") "requests" (dict "cpu" "50m" "memory" "64Mi"))) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+            - name: data
+              mountPath: /var/dex
+          {{- if .Values.dex.connectors.google.serviceAccountFilePath }}
+            - name: google-sa
+              mountPath: /etc/dex/google
+              readOnly: true
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "slar.fullname" . }}-dex-config
+        - name: data
+          {{- if .Values.dex.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "slar.fullname" . }}-dex-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.dex.connectors.google.serviceAccountSecretName }}
+        - name: google-sa
+          secret:
+            secretName: {{ .Values.dex.connectors.google.serviceAccountSecretName }}
+        {{- end }}
+
+---
+# Dex Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "slar.fullname" . }}-dex
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+spec:
+  type: {{ .Values.dex.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.dex.service.port | default 5556 }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.dex.config.grpc }}
+    - port: 5557
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+    {{- end }}
+  selector:
+    {{- include "slar.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+
+{{- if .Values.dex.persistence.enabled }}
+---
+# Dex PVC for SQLite storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "slar.fullname" . }}-dex-data
+  labels:
+    {{- include "slar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+spec:
+  accessModes:
+    - {{ .Values.dex.persistence.accessMode | default "ReadWriteOnce" }}
+  {{- if .Values.dex.persistence.storageClass }}
+  storageClassName: {{ .Values.dex.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dex.persistence.size | default "1Gi" }}
+{{- end }}
+{{- end }}

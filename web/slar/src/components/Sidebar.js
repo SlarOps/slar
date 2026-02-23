@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,10 +50,17 @@ const NAV_ITEMS = [
     href: '/agent-config',
     label: 'Integrations',
     icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" />
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
       </svg>
     ),
+    subItems: [
+      { href: '/agent-config/credentials', label: 'Credentials' },
+      { href: '/agent-config/marketplace', label: 'Marketplace' },
+      { href: '/agent-config/mcp-servers', label: 'MCP Servers' },
+      { href: '/agent-config/allowed-tools', label: 'Allowed Tools' },
+      { href: '/agent-config/local-memory', label: 'Project Memory' },
+    ],
   },
   {
     href: '/organizations',
@@ -76,11 +84,29 @@ const NAV_ITEMS = [
 
 const BOTTOM_NAV_ITEMS = [
   {
+    href: '/policies',
+    label: 'Policies',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+      </svg>
+    ),
+  },
+  {
     href: '/audit',
     label: 'Audit Logs',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+      </svg>
+    ),
+  },
+  {
+    href: '/cost',
+    label: 'AI Costs',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
     ),
   },
@@ -100,9 +126,14 @@ export default function Sidebar() {
   const { collapsed, setCollapsed, isMobile } = useSidebar();
   const pathname = usePathname();
   const { user, signOut, isAuthenticated } = useAuth();
+  const [expandedMenus, setExpandedMenus] = useState({});
 
   const toggleCollapsed = () => {
     setCollapsed(!collapsed);
+  };
+
+  const toggleSubmenu = (href) => {
+    setExpandedMenus(prev => ({ ...prev, [href]: !prev[href] }));
   };
 
   // Don't show on auth pages or onboarding
@@ -153,21 +184,69 @@ export default function Sidebar() {
         <ul className="space-y-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+            const hasSubItems = item.subItems && item.subItems.length > 0;
+            const isExpanded = expandedMenus[item.href] || isActive;
+
             return (
               <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${isActive
-                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
-                    } ${collapsed ? 'justify-center' : ''}`}
-                  title={collapsed ? item.label : undefined}
-                >
-                  <span className={`flex-shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'}`}>
-                    {item.icon}
-                  </span>
-                  {!collapsed && <span>{item.label}</span>}
-                </Link>
+                {hasSubItems && !collapsed ? (
+                  <>
+                    <button
+                      onClick={() => toggleSubmenu(item.href)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${isActive
+                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                      <span className={`flex-shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'}`}>
+                        {item.icon}
+                      </span>
+                      <span className="flex-1 text-left">{item.label}</span>
+                      <svg
+                        className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {isExpanded && (
+                      <ul className="mt-1 ml-4 pl-4 border-l border-gray-200 dark:border-gray-700 space-y-1">
+                        {item.subItems.map((subItem) => {
+                          const isSubActive = pathname === subItem.href;
+                          return (
+                            <li key={subItem.href}>
+                              <Link
+                                href={subItem.href}
+                                className={`block px-3 py-2 rounded-lg text-sm transition-all duration-200 ${isSubActive
+                                  ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium'
+                                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
+                                  }`}
+                              >
+                                {subItem.label}
+                              </Link>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <Link
+                    href={hasSubItems ? item.subItems[0].href : item.href}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${isActive
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
+                      } ${collapsed ? 'justify-center' : ''}`}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <span className={`flex-shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'}`}>
+                      {item.icon}
+                    </span>
+                    {!collapsed && <span>{item.label}</span>}
+                  </Link>
+                )}
               </li>
             );
           })}

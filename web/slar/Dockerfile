@@ -18,6 +18,10 @@ COPY . .
 # This will be set by docker-compose, but good to have a default
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# NOTE: NEXT_PUBLIC_* vars are NOT needed at build time anymore
+# They are fetched at runtime via /api/config endpoint
+# This allows the same Docker image to work across all environments
+
 # Build the application
 RUN npm run build
 
@@ -40,8 +44,13 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Copy entrypoint script for runtime env injection
+COPY --chown=nextjs:nodejs docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 USER nextjs
 
 EXPOSE 3000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

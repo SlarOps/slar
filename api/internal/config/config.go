@@ -6,13 +6,16 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
+	"github.com/vanchonlee/slar/internal/logger"
 )
 
 // Config holds all application configuration
 type Config struct {
 	DatabaseURL       string `mapstructure:"database_url"`
-	RedisURL          string `mapstructure:"redis_url"`
 	Port              string `mapstructure:"port"`
+	LogLevel          string `mapstructure:"log_level"` // DEBUG, INFO, WARN, ERROR
+	AutoMigrate       bool   `mapstructure:"auto_migrate"`
+	MigrateBaseline   bool   `mapstructure:"migrate_baseline"` // Mark all migrations as applied without running them
 	SlarAPIURL        string `mapstructure:"slar_api_url"`
 	SlarWebURL        string `mapstructure:"slar_web_url"`
 	PublicURL         string `mapstructure:"public_url"`
@@ -23,7 +26,17 @@ type Config struct {
 	// Data storage
 	DataDir string `mapstructure:"data_dir"`
 
-	// Supabase
+	// OIDC Authentication
+	OIDCIssuer         string `mapstructure:"oidc_issuer"`
+	OIDCClientID       string `mapstructure:"oidc_client_id"`        // Default/fallback client ID
+	OIDCWebClientID    string `mapstructure:"oidc_web_client_id"`    // Client ID for web frontend
+	OIDCMobileClientID string `mapstructure:"oidc_mobile_client_id"` // Client ID for mobile app
+
+	// Session Token (Backend-issued JWT for API authentication)
+	// Used after OIDC ID Token exchange - decouples API auth from provider token lifetime
+	SessionSecret string `mapstructure:"session_secret"` // HMAC secret for signing session tokens (min 32 chars recommended)
+
+	// Supabase (Deprecated - for migration period only)
 	SupabaseURL            string `mapstructure:"supabase_url"`
 	MobileSupabaseURL      string `mapstructure:"mobile_supabase_url"`
 	SupabaseAnonKey        string `mapstructure:"supabase_anon_key"`
@@ -91,14 +104,24 @@ func LoadConfig(path string) error {
 	v.SetEnvPrefix("SLAR") // Legacy support
 	v.SetDefault("backend_url", "http://localhost:8080")
 	v.SetDefault("data_dir", "./data")
+	v.SetDefault("log_level", "INFO")
+	v.BindEnv("log_level", "LOG_LEVEL")
 
 	// Bind standard environment variables (Docker/deploy compatibility)
 	// This allows using standard keys like DATABASE_URL instead of SLAR_DATABASE_URL
 	v.BindEnv("database_url", "DATABASE_URL")
-	v.BindEnv("redis_url", "REDIS_URL")
 	v.BindEnv("port", "PORT")
 
-	// Bind Supabase Env Vars
+	// Bind OIDC Env Vars
+	v.BindEnv("oidc_issuer", "OIDC_ISSUER")
+	v.BindEnv("oidc_client_id", "OIDC_CLIENT_ID")
+	v.BindEnv("oidc_web_client_id", "OIDC_WEB_CLIENT_ID")
+	v.BindEnv("oidc_mobile_client_id", "OIDC_MOBILE_CLIENT_ID")
+
+	// Bind Session Token Env Vars
+	v.BindEnv("session_secret", "SESSION_SECRET")
+
+	// Bind Supabase Env Vars (Deprecated - for migration period only)
 	v.BindEnv("supabase_url", "SUPABASE_URL")
 	v.BindEnv("mobile_supabase_url", "MOBILE_SUPABASE_URL")
 	v.BindEnv("supabase_anon_key", "SUPABASE_ANON_KEY")
@@ -120,6 +143,12 @@ func LoadConfig(path string) error {
 	v.BindEnv("ai_incident_analytics.enabled", "AI_PILOT_ENABLED")
 	v.BindEnv("ai_incident_analytics.model", "AI_PILOT_MODEL")
 
+	// Bind Auto Migration Env Var
+	v.BindEnv("auto_migrate", "AUTO_MIGRATE")
+	v.SetDefault("auto_migrate", false)
+	v.BindEnv("migrate_baseline", "MIGRATE_BASELINE")
+	v.SetDefault("migrate_baseline", false)
+
 	v.AutomaticEnv()
 
 	// 1. Read config file
@@ -138,13 +167,24 @@ func LoadConfig(path string) error {
 		return err
 	}
 
+	// 3. Initialize logger with configured level
+	logger.SetLevelString(App.LogLevel)
+	log.Printf("✅ Log level set to: %s", logger.GetLevelString())
+
 	// 3. Backfill environment variables for legacy code compatibility
 	// Many existing services (FCM, Router, etc.) still use os.Getenv()
 	// This ensures they work without refactoring the entire codebase immediately.
 	setEnvIfEmpty("DATABASE_URL", App.DatabaseURL)
-	setEnvIfEmpty("REDIS_URL", App.RedisURL)
 	setEnvIfEmpty("PORT", App.Port)
 
+	// OIDC
+	setEnvIfEmpty("OIDC_ISSUER", App.OIDCIssuer)
+	setEnvIfEmpty("OIDC_CLIENT_ID", App.OIDCClientID)
+	setEnvIfEmpty("OIDC_WEB_CLIENT_ID", App.OIDCWebClientID)
+	setEnvIfEmpty("OIDC_MOBILE_CLIENT_ID", App.OIDCMobileClientID)
+	setEnvIfEmpty("SESSION_SECRET", App.SessionSecret)
+
+	// Supabase (Deprecated - for migration period only)
 	setEnvIfEmpty("SUPABASE_URL", App.SupabaseURL)
 	setEnvIfEmpty("MOBILE_SUPABASE_URL", App.MobileSupabaseURL)
 	setEnvIfEmpty("AGENT_URL", App.AgentURL)

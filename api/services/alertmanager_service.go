@@ -104,7 +104,7 @@ func (s *AlertManagerService) handleFiringAlert(alert *db.Alert, _ *models.Alert
 		alert.Status = "new"
 
 		// Auto-assign to current on-call user
-		userService := NewUserService(s.PG, nil)
+		userService := NewUserService(s.PG)
 		if onCallUser, userErr := userService.GetCurrentOnCallUser(); userErr == nil {
 			alert.AssignedTo = onCallUser.ID
 			now := time.Now()

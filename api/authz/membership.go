@@ -15,6 +15,9 @@ type Membership struct {
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
 	InvitedBy    string       `json:"invited_by,omitempty"`
+	// User info (populated by JOIN)
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // MembershipManager manages user-resource relationships.

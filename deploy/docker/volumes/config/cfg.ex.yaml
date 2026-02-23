@@ -1,78 +1,156 @@
 # =============================================================================
-# DATABASE & SERVER
+# SLAR Configuration Example
 # =============================================================================
-database_url: "postgresql://postgres.<tenant>:<password>@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
-port: "8080"
-redis_url: ""
+# Copy this file to dev.config.yaml and fill in your values.
+#
+# Required fields are marked with [REQUIRED]
+# Optional fields are marked with [OPTIONAL] and have safe defaults
+# =============================================================================
+
 
 # =============================================================================
-# URL CONFIGURATION
+# DATABASE [REQUIRED]
 # =============================================================================
-# slar_api_url: internal API URL for AI agent tools
-slar_api_url: "http://slar-api:8080"
+# PostgreSQL connection string.
+# For Docker Compose, use the service name (db) as hostname.
+# For external databases (Supabase, RDS, etc.), use the full connection URL.
+#
+# Examples:
+#   Local Docker:  "postgresql://postgres:postgres@db:5432/slar?sslmode=disable"
+#   Supabase:      "postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres"
+#   AWS RDS:       "postgresql://user:password@your-rds-endpoint:5432/slar"
+database_url: "postgresql://postgres:postgres@db:5432/slar?sslmode=disable"
 
-# slar_web_url: internal frontend URL
-slar_web_url: "http://slar-web:3000"
 
-# public_url: external URL for mobile/clients
-public_url: "https://api.your-domain.com"
+# =============================================================================
+# SERVER [OPTIONAL]
+# =============================================================================
+port: "8081"
 
-# agent_url: AI Agent service URL
-agent_url: "https://agent.your-domain.com"
+# Log verbosity. Use "INFO" for production, "DEBUG" for troubleshooting.
+# Options: DEBUG | INFO | WARN | ERROR
+log_level: "INFO"
 
-# backend_url: Zero-Trust verifier URL
-backend_url: "http://slar-api:8080"
-
+# Local directory for storing agent workspaces and uploaded files.
 data_dir: "./data"
 
-# =============================================================================
-# SUPABASE & AUTH
-# =============================================================================
-supabase_url: "https://<project>.supabase.co"
-
-# Public key for frontend Supabase client (required)
-supabase_anon_key: "sb_publishable_..."
-
-# Service role key for backend operations (required)
-supabase_service_role_key: "eyJ..."
-
-# JWT secret (optional) - only needed for legacy HS256 tokens
-# New projects use ES256/RS256 with JWKS public key verification
-supabase_jwt_secret: ""
 
 # =============================================================================
-# NOTIFICATION GATEWAY (Cloudflare Worker)
-# Optional: Only required for Mobile Push Notifications
+# INTERNAL URLS
 # =============================================================================
-notification_gateway:
-  url: "https://your-worker.workers.dev"
-  instance_id: "inst_..."
-  api_token: "slar_tok_..."
+# These control how services talk to each other inside Docker/Kubernetes.
+# Use service names (not localhost) so containers can reach each other.
+
+# [REQUIRED] URL of the Go API — used by the AI agent to call internal APIs.
+# Docker Compose default: "http://slar-api:8081"
+# Kubernetes: "http://slar-api.default.svc.cluster.local:8081"
+slar_api_url: "http://slar-api:8081"
+
+# [REQUIRED] URL of the frontend — used for generating links in notifications.
+# Docker Compose default: "http://slar-web:3000"
+slar_web_url: "http://slar-web:3000"
+
+# [REQUIRED] Public-facing API URL — used by mobile app and external clients.
+# Set this to your real domain in production.
+# Example: "https://api.your-domain.com"
+public_url: "https://api.your-domain.com"
+
+# [OPTIONAL] URL of the AI Agent service — used for Zero-Trust mobile channel.
+# Leave empty if not using the mobile AI chat feature.
+# Example: "https://agent.your-domain.com"
+agent_url: ""
+
+# [INTERNAL] Zero-Trust backend verifier URL — same as slar_api_url.
+# Only change this if your Zero-Trust verifier runs on a different service.
+backend_url: "http://slar-api:8081"
+
 
 # =============================================================================
-# EXTERNAL INTEGRATIONS
+# AUTHENTICATION — OIDC [REQUIRED]
 # =============================================================================
+# SLAR uses standard OIDC for authentication.
+# Use any OIDC-compliant provider — no bundled IDP required.
+#
+#   Provider            | oidc_issuer example
+#   --------------------|-------------------------------------------------------
+#   Cloudflare Access   | https://<team>.cloudflareaccess.com
+#   Google              | https://accounts.google.com
+#   Zitadel             | https://your-instance.zitadel.cloud
+#   Auth0               | https://your-tenant.auth0.com
+#   Okta                | https://your-org.okta.com
+#   Keycloak            | https://keycloak.example.com/realms/your-realm
+#   Azure AD            | https://login.microsoftonline.com/{tenant}/v2.0
+#
+# Note: oidc_client_secret is only needed for the "client_secret_basic" method.
+#       Leave empty if using PKCE (public client).
+oidc_issuer: ""        # e.g. "https://your-team.cloudflareaccess.com"
+oidc_client_id: ""     # Client ID from your OIDC provider
+oidc_client_secret: "" # Client secret (leave empty for PKCE)
+
+
+# =============================================================================
+# AI FEATURES [REQUIRED for AI]
+# =============================================================================
+# Anthropic API key — required for all AI features (AI Chat, AI Pilot, RCA).
+# Get your key at: https://console.anthropic.com
 anthropic_api_key: "sk-ant-..."
-slack_bot_token: "xoxb-..."
-slack_app_token: "xapp-..."
+
 
 # =============================================================================
-# AI INCIDENT ANALYTICS
+# SLACK INTEGRATION [OPTIONAL]
 # =============================================================================
+# Required only if you want Slack notifications and incident actions.
+# Create a Slack App at: https://api.slack.com/apps
+#
+#   slack_bot_token:  Bot Token (starts with xoxb-)
+#   slack_app_token:  App-Level Token for Socket Mode (starts with xapp-)
+slack_bot_token: ""
+slack_app_token: ""
+
+
+# =============================================================================
+# MOBILE PUSH NOTIFICATIONS [OPTIONAL]
+# =============================================================================
+# Required only if using the SLAR mobile app with push notifications.
+# This is a Cloudflare Worker that acts as a notification gateway.
+# Leave this section empty if not using mobile notifications.
+notification_gateway:
+  url: ""           # e.g. "https://your-worker.workers.dev"
+  instance_id: ""   # e.g. "inst_abc123"
+  api_token: ""     # e.g. "slar_tok_xyz..."
+
+
+# =============================================================================
+# AI INCIDENT ANALYTICS [OPTIONAL]
+# =============================================================================
+# Enables AI-powered incident analysis: auto RCA, pattern detection, summaries.
+# Requires anthropic_api_key to be set above.
 ai_incident_analytics:
   enabled: true
+
+  # Claude model to use for analytics.
+  # Options: "haiku" (fast, cheap) | "sonnet" (balanced) | "opus" (most capable)
   model: "sonnet"
+
+  # How the AI handles tool execution.
+  # Options:
+  #   "default"     — asks for approval on sensitive actions
+  #   "acceptEdits" — auto-approves file edits
+  #   "bypassPermissions" — no approval required (use with caution)
   permission_mode: "default"
+
+  # Where the AI reads its settings/instructions from.
+  # "project" — reads from project-level CLAUDE.md
+  # "user"    — reads from user-level CLAUDE.md
   setting_sources:
     - "project"
     - "user"
+
+  # MCP tools the analytics agent is allowed to use.
+  # Remove tools you don't want the AI to access automatically.
   allowed_tools:
-    - "Bash(docker ps:*)"
-    - "Bash(docker top:*)"
-    - "Bash(docker stats:*)"
-    - "Bash(docker logs:*)"
-    - "Bash(docker inspect:*)"
-    - "Bash(docker exec:*)"
-    - "Read"
-    - "Grep"
-    - "Glob"
+    - "mcp__incident_tools__search_incidents"
+    - "mcp__incident_tools__get_incident_stats"
+    - "mcp__incident_tools__get_current_time"
+    - "mcp__incident_tools__get_incident_by_id"
+    - "mcp__incident_tools__get_incidents_by_time"

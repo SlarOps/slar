@@ -2,10 +2,12 @@
 MCP Configuration Manager with Background Sync
 
 This module manages MCP server configurations with:
-1. Background sync from Supabase Storage (interval-based or event-driven)
-2. In-memory cache for fast access
-3. User directory management
-4. Automatic reload on configuration changes
+1. In-memory cache for fast access
+2. User directory management
+3. Reads from local .mcp.json files (synced from PostgreSQL)
+
+NOTE: MCP configs are stored in PostgreSQL and synced to local .mcp.json files.
+Background sync from object storage is deprecated.
 """
 
 import asyncio
@@ -16,17 +18,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import jwt
-
-from supabase import Client, create_client
+from config import config
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 MCP_FILE_NAME = ".mcp.json"
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 SYNC_INTERVAL = int(os.getenv("MCP_SYNC_INTERVAL", "60"))  # Default: 60 seconds
 USER_WORKSPACES_DIR = os.getenv("USER_WORKSPACES_DIR", "./workspaces")
 
@@ -52,9 +49,9 @@ class MCPConfigCache:
         logger.debug(f"✅ Cache hit for user: {user_id}")
         return self._cache[user_id]
 
-    def set(self, user_id: str, config: Dict[str, Any]):
+    def set(self, user_id: str, mcp_config: Dict[str, Any]):
         """Store config in cache."""
-        self._cache[user_id] = config
+        self._cache[user_id] = mcp_config
         self._timestamps[user_id] = datetime.now()
         logger.debug(f"💾 Cached config for user: {user_id}")
 
@@ -74,82 +71,38 @@ class MCPConfigCache:
 
 class MCPConfigManager:
     """
-    Manages MCP configurations with background sync.
+    Manages MCP configurations with local file access.
 
     Features:
-    - Background sync from Supabase Storage
     - In-memory cache with TTL
     - User workspace management
-    - Realtime updates (optional)
+    - Reads from local .mcp.json files
     """
 
     def __init__(self):
-        self.supabase: Optional[Client] = None
         self.cache = MCPConfigCache()
-        self._sync_task: Optional[asyncio.Task] = None
         self._active_users: set = set()
         self._initialized = False
 
     def initialize(self):
-        """Initialize Supabase client."""
+        """Initialize manager."""
         if self._initialized:
             return
 
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-            logger.warning("⚠️  Supabase credentials not configured - MCP sync disabled")
-            self._initialized = True
-            return
-
-        try:
-            self.supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-            logger.info("✅ Supabase client initialized")
-            self._initialized = True
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Supabase client: {e}")
-            self._initialized = True
+        logger.info("✅ MCP Config Manager initialized (local file mode)")
+        self._initialized = True
 
     def extract_user_id(self, auth_token: str) -> Optional[str]:
         """
         Extract and VERIFY user ID from JWT token.
 
-        SECURITY: Properly verifies JWT signature to prevent token forgery.
+        Uses OIDC authentication via workspace_service module.
         """
         if not auth_token:
             return None
 
-        if not SUPABASE_JWT_SECRET:
-            logger.error("🚨 SUPABASE_JWT_SECRET not set - cannot verify tokens!")
-            return None
-
-        try:
-            token = auth_token.replace("Bearer ", "").strip()
-
-            # SECURITY: Verify JWT signature
-            decoded = jwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                options={
-                    "verify_signature": True,
-                    "verify_exp": True,
-                    "verify_iat": True,
-                }
-            )
-
-            user_id = decoded.get("sub")
-            if user_id:
-                logger.debug(f"✅ Verified token for user_id: {user_id}")
-            return user_id
-
-        except jwt.ExpiredSignatureError:
-            logger.warning("⚠️ Token has expired")
-            return None
-        except jwt.InvalidSignatureError:
-            logger.warning("🚨 Invalid token signature - possible forgery attempt!")
-            return None
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to verify token: {type(e).__name__}")
-            return None
+        from database_util import resolve_user_id_from_token
+        return resolve_user_id_from_token(auth_token)
 
     def get_user_workspace(self, user_id: str) -> str:
         """
@@ -169,47 +122,13 @@ class MCPConfigManager:
         logger.debug(f"📁 User workspace: {workspace_path}")
         return str(workspace_path.absolute())
 
-    async def download_config(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Download MCP config from Supabase Storage.
-
-        Args:
-            user_id: User's UUID (bucket name)
-
-        Returns:
-            Parsed MCP configuration or None
-        """
-        if not self.supabase:
-            return None
-
-        try:
-            logger.debug(f"📥 Downloading MCP config for user: {user_id}")
-
-            # Download from storage
-            response = self.supabase.storage.from_(user_id).download(MCP_FILE_NAME)
-
-            if not response:
-                logger.debug(f"ℹ️  No MCP config found for user: {user_id}")
-                return None
-
-            # Parse JSON
-            config = json.loads(response)
-
-            logger.info(f"✅ Downloaded MCP config for user: {user_id}")
-            return config
-
-        except Exception as e:
-            logger.error(f"❌ Failed to download MCP config for user {user_id}: {e}")
-            return None
-
     async def get_mcp_servers(
         self, user_id: str, use_cache: bool = True
     ) -> Dict[str, Any]:
         """
         Get MCP servers for user from local workspace file.
 
-        NOTE: This function now reads from local .mcp.json file that was
-        already synced by sync_bucket(). No need to download again.
+        Reads from local .mcp.json file that was synced from PostgreSQL.
 
         Args:
             user_id: User's UUID
@@ -224,7 +143,7 @@ class MCPConfigManager:
             if cached:
                 return cached.get("mcpServers", {})
 
-        # Read from local workspace (already synced by sync_bucket)
+        # Read from local workspace (synced from PostgreSQL)
         workspace = self.get_user_workspace(user_id)
         mcp_file = Path(workspace) / MCP_FILE_NAME
 
@@ -234,15 +153,15 @@ class MCPConfigManager:
 
         try:
             with open(mcp_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
+                mcp_config = json.load(f)
 
             # Cache it
-            self.cache.set(user_id, config)
+            self.cache.set(user_id, mcp_config)
 
             # Track active user
             self._active_users.add(user_id)
 
-            mcp_servers = config.get("mcpServers", {})
+            mcp_servers = mcp_config.get("mcpServers", {})
             logger.debug(
                 f"✅ Loaded {len(mcp_servers)} MCP servers from local file: {mcp_file}"
             )
@@ -252,80 +171,13 @@ class MCPConfigManager:
             logger.error(f"❌ Failed to read .mcp.json from {mcp_file}: {e}")
             return {}
 
-    async def sync_config(self, user_id: str):
-        """
-        Sync config for a specific user.
-        Force download and update cache.
-        """
-        logger.info(f"🔄 Syncing config for user: {user_id}")
-
-        config = await self.download_config(user_id)
-
-        if config:
-            self.cache.set(user_id, config)
-            logger.info(f"✅ Config synced for user: {user_id}")
-        else:
-            logger.info(f"ℹ️  No config to sync for user: {user_id}")
-
-    async def background_sync(self):
-        """
-        Background task to periodically sync configs for active users.
-        """
-        logger.info(f"🔄 Background sync started (interval: {SYNC_INTERVAL}s)")
-
-        while True:
-            try:
-                await asyncio.sleep(SYNC_INTERVAL)
-
-                if not self._active_users:
-                    logger.debug("No active users to sync")
-                    continue
-
-                logger.info(
-                    f"🔄 Syncing configs for {len(self._active_users)} active users"
-                )
-
-                # Sync each active user
-                for user_id in list(self._active_users):
-                    try:
-                        await self.sync_config(user_id)
-                    except Exception as e:
-                        logger.error(f"❌ Failed to sync user {user_id}: {e}")
-
-                logger.info("✅ Background sync completed")
-
-            except asyncio.CancelledError:
-                logger.info("🛑 Background sync cancelled")
-                break
-            except Exception as e:
-                logger.error(f"❌ Background sync error: {e}", exc_info=True)
-
-    def start_background_sync(self):
-        """Start background sync task."""
-        if self._sync_task and not self._sync_task.done():
-            logger.warning("⚠️  Background sync already running")
-            return
-
-        if not self.supabase:
-            logger.warning("⚠️  Supabase not configured - background sync disabled")
-            return
-
-        self._sync_task = asyncio.create_task(self.background_sync())
-        logger.info("🚀 Background sync task started")
-
-    def stop_background_sync(self):
-        """Stop background sync task."""
-        if self._sync_task and not self._sync_task.done():
-            self._sync_task.cancel()
-            logger.info("🛑 Background sync task stopped")
-
     def register_user(self, user_id: str):
-        """Register user as active (for background sync)."""
+        """Register user as active."""
         self._active_users.add(user_id)
         logger.debug(f"👤 User registered: {user_id}")
 
     def unregister_user(self, user_id: str):
-        """Unregister user (stop syncing their config)."""
+        """Unregister user."""
         if user_id in self._active_users:
             self._active_users.remove(user_id)
             logger.debug(f"👋 User unregistered: {user_id}")
@@ -353,7 +205,7 @@ async def get_user_mcp_servers(
     Convenience function to get user's MCP servers.
 
     Args:
-        auth_token: Supabase JWT token
+        auth_token: JWT token
         use_cache: Whether to use cached config
 
     Returns:
@@ -376,7 +228,7 @@ def get_user_workspace(auth_token: str) -> str:
     Get user's workspace directory.
 
     Args:
-        auth_token: Supabase JWT token
+        auth_token: JWT token
 
     Returns:
         Absolute path to workspace directory (default: "." if no user_id)
@@ -392,13 +244,12 @@ def get_user_workspace(auth_token: str) -> str:
     return manager.get_user_workspace(user_id)
 
 
+# Legacy functions (no-op for backwards compatibility)
 def start_background_sync():
-    """Start background sync for all active users."""
-    manager = get_manager()
-    manager.start_background_sync()
+    """Deprecated: Background sync is no longer needed."""
+    logger.info("ℹ️  Background sync is deprecated - MCP configs are synced from PostgreSQL")
 
 
 def stop_background_sync():
-    """Stop background sync."""
-    manager = get_manager()
-    manager.stop_background_sync()
+    """Deprecated: Background sync is no longer needed."""
+    pass

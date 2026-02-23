@@ -9,11 +9,15 @@ services:
       - "8002"
     ports:
       - "8002:8002"
+    extra_hosts:
+      # Allow container to reach host's localhost (for external OIDC if needed)
+      - "localhost:host-gateway"
     volumes:
       - claude_data:/root/.claude
       - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
       - SLAR_CONFIG_PATH=/app/config.yaml
+      - AUTO_MIGRATE=true
     restart: unless-stopped
     networks:
       - slar-network
@@ -25,24 +29,21 @@ services:
     expose:
       - "8080"
     ports:
-      - "8080:8080"
+      - "8081:8080"
+    extra_hosts:
+      # Allow container to reach host's localhost (for external OIDC if needed)
+      - "localhost:host-gateway"
     volumes:
       - ./volumes/config/dev.config.yaml:/app/config.yaml
     environment:
       - SLAR_CONFIG_PATH=/app/config.yaml
+      - AUTO_MIGRATE=true
     restart: unless-stopped
     networks:
       - slar-network
-
-  slack-worker:
-    container_name: slar-slack-worker
-    platform: linux/amd64
-    image: ghcr.io/slarops/slar-slack-worker:latest
-    volumes:
-      - ./volumes/config/dev.config.yaml:/app/config.yaml
-    restart: unless-stopped
-    networks:
-      - slar-network
+    depends_on:
+      db:
+        condition: service_healthy
 
   web:
     container_name: slar-web
@@ -51,34 +52,91 @@ services:
     expose:
       - "3000"
     ports:
-      - "3000:3000"
+      - "3001:3000"
+    extra_hosts:
+      # Allow container to reach host's OIDC provider if running locally
+      - "localhost:host-gateway"
+    environment:
+      # OIDC Authentication - use any OIDC-compliant provider
+      # (Cloudflare Access, Google, Zitadel, Auth0, Okta, Keycloak, ...)
+      - OIDC_ISSUER=${OIDC_ISSUER}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      # NextAuth.js
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:8000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # API URLs - all through Kong proxy (port 8000)
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      - NEXT_PUBLIC_AI_API_URL=${NEXT_PUBLIC_AI_API_URL:-http://localhost:8000/ai}
+      - NEXT_PUBLIC_AI_WS_URL=${NEXT_PUBLIC_AI_WS_URL:-ws://localhost:8000/ws/chat}
     restart: unless-stopped
     networks:
       - slar-network
+    depends_on:
+      api:
+        condition: service_started
 
   kong:
     container_name: kong
     platform: linux/amd64
-    image: kong:2.8.1
+    image: kong:latest
     ports:
       - "8000:8000/tcp"
     volumes:
-      - ./volumes/api/kong.yaml:/home/kong/temp.yml:ro,z
+      - ./volumes/api/kong.yaml:/tmp/kong-template.yml:ro
     environment:
       KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DECLARATIVE_CONFIG: /tmp/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      # Reduce memory usage
+      KONG_NGINX_WORKER_PROCESSES: 1
+      KONG_LUA_SOCKET_POOL_SIZE: 30
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     restart: unless-stopped
     networks:
       - slar-network
-    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+    entrypoint: bash -c 'eval "echo \"$$(cat /tmp/kong-template.yml)\"" > /tmp/kong.yml && /docker-entrypoint.sh kong docker-start'
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  db:
+    restart: unless-stopped
+    image: quay.io/tembo/pg17-pgmq:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: slar
+    healthcheck:
+      test: 
+      - CMD-SHELL
+      - pg_isready
+      - -d
+      - slar
+      - -U
+      - postgres
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 20s
+    networks:
+      - slar-network
+    ports:
+      - 5432:5432
+    volumes:
+      - 'data:/var/lib/postgresql/data:rw'
 
 networks:
   slar-network:
-    driver: bridge
 
 volumes:
   claude_data:
+  data:

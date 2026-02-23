@@ -23,6 +23,30 @@ data:
     ### API Routes
     ###
     services:
+      ## NextAuth - Must be before api-service to handle /api/auth/*
+      - name: nextauth-service
+        _comment: 'NextAuth: /api/auth/* -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/api/auth/*'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/
+        routes:
+          - name: nextauth-routes
+            strip_path: false
+            paths:
+              - /api/auth
+        plugins:
+          - name: cors
+
+      ## Next.js Runtime Config - Must be before api-service
+      - name: nextjs-config-service
+        _comment: 'Config: /api/config -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/api/config'
+        url: http://{{ include "slar.componentFullname" (dict "root" $root "name" "web") }}:3000/
+        routes:
+          - name: nextjs-config-route
+            strip_path: false
+            paths:
+              - /api/config
+        plugins:
+          - name: cors
+
       ## API Service - Main Backend API
       - name: api-service
         _comment: 'API: /api/* -> http://{{ include "slar.componentFullname" (dict "root" $root "name" "api") }}:8080/*'
@@ -72,6 +96,20 @@ data:
               - /ws/terminal
         plugins:
           - name: cors
+
+      {{- if $root.Values.dex.enabled }}
+      ## Dex OIDC Provider - for mobile auth
+      - name: dex-service
+        _comment: 'Dex: /dex/* -> http://{{ include "slar.fullname" $root }}-dex:5556/dex/*'
+        url: http://{{ include "slar.fullname" $root }}-dex:5556/
+        routes:
+          - name: dex-routes
+            strip_path: false
+            paths:
+              - /dex
+        plugins:
+          - name: cors
+      {{- end }}
 
       ## Web Frontend
       - name: web-service

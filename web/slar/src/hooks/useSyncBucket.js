@@ -15,10 +15,9 @@
  */
 
 import { useState, useCallback } from 'react';
+import { getConfigSync } from '../lib/config';
 
-const DEFAULT_AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
-
-export function useSyncBucket(authToken) {
+export function useSyncBucket(authToken, { projectId, orgId } = {}) {
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'ready' | 'error'
   const [syncMessage, setSyncMessage] = useState('');
   const [syncResult, setSyncResult] = useState(null);
@@ -39,20 +38,22 @@ export function useSyncBucket(authToken) {
 
       const startTime = performance.now();
 
-      const response = await fetch(`${DEFAULT_AI_API_URL}/api/sync-bucket`, {
+      // SECURITY: Send token via Authorization header, not in request body
+      // Route through Control Plane proxy (not direct to AI Agent)
+      const apiUrl = getConfigSync().apiUrl;
+      const response = await fetch(`${apiUrl}/api/sync-bucket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
         },
-        body: JSON.stringify({
-          auth_token: authToken
-        }),
+        body: JSON.stringify({ project_id: projectId || '', org_id: orgId || '' }),
         signal: AbortSignal.timeout(30000) // 30 second timeout
       });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Session expired. Please login again.');
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Session expired or invalid. Please login again.');
         }
         throw new Error(`Server error: ${response.status}`);
       }
@@ -102,7 +103,7 @@ export function useSyncBucket(authToken) {
 
       return false;
     }
-  }, [authToken]);
+  }, [authToken, projectId, orgId]);
 
   /**
    * Retry sync (useful for error recovery)

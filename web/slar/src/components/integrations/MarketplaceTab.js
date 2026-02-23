@@ -23,7 +23,8 @@ import {
 } from '../../lib/marketplaceGithub';
 import {
   getInstalledPluginsFromDB,
-  loadMarketplaceFromDB
+  loadMarketplaceFromDB,
+  removeInstalledPluginFromDB
 } from '../../lib/workspaceManager';
 
 const DEFAULT_MARKETPLACES = [];
@@ -32,6 +33,7 @@ export default function MarketplaceTab() {
   const { session } = useAuth();
   const [marketplaces, setMarketplaces] = useState([]);
   const [marketplaceData, setMarketplaceData] = useState({});
+  const [installedPlugins, setInstalledPlugins] = useState({});  // Map: pluginKey -> plugin data
   const [installedPluginIds, setInstalledPluginIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -41,6 +43,8 @@ export default function MarketplaceTab() {
   // Add marketplace form
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [selectedCredential, setSelectedCredential] = useState('');
+  const [availableCredentials, setAvailableCredentials] = useState([]);
   const [addingRepo, setAddingRepo] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
 
@@ -50,6 +54,18 @@ export default function MarketplaceTab() {
   useEffect(() => {
     loadMarketplaces();
   }, [session]);
+
+  // Load available credentials when add form is shown
+  useEffect(() => {
+    if (showAddForm && session?.access_token) {
+      apiClient.setToken(session.access_token);
+      apiClient.listCredentials().then(data => {
+        if (data.success) {
+          setAvailableCredentials(data.credentials || []);
+        }
+      });
+    }
+  }, [showAddForm, session?.access_token]);
 
   const loadMarketplaces = async () => {
     setLoading(true);
@@ -83,14 +99,17 @@ export default function MarketplaceTab() {
       if (session?.user?.id && session?.access_token) {
         const installedResult = await getInstalledPluginsFromDB(session.user.id, session.access_token);
         if (installedResult.success) {
-          // Convert plugins array to set of plugin IDs
+          // Convert plugins array to set of plugin IDs and map for lookup
           const pluginIds = new Set();
+          const pluginMap = {};
           installedResult.plugins.forEach((plugin) => {
             // Create plugin key: pluginName@marketplaceName
             const pluginKey = `${plugin.plugin_name}@${plugin.marketplace_name}`;
             pluginIds.add(pluginKey);
+            pluginMap[pluginKey] = plugin;
           });
           setInstalledPluginIds(pluginIds);
+          setInstalledPlugins(pluginMap);
         }
       }
 
@@ -228,7 +247,8 @@ export default function MarketplaceTab() {
         owner: parsed.owner,
         repo: parsed.repo,
         branch: 'main',
-        marketplace_name: inferredMarketplaceName
+        marketplace_name: inferredMarketplaceName,
+        ...(selectedCredential ? { credential_name: selectedCredential } : {})
       });
 
       if (!downloadResult.success) {
@@ -291,8 +311,9 @@ export default function MarketplaceTab() {
       // Mark as cached (loaded from storage)
       setCachedMarketplaces(new Set([...cachedMarketplaces, newMarketplace.url]));
 
-      toast.success(`Marketplace added with ZIP: ${plugins.length} plugin(s) available`);
+      toast.success(`Marketplace added: ${plugins.length} plugin(s) available`);
       setNewRepoUrl('');
+      setSelectedCredential('');
       setShowAddForm(false);
     } catch (error) {
       console.error('[MarketplaceTab] Failed to add marketplace:', error);
@@ -466,6 +487,51 @@ export default function MarketplaceTab() {
     }
   };
 
+  const handleUninstallPlugin = async (plugin) => {
+    if (!session?.user?.id || !session?.access_token) return;
+
+    const pluginKey = `${plugin.name}@${plugin.marketplaceName}`;
+    const installedPlugin = installedPlugins[pluginKey];
+
+    if (!installedPlugin) {
+      toast.error('Plugin not found in installed list');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to uninstall ${plugin.name}?`)) return;
+
+    let toastId;
+    try {
+      toastId = toast.loading(`Uninstalling ${plugin.name}...`);
+
+      const result = await removeInstalledPluginFromDB(
+        session.user.id,
+        installedPlugin.id,
+        session.access_token
+      );
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to uninstall plugin');
+      }
+
+      // Update UI
+      const newPluginIds = new Set(installedPluginIds);
+      newPluginIds.delete(pluginKey);
+      setInstalledPluginIds(newPluginIds);
+
+      const newPluginMap = { ...installedPlugins };
+      delete newPluginMap[pluginKey];
+      setInstalledPlugins(newPluginMap);
+
+      if (toastId) toast.dismiss(toastId);
+      toast.success(`${plugin.name} uninstalled successfully`);
+    } catch (error) {
+      console.error('[MarketplaceTab] Uninstall error:', error);
+      if (toastId) toast.dismiss(toastId);
+      toast.error(`Failed to uninstall: ${error.message}`);
+    }
+  };
+
   const filteredData = Object.entries(marketplaceData).reduce((acc, [url, data]) => {
     if (!data || !data.plugins) return acc;
 
@@ -540,16 +606,29 @@ export default function MarketplaceTab() {
           <h3 className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white mb-2 sm:mb-3">
             Add GitHub Marketplace
           </h3>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="text"
-              value={newRepoUrl}
-              onChange={(e) => setNewRepoUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo"
-              className="flex-1 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
-              onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
-              disabled={addingRepo}
-            />
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={newRepoUrl}
+                onChange={(e) => setNewRepoUrl(e.target.value)}
+                placeholder="https://github.com/owner/repo"
+                className="flex-1 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs sm:text-sm"
+                onKeyPress={(e) => e.key === 'Enter' && !addingRepo && handleAddMarketplace()}
+                disabled={addingRepo}
+              />
+              <select
+                value={selectedCredential}
+                onChange={(e) => setSelectedCredential(e.target.value)}
+                disabled={addingRepo}
+                className="sm:w-48 px-2 sm:px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs sm:text-sm"
+              >
+                <option value="">No credential (public)</option>
+                {availableCredentials.map(cred => (
+                  <option key={cred.name} value={cred.name}>{cred.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleAddMarketplace}
@@ -639,7 +718,7 @@ export default function MarketplaceTab() {
                       onClick={() => handleUpdateMarketplace(marketplaceUrl)}
                       disabled={updatingMarketplaces.has(marketplaceUrl)}
                       className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors disabled:opacity-50"
-                      title="Update marketplace (git fetch)"
+                      title="Refresh marketplace (sync & re-scan skills)"
                     >
                       <ArrowPathIcon className={`h-4 w-4 ${updatingMarketplaces.has(marketplaceUrl) ? 'animate-spin' : ''}`} />
                     </button>
@@ -691,10 +770,19 @@ export default function MarketplaceTab() {
                           {/* Install button at plugin level */}
                           <div className="pl-6 sm:pl-7">
                             {isInstalled ? (
-                              <span className="inline-flex px-2 sm:px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded items-center gap-1.5">
-                                <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4" />
-                                Installed
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex px-2 sm:px-3 py-1.5 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded items-center gap-1.5">
+                                  <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  Installed
+                                </span>
+                                <button
+                                  onClick={() => handleUninstallPlugin(plugin)}
+                                  className="inline-flex px-2 sm:px-3 py-1.5 text-xs font-medium bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 rounded transition-colors items-center gap-1.5"
+                                >
+                                  <TrashIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  Uninstall
+                                </button>
+                              </div>
                             ) : (
                               <button
                                 onClick={() => handleInstallPlugin(plugin)}
@@ -715,21 +803,29 @@ export default function MarketplaceTab() {
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                               Skills included in this plugin:
                             </p>
-                            {plugin.skills.map((skillPath) => {
-                              const skillName = skillPath.split('/').pop();
-                              // Clean ./ prefix for display
-                              const displayPath = skillPath.replace(/^\.\//, '');
+                            {plugin.skills.map((skill) => {
+                              // Support both object format (new) and string format (legacy)
+                              const isObject = typeof skill === 'object' && skill !== null;
+                              const skillName = isObject ? skill.name : skill.split('/').pop();
+                              const skillPath = isObject ? skill.path : skill;
+                              const skillDescription = isObject ? skill.description : '';
+                              const displayPath = skillPath?.replace(/^\.\//, '') || '';
 
                               return (
                                 <div
-                                  key={skillPath}
+                                  key={skillPath || skillName}
                                   className="flex items-center justify-between p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
                                 >
                                   <div className="flex-1 min-w-0">
                                     <p className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white truncate">
                                       {skillName}
                                     </p>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5 truncate">
+                                    {skillDescription && (
+                                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                                        {skillDescription}
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5 truncate">
                                       {displayPath}
                                     </p>
                                   </div>

@@ -1,9 +1,15 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vanchonlee/slar/services"
@@ -151,9 +157,9 @@ func (h *UserHandler) DeleteOnCallSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "schedule deleted"})
 }
 
-// UpdateFCMToken updates user's FCM token
+// UpdateFCMToken updates user's FCM token and forwards to notification gateway
 func (h *UserHandler) UpdateFCMToken(c *gin.Context) {
-	// Get user ID from context (set by Supabase auth middleware)
+	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
@@ -161,7 +167,9 @@ func (h *UserHandler) UpdateFCMToken(c *gin.Context) {
 	}
 
 	var request struct {
-		FCMToken string `json:"fcm_token" binding:"required"`
+		FCMToken   string `json:"fcm_token" binding:"required"`
+		Platform   string `json:"platform"`
+		AppVersion string `json:"app_version"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -169,15 +177,61 @@ func (h *UserHandler) UpdateFCMToken(c *gin.Context) {
 		return
 	}
 
-	// Update FCM token in database
+	// Update FCM token in local database
 	if err := h.Service.UpdateFCMToken(userID.(string), request.FCMToken); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update FCM token"})
 		return
 	}
 
+	// Forward device registration to noti-gw (non-blocking for the response)
+	gatewayStatus := "local_only"
+	deviceID := ""
+
+	gatewayURL := os.Getenv("SLAR_CLOUD_URL")
+	gatewayToken := os.Getenv("SLAR_CLOUD_TOKEN")
+	instanceID := os.Getenv("SLAR_INSTANCE_ID")
+
+	if gatewayURL != "" && gatewayToken != "" && instanceID != "" {
+		payload := map[string]interface{}{
+			"instance_id": instanceID,
+			"user_id":     userID.(string),
+			"fcm_token":   request.FCMToken,
+			"platform":    request.Platform,
+			"app_version": request.AppVersion,
+		}
+
+		jsonPayload, _ := json.Marshal(payload)
+		httpReq, _ := http.NewRequest("POST", gatewayURL+"/api/gateway/devices/register", bytes.NewBuffer(jsonPayload))
+		httpReq.Header.Set("Authorization", "Bearer "+gatewayToken)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			fmt.Printf("Warning: Failed to forward FCM token to gateway: %v\n", err)
+		} else {
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode == http.StatusOK {
+				var result map[string]interface{}
+				json.Unmarshal(body, &result)
+				gatewayStatus = "registered"
+				if id, ok := result["device_id"].(string); ok {
+					deviceID = id
+				}
+				fmt.Printf("FCM token forwarded to gateway for user %s\n", userID)
+			} else {
+				fmt.Printf("Gateway registration failed: %s\n", string(body))
+				gatewayStatus = "gateway_error"
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "FCM token updated successfully",
-		"status":  "success",
+		"message":        "FCM token updated successfully",
+		"status":         "success",
+		"gateway_status": gatewayStatus,
+		"device_id":      deviceID,
 	})
 }
 

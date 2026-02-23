@@ -52,7 +52,7 @@ func main() {
 
 	// Initialize services
 	fcmService, _ := services.NewFCMService(pg)
-	incidentService := services.NewIncidentService(pg, nil, fcmService)
+	incidentService := services.NewIncidentService(pg, fcmService)
 
 	// Initialize workers
 	// Note: NotificationWorker no longer handles Slack (delegated to Python SlackWorker)

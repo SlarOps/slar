@@ -1,5 +1,10 @@
 /**
- * Claude WebSocket Hook - Connects to api/ai/claude_agent_api.py
+ * Claude WebSocket Hook - Connects via Control Plane Proxy
+ *
+ * Architecture:
+ * - Client → Control Plane (/ws/proxy) → AI Agent
+ * - Control Plane handles routing, health checks, and agent discovery
+ * - Supports multi-agent architecture (project-based routing)
  *
  * Features:
  * - WebSocket connection with automatic reconnection
@@ -11,10 +16,25 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import apiClient from '../lib/api';
+import { getConfigSync } from '../lib/config';
 
-const HOST = window.location.host;
-const PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
-const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_AI_WS_URL || `${PROTOCOL}://${HOST}/ws/chat`;
+/**
+ * Get WebSocket URL from runtime config
+ * Falls back to current host with appropriate protocol
+ *
+ * NEW: Routes through Control Plane /ws/proxy instead of direct /ws/chat
+ * This enables multi-agent routing, health monitoring, and centralized auth
+ */
+function getWsUrl() {
+  const config = getConfigSync();
+  if (config.aiWsUrl) {
+    return config.aiWsUrl;
+  }
+  // Fallback: Use Control Plane proxy endpoint (not direct to AI Agent)
+  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:8080';
+  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${host}/ws/proxy`;  // Changed from /ws/chat to /ws/proxy
+}
 
 /**
  * Claude WebSocket Hook Options
@@ -38,6 +58,12 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
   const [conversationId, setConversationId] = useState(null); // Claude conversation ID for resume
   const [pendingApprovals, setPendingApprovals] = useState([]); // Changed to array for multiple approvals
   const [todos, setTodos] = useState([]);
+  const [capabilities, setCapabilities] = useState({
+    slash_commands: [],
+    plugins: [],
+    skills: [],
+    agents: []
+  });
 
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -64,18 +90,18 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     projectIdRef.current = projectId;
   }, [projectId]);
 
-  // Load session ID and conversation ID from localStorage on mount
+  // Load session ID from localStorage on mount
+  // NOTE: conversationId is NOT restored - always start a new conversation.
+  // Users can view/resume old conversations from the History sidebar.
   useEffect(() => {
     const savedSessionId = localStorage.getItem('claude_session_id');
-    const savedConversationId = localStorage.getItem('claude_conversation_id');
     if (savedSessionId) {
       setSessionId(savedSessionId);
       console.log('Restored session ID:', savedSessionId);
     }
-    if (savedConversationId) {
-      setConversationId(savedConversationId);
-      console.log('Restored conversation ID:', savedConversationId);
-    }
+    // Clear any stale conversation ID so we always start fresh
+    localStorage.removeItem('claude_conversation_id');
+    console.log('Starting fresh conversation (no resume)');
   }, []);
 
   // Save session ID to localStorage
@@ -117,14 +143,16 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
 
       // Build query params
       const params = new URLSearchParams();
+      params.append('protocol', 'jwt');  // NEW: Specify protocol for Control Plane routing
       if (token) params.append('token', token);
       if (currentOrgId) params.append('org_id', currentOrgId);
       if (currentProjectId) params.append('project_id', currentProjectId);
 
       const queryString = params.toString();
-      const wsUrl = queryString ? `${DEFAULT_WS_URL}?${queryString}` : DEFAULT_WS_URL;
+      const baseWsUrl = getWsUrl();
+      const wsUrl = queryString ? `${baseWsUrl}?${queryString}` : baseWsUrl;
 
-      console.log('Connecting to WebSocket:', DEFAULT_WS_URL, {
+      console.log('Connecting to WebSocket:', baseWsUrl, {
         hasToken: !!token,
         orgId: currentOrgId || 'none',
         projectId: currentProjectId || 'none'
@@ -418,6 +446,22 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
               // Todo list update from TodoWrite tool
               console.log('Todo list updated:', data.todos);
               setTodos(data.todos || []);
+              break;
+
+            case 'capabilities':
+              // Available commands, plugins, skills, agents from SDK init
+              console.log('Capabilities received:', {
+                commands: data.slash_commands?.length || 0,
+                plugins: data.plugins?.length || 0,
+                skills: data.skills?.length || 0,
+                agents: data.agents?.length || 0
+              });
+              setCapabilities({
+                slash_commands: data.slash_commands || [],
+                plugins: data.plugins || [],
+                skills: data.skills || [],
+                agents: data.agents || []
+              });
               break;
 
             default:
@@ -751,6 +795,26 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     }
   }, [sessionId]);
 
+  // Fetch capabilities (available commands) - silent request
+  const fetchCapabilities = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('WebSocket not connected, cannot fetch capabilities');
+      return;
+    }
+
+    try {
+      console.log('Fetching capabilities...');
+      wsRef.current.send(JSON.stringify({
+        type: 'fetch_capabilities',
+        auth_token: authTokenRef.current || "",
+        org_id: orgIdRef.current || "",
+        project_id: projectIdRef.current || ""
+      }));
+    } catch (error) {
+      console.error('Error fetching capabilities:', error);
+    }
+  }, []);
+
   // Stop streaming (using interrupt)
   const stopStreaming = useCallback(() => {
     if (isSending) {
@@ -818,6 +882,8 @@ export function useClaudeWebSocket(authToken = null, options = {}) {
     approveToolAlways,
     denyTool,
     todos,
+    capabilities, // Available slash_commands, plugins, skills, agents
+    fetchCapabilities, // Fetch available commands (silent)
     connect,
     disconnect
   };

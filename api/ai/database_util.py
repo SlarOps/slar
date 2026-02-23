@@ -2,10 +2,38 @@ import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+import functools
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_user_id_from_token(auth_token: str) -> Optional[str]:
+    """
+    Extract provider_id from token and resolve to actual DB user_id.
+
+    This is the preferred way to get user_id for DB operations.
+    Handles the case where Go API created user with different id than provider_id.
+
+    Args:
+        auth_token: JWT token (with or without 'Bearer ' prefix)
+
+    Returns:
+        Actual database user_id, or None on error
+    """
+    from workspace_service import extract_user_id_from_token
+
+    provider_id = extract_user_id_from_token(auth_token)
+    if not provider_id:
+        return None
+
+    user_info = extract_user_info_from_token(auth_token)
+    return ensure_user_exists(
+        provider_id,
+        email=user_info.get("email") if user_info else None,
+        name=user_info.get("name") if user_info else None
+    )
 
 @contextmanager
 def get_db_connection():
@@ -60,37 +88,67 @@ def execute_query(query: str, params: tuple = None, fetch: str = "all"):
                 raise
 
 
-def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional[str] = None) -> bool:
+@functools.lru_cache(maxsize=1000)
+def _get_cached_user_id(user_id: str) -> Optional[str]:
     """
-    Ensure user exists in the users table.
+    Cached lookup for user ID.
+    Only returns if user exists in DB.
+    """
+    try:
+        existing = execute_query(
+            "SELECT id FROM users WHERE id = %s OR provider_id = %s",
+            (user_id, user_id),
+            fetch="one"
+        )
+        if existing:
+            return existing.get('id')
+    except Exception as e:
+        logger.error(f"❌ Cache lookup failed: {e}")
+    return None
+
+def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional[str] = None) -> Optional[str]:
+    """
+    Ensure user exists in the users table and return the actual DB user ID.
 
     If user doesn't exist, creates a minimal record.
     This is needed because Supabase Auth users may not have a corresponding
     record in the application's users table.
 
+    IMPORTANT: Go API may create users with different ID than provider_id.
+    This function returns the ACTUAL database user ID for foreign key references.
+
     Args:
-        user_id: User's UUID from Supabase Auth
+        user_id: User's UUID from OIDC provider (provider_id / sub claim)
         email: User's email (optional, from JWT token)
         name: User's name (optional, from JWT token or user_metadata)
 
     Returns:
-        True if user exists or was created, False on error
+        Actual database user ID (may differ from user_id param), or None on error
     """
     if not user_id:
         logger.warning("ensure_user_exists: No user_id provided")
-        return False
+        return None
+
+    # Try cache first (fast path)
+    cached_id = _get_cached_user_id(user_id)
+    if cached_id:
+        return cached_id
 
     try:
-        # Check if user already exists
+        # Check if user already exists (by id, provider_id, OR email)
+        # This handles the case where Go API created user with different id
         existing = execute_query(
-            "SELECT id FROM users WHERE id = %s",
-            (user_id,),
+            "SELECT id FROM users WHERE id = %s OR provider_id = %s OR (email = %s AND %s != '')",
+            (user_id, user_id, email or '', email or ''),
             fetch="one"
         )
 
         if existing:
-            logger.debug(f"✅ User already exists: {user_id}")
-            return True
+            actual_id = existing.get('id')
+            logger.debug(f"✅ User already exists: provider_id={user_id} -> db_id={actual_id}")
+            # Update cache manually since we bypassed it with email check
+            _get_cached_user_id.cache_clear() # Invalidate to be safe or rely on next hit
+            return actual_id
 
         # User doesn't exist, create minimal record
         # Use email prefix as name if name not provided
@@ -115,23 +173,31 @@ def ensure_user_exists(user_id: str, email: Optional[str] = None, name: Optional
         )
 
         logger.info(f"✅ Created user record: {user_id}")
-        return True
+        
+        # Clear cache so next lookup finds it
+        _get_cached_user_id.cache_clear()
+        
+        return user_id
 
     except Exception as e:
         logger.error(f"❌ Failed to ensure user exists: {e}")
-        return False
+        return None
 
 
 def extract_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
     """
-    Extract user info from Supabase JWT token.
+    Extract user info from JWT token (supports OIDC and Supabase formats).
 
     Returns dict with user_id, email, and name (if available).
     This is a lightweight extraction without full signature verification
     (signature should be verified by the caller using extract_user_id_from_token).
 
+    Supports:
+    - OIDC standard claims: sub, email, name, given_name, family_name, preferred_username
+    - Supabase claims: user_metadata, app_metadata
+
     Args:
-        auth_token: JWT token from Supabase Auth
+        auth_token: JWT token from OIDC provider or Supabase Auth
 
     Returns:
         Dict with user_id, email, name or None on error
@@ -151,22 +217,40 @@ def extract_user_info_from_token(auth_token: str) -> Optional[Dict[str, Any]]:
         user_id = decoded.get("sub")
         email = decoded.get("email")
 
-        # Try to get name from user_metadata or app_metadata
-        user_metadata = decoded.get("user_metadata", {})
-        app_metadata = decoded.get("app_metadata", {})
+        # Try to get name from various sources (OIDC and Supabase compatible)
+        name = None
 
-        name = (
-            user_metadata.get("full_name") or
-            user_metadata.get("name") or
-            app_metadata.get("full_name") or
-            app_metadata.get("name") or
-            None
-        )
+        # 1. Standard OIDC claims
+        if decoded.get("name"):
+            name = decoded.get("name")
+        elif decoded.get("given_name") or decoded.get("family_name"):
+            # Build name from given_name + family_name
+            given = decoded.get("given_name", "")
+            family = decoded.get("family_name", "")
+            name = f"{given} {family}".strip()
+        elif decoded.get("preferred_username"):
+            name = decoded.get("preferred_username")
+
+        # 2. Supabase specific claims (fallback)
+        if not name:
+            user_metadata = decoded.get("user_metadata", {})
+            app_metadata = decoded.get("app_metadata", {})
+
+            name = (
+                user_metadata.get("full_name") or
+                user_metadata.get("name") or
+                app_metadata.get("full_name") or
+                app_metadata.get("name") or
+                None
+            )
 
         return {
             "user_id": user_id,
             "email": email,
-            "name": name
+            "name": name,
+            # Additional OIDC fields for reference
+            "preferred_username": decoded.get("preferred_username"),
+            "email_verified": decoded.get("email_verified", False),
         }
 
     except Exception as e:

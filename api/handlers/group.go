@@ -227,7 +227,16 @@ func (h *GroupHandler) AddGroupMember(c *gin.Context) {
 
 	member, err := h.GroupService.AddGroupMember(groupID, req, userID.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add group member"})
+		// Check if it's a validation error (user not in org)
+		errMsg := err.Error()
+		if errMsg == "user must be invited to the organization first before adding to a group" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   errMsg,
+				"message": "Please invite the user to the organization first via Organization > Manage Members",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
 

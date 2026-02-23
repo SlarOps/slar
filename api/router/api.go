@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 
 	"github.com/vanchonlee/slar/authz"
 	"github.com/vanchonlee/slar/handlers"
@@ -15,15 +15,15 @@ import (
 	"github.com/vanchonlee/slar/services"
 )
 
-func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
+func NewGinRouter(pg *sql.DB) *gin.Engine {
 	r := gin.Default()
 
 	// Add CORS middleware
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Org-ID, X-Project-ID")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -36,18 +36,18 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	// Initialize services
 	fcmService, _ := services.NewFCMService(pg)
 	slackService, _ := services.NewSlackService(pg)
-	alertService := services.NewAlertService(pg, redis, fcmService)
-	incidentService := services.NewIncidentService(pg, redis, fcmService) // NEW: Incident service
+	alertService := services.NewAlertService(pg, fcmService)
+	incidentService := services.NewIncidentService(pg, fcmService)
 
 	// Create lightweight notification sender for API server
 	notificationSender := services.NewLightweightNotificationSender(pg)
 	incidentService.SetNotificationWorker(notificationSender)
-	userService := services.NewUserService(pg, redis)
-	uptimeService := services.NewUptimeService(pg, redis)
+	userService := services.NewUserService(pg)
+	uptimeService := services.NewUptimeService(pg)
 	alertManagerService := services.NewAlertManagerService(pg, alertService)
 	apiKeyService := services.NewAPIKeyService(pg)
 	groupService := services.NewGroupService(pg)
-	escalationService := services.NewEscalationService(pg, redis, groupService, fcmService)
+	escalationService := services.NewEscalationService(pg, groupService, fcmService)
 	onCallService := services.NewOnCallService(pg)
 	rotationService := services.NewRotationService(pg)
 	schedulerService := services.NewSchedulerService(pg)                                  // NEW: Service scheduling
@@ -105,18 +105,64 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	orgHandler := handlers.NewOrgHandler(orgService)                                                                // Organization management
 	projectHandler := handlers.NewProjectHandler(projectService)                                                    // Project management
 	conversationShareHandler := handlers.NewConversationShareHandler(pg)                                            // Conversation sharing
+	internalAuthzHandler := handlers.NewInternalAuthzHandler(authzBackend)                                          // Internal authz for AI Agent
+	policyService := services.NewPolicyService(pg)              // Agent policy engine
+	policyHandler := handlers.NewPolicyHandler(policyService)    // Agent policy handler
+
+	// AI Agent Registry - Multi-agent routing with self-registration
+	agentRegistry := services.NewAgentRegistry()
+	log.Println("✅ Agent registry initialized (agents will self-register)")
+
+	// Start background health checker - marks agents as unhealthy if no heartbeat for 90s
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			agentRegistry.MarkStaleAgentsUnhealthy(90 * time.Second)
+		}
+	}()
+	log.Println("🔄 Agent health checker started (checking every 30s)")
+
+	// AI Proxy Handler - Control Plane WebSocket Proxy
+	aiProxyHandler := handlers.NewAIProxyHandler(agentRegistry)
+
+	// AI Agent Registration Handler - For agent self-registration
+	agentRegHandler := handlers.NewAgentRegistrationHandler(agentRegistry)
+
+	// AI API Proxy Handler - Proxy HTTP API requests to AI Agent
+	aiAPIProxyHandler := handlers.NewAIAPIProxyHandler(agentRegistry)
 
 	// Initialize monitor handlers
 	monitorHandler := monitor.NewMonitorHandler(pg)
 	deploymentHandler := monitor.NewDeploymentHandler(pg)
 	reportHandler := monitor.NewReportHandler(pg, incidentService)
 
-	// Initialize middleware
-	supabaseAuthMiddleware := handlers.NewSupabaseAuthMiddleware(userService, apiKeyService)
+	// Initialize session token service for backend-issued JWT tokens
+	// This decouples API auth from OIDC provider's short-lived ID tokens (5 min)
+	sessionTokenService := services.NewSessionTokenService(config.App.SessionSecret)
+
+	// Initialize middleware (OIDC auth - replaces Supabase)
+	// Returns nil if OIDC is not configured
+	oidcAuthMiddleware := handlers.NewOIDCAuthMiddleware(userService, apiKeyService, sessionTokenService)
+
+	// Middleware that returns 503 when auth is not configured
+	authNotConfiguredMiddleware := func() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.JSON(503, gin.H{
+				"error":   "Authentication not configured",
+				"message": "OIDC provider is not configured. Set OIDC_ISSUER and OIDC_CLIENT_ID environment variables.",
+			})
+			c.Abort()
+		}
+	}
 
 	// PUBLIC ENDPOINTS (no authentication required)
 
 	// Health check and info endpoints
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	r.GET("/env", func(c *gin.Context) {
 		// Set environment header for frontend
 		env := os.Getenv("SLAR_ENV")
@@ -125,13 +171,18 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		}
 		c.Header("x-slar-env", env)
 
-		// Get Supabase config to send to frontend
-		supabaseURL := config.App.SupabaseURL
-		supabaseAnonKey := config.App.SupabaseAnonKey
+		// Return OIDC config for frontend authentication
+		// Use web-specific client ID if configured, otherwise fallback to default
+		webClientID := config.App.OIDCWebClientID
+		if webClientID == "" {
+			webClientID = config.App.OIDCClientID // Fallback to default
+		}
 
+		// Only standard OIDC fields - provider name not needed (use generic "SSO")
 		c.JSON(200, gin.H{
-			"supabase_url":      supabaseURL,
-			"supabase_anon_key": supabaseAnonKey,
+			"oidc_issuer":    config.App.OIDCIssuer,
+			"oidc_client_id": webClientID,
+			"api_url":        config.App.BackendURL,
 		})
 	})
 
@@ -139,6 +190,25 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 	// AI Agent needs this to verify device certificates without authentication
 	// Must be registered BEFORE protected routes to take precedence
 	r.GET("/identity/public-key", identityHandler.GetPublicKey)
+
+	// PUBLIC SESSION TOKEN ENDPOINTS (token exchange & refresh)
+	// Path is /session/* (NOT /auth/*) to avoid Kong routing conflict:
+	//   Kong routes /api/auth/* → Next.js (for NextAuth OAuth callbacks)
+	//   Kong routes /api/*      → Go backend (with strip_path)
+	// Using /session/* ensures these reach the Go backend correctly
+	if oidcAuthMiddleware != nil {
+		authTokenHandler := handlers.NewAuthTokenHandler(
+			oidcAuthMiddleware.OIDCAuth,
+			sessionTokenService,
+			userService,
+		)
+		sessionRoutes := r.Group("/session")
+		{
+			sessionRoutes.POST("/token", authTokenHandler.ExchangeToken)  // Exchange OIDC ID Token → Session Token
+			sessionRoutes.POST("/refresh", authTokenHandler.RefreshToken) // Refresh Session Token
+		}
+		log.Println("✅ Token exchange endpoints registered: POST /session/token, POST /session/refresh")
+	}
 
 	// PUBLIC WEBHOOK ENDPOINTS (no authentication - secured by integration secret)
 	webhookRoutes := r.Group("/webhook")
@@ -156,10 +226,40 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 		apiKeyWebhookRoutes.POST("/alertmanager", alertManagerHandler.ReceiveWebhook)
 	}
 
-	// PROTECTED ENDPOINTS (require Supabase authentication)
+	// INTERNAL ENDPOINTS (service-to-service, no OIDC auth - secured at network level)
+	// Used by AI Agent to delegate authorization checks to Go API
+	internalAuthzRoutes := r.Group("/internal/authz")
+	{
+		internalAuthzRoutes.GET("/org/:org_id/role", internalAuthzHandler.GetOrgRole)
+		internalAuthzRoutes.GET("/project/:project_id/role", internalAuthzHandler.GetProjectRole)
+		internalAuthzRoutes.POST("/check", internalAuthzHandler.CheckAccess)
+	}
+
+	// Internal policy endpoints (no OIDC auth - network-isolated, called by Python agent)
+	internalPolicyRoutes := r.Group("/internal/policies")
+	{
+		internalPolicyRoutes.GET("", policyHandler.ListPolicies)
+		internalPolicyRoutes.GET("/version", policyHandler.GetPolicyVersion)
+	}
+	log.Println("✅ Internal policy endpoints initialized: /internal/policies/*")
+
+	// AI Agent self-registration endpoints (no auth - agents call these on startup)
+	internalAgentRoutes := r.Group("/internal/agents")
+	{
+		internalAgentRoutes.POST("/register", agentRegHandler.RegisterAgent)
+		internalAgentRoutes.POST("/heartbeat", agentRegHandler.Heartbeat)
+		internalAgentRoutes.POST("/unregister", agentRegHandler.UnregisterAgent)
+		internalAgentRoutes.GET("", agentRegHandler.ListAgents) // Admin: view all agents
+	}
+	log.Println("✅ Agent registration endpoints initialized: /internal/agents/*")
+
+	// PROTECTED ENDPOINTS (require OIDC authentication)
 	protected := r.Group("/")
-	protected.Use(supabaseAuthMiddleware.SupabaseAuthMiddleware())
-	// protected.Use()
+	if oidcAuthMiddleware != nil {
+		protected.Use(oidcAuthMiddleware.OIDCAuthMiddleware())
+	} else {
+		protected.Use(authNotConfiguredMiddleware())
+	}
 	{
 		// =====================================================================
 		// ORGANIZATION MANAGEMENT (Defense in Depth)
@@ -313,11 +413,11 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			userRoutes.POST("/fcm-token", userHandler.UpdateFCMToken)
 			userRoutes.GET("/fcm-token", userHandler.GetFCMToken)
 
-			// Notification configuration endpoints
-			userRoutes.GET("/:id/notifications/config", notificationHandler.GetNotificationConfig)
-			userRoutes.PUT("/:id/notifications/config", notificationHandler.UpdateNotificationConfig)
-			userRoutes.POST("/:id/notifications/test/slack", notificationHandler.TestSlackNotification)
-			userRoutes.GET("/:id/notifications/stats", notificationHandler.GetNotificationStats)
+			// Notification configuration endpoints (uses authenticated user from context)
+			userRoutes.GET("/me/notifications/config", notificationHandler.GetNotificationConfig)
+			userRoutes.PUT("/me/notifications/config", notificationHandler.UpdateNotificationConfig)
+			userRoutes.POST("/me/notifications/test/slack", notificationHandler.TestSlackNotification)
+			userRoutes.GET("/me/notifications/stats", notificationHandler.GetNotificationStats)
 		}
 
 		// ON-CALL MANAGEMENT
@@ -553,6 +653,10 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			c.JSON(200, gin.H{"message": "Token is valid"})
 		})
 
+		// AI Agent API Proxy (route HTTP API calls through CP)
+		protected.POST("/api/sync-bucket", aiAPIProxyHandler.ProxySyncBucket)
+		log.Println("✅ AI Agent sync-bucket proxy registered: POST /api/sync-bucket")
+
 		// MOBILE APP CONNECTION (protected - requires Supabase JWT)
 		mobileRoutes := protected.Group("/mobile")
 		{
@@ -586,18 +690,37 @@ func NewGinRouter(pg *sql.DB, redis *redis.Client) *gin.Engine {
 			conversationRoutes.DELETE("/:id/shares/:shareId", conversationShareHandler.RevokeShare)
 			log.Println("Conversation share routes registered: POST /:id/share, GET /:id/shares, DELETE /:id/shares/:shareId")
 		}
+
+		// AGENT POLICY ENGINE (declarative tool access control)
+		policyRoutes := protected.Group("/policies")
+		{
+			policyRoutes.GET("", policyHandler.ListPolicies)
+			policyRoutes.GET("/version", policyHandler.GetPolicyVersion)
+			policyRoutes.GET("/:id", policyHandler.GetPolicy)
+			policyRoutes.POST("", policyHandler.CreatePolicy)
+			policyRoutes.PATCH("/:id", policyHandler.UpdatePolicy)
+			policyRoutes.DELETE("/:id", policyHandler.DeletePolicy)
+		}
+		log.Println("✅ Agent policy routes initialized: /policies/*")
 	}
 
-	// PUBLIC MOBILE ENDPOINTS (no Supabase auth - token verified internally)
+	// PUBLIC MOBILE ENDPOINTS (no auth - used during QR connection flow)
 	mobilePublicRoutes := r.Group("/mobile")
 	{
-		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)
+		mobilePublicRoutes.GET("/connect/:code", mobileHandler.GetMobileConnectConfig) // V4: Fetch config by code
+		mobilePublicRoutes.POST("/connect/verify", mobileHandler.VerifyMobileConnect)  // Legacy V1-V3
 		mobilePublicRoutes.POST("/devices/register-push", mobileHandler.RegisterDeviceForPush)
-		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get Supabase config after QR scan
+		mobilePublicRoutes.GET("/auth-config", mobileHandler.GetAuthConfig) // Get OIDC config after QR scan
 	}
 
 	// PUBLIC SHARED CONVERSATION VIEW (no auth - anyone with link can view)
 	r.GET("/shared/:token", conversationShareHandler.GetSharedConversation)
+
+	// PoC: AI PROXY WebSocket (Control Plane pattern)
+	// Route: /ws/proxy?token=xxx&org_id=xxx&project_id=xxx
+	// This proxies WebSocket connections to internal AI Agent
+	r.GET("/ws/proxy", aiProxyHandler.ProxyWebSocket)
+	log.Println("✅ AI Proxy WebSocket endpoint registered: GET /ws/proxy")
 
 	return r
 }

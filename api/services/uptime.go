@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -11,18 +10,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
 )
 
 type UptimeService struct {
-	PG    *sql.DB
-	Redis *redis.Client
+	PG *sql.DB
 }
 
-func NewUptimeService(pg *sql.DB, redis *redis.Client) *UptimeService {
-	return &UptimeService{PG: pg, Redis: redis}
+func NewUptimeService(pg *sql.DB) *UptimeService {
+	return &UptimeService{PG: pg}
 }
 
 // Service Management
@@ -480,7 +477,7 @@ func (s *UptimeService) createDowntimeAlert(serviceID, incidentID, description s
 	}
 
 	// Auto-assign to current on-call user
-	userService := NewUserService(s.PG, s.Redis)
+	userService := NewUserService(s.PG)
 	onCallUser, err := userService.GetCurrentOnCallUser()
 	if err == nil {
 		alert.AssignedTo = onCallUser.ID
@@ -490,16 +487,12 @@ func (s *UptimeService) createDowntimeAlert(serviceID, incidentID, description s
 
 	// Save alert
 	_, err = s.PG.Exec(`
-		INSERT INTO alerts (id, title, description, status, created_at, updated_at, severity, source, assigned_to, assigned_at) 
+		INSERT INTO alerts (id, title, description, status, created_at, updated_at, severity, source, assigned_to, assigned_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	`, alert.ID, alert.Title, alert.Description, alert.Status, alert.CreatedAt, alert.UpdatedAt,
 		alert.Severity, alert.Source, alert.AssignedTo, alert.AssignedAt)
 
 	if err == nil {
-		// Add to worker queue
-		b, _ := json.Marshal(alert)
-		s.Redis.RPush(context.Background(), "alerts:queue", b)
-
 		// Update incident with alert ID
 		s.PG.Exec(`UPDATE service_incidents SET alert_id = $1 WHERE id = $2`, alert.ID, incidentID)
 	}

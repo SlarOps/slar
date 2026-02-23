@@ -54,34 +54,6 @@ service:
   type: ClusterIP
   port: 80
 
-# Ingress configuration
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: chart-example.local
-      paths:
-        - path: /
-          pathType: ImplementationSpecific
-  tls: []
-
-gloo:
-  enabled: false
-  serviceName: slar-kong
-  servicePort: 8000
-  useHttp2: false
-  gatewayLabels:
-    app.kubernetes.io/name: slar-kong
-    app.kubernetes.io/instance: slar-kong
-    app.kubernetes.io/component: kong
-  sslConfig:
-    secretName: slar-ssl-cert
-    namespace: slar
-  domains:
-    - slar.prod.gcp.k.datajet.io
-  routePrefix: "/webhook/*"
-
 # Default resource limits
 resources: {}
   # limits:
@@ -123,23 +95,6 @@ tolerations: []
 
 # Affinity rules
 affinity: {}
-
-# Migration job configuration
-migration:
-  enabled: false
-  image:
-    repository: migration:latest
-    name: slar-migration
-    tag: 1.0.1
-    pullPolicy: Always
-  backoffLimit: 3
-  resources:
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
-    requests:
-      cpu: "250m"
-      memory: "256Mi"
 
 # Components configuration with persistent storage
 components:
@@ -213,6 +168,25 @@ components:
             - key: config.yaml
               path: config.yaml
 
+    # Extra sidecar containers for the AI pod (full Kubernetes container specs)
+    # Example:
+    # extraContainers:
+    #   - name: oauth2-proxy
+    #     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    #     args:
+    #       - --http-address=0.0.0.0:4180
+    #     ports:
+    #       - name: oauth2
+    #         containerPort: 4180
+    #     resources:
+    #       requests:
+    #         cpu: 50m
+    #         memory: 64Mi
+    #       limits:
+    #         cpu: 200m
+    #         memory: 256Mi
+    extraContainers: []
+
     # RBAC configuration for AI pod
     rbac:
       # Enable RBAC for AI pod to access Kubernetes resources
@@ -236,6 +210,8 @@ components:
         value: "production"
       - name: SLAR_CONFIG_PATH
         value: "/app/config/config.yaml"
+      - name: AUTO_MIGRATE
+        value: "true"
     
     # Mount config file from secret
     volumeMounts:
@@ -255,38 +231,6 @@ components:
         emptyDir: {}
     ingress:
       enabled: false
-
-  slack-worker:
-    image:
-      name: slar-slack-worker
-    service:
-      enabled: false
-    env:
-      - name: SLAR_CONFIG_PATH
-        value: "/app/config/config.yaml"
-      - name: POLL_INTERVAL
-        value: "1"
-      - name: BATCH_SIZE
-        value: "10"
-      - name: MAX_RETRIES
-        value: "3"
-      - name: LOG_LEVEL
-        value: "DEBUG"
-      - name: LOG_FILE
-        value: "/app/slack_worker.log"
-    
-    # Mount config file from secret
-    volumeMounts:
-      - name: app-config
-        mountPath: /app/config
-        readOnly: true
-    volumes:
-      - name: app-config
-        secret:
-          secretName: slar-secrets
-          items:
-            - key: config.yaml
-              path: config.yaml
 
   web:
     image:
@@ -338,3 +282,315 @@ components:
     configMap:
       enabled: true
       name: kong-config
+
+# =============================================================================
+# POSTGRESQL (Bitnami Subchart)
+# https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+# Set enabled=true to deploy PostgreSQL together with SLAR
+# =============================================================================
+postgresql:
+  enabled: false  # Set to true for all-in-one deployment
+  # Bitnami PostgreSQL configuration
+  auth:
+    username: slar
+    password: "slar-postgres-password"  # Change in production!
+    database: slar
+    postgresPassword: "postgres-admin-password"  # Change in production!
+  primary:
+    persistence:
+      enabled: true
+      storageClass: ""  # Use default storage class
+      size: 10Gi
+    resources:
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+    # Init container to create additional databases (optional)
+    # initdb:
+    #   scripts:
+    #     init-dex.sql: |
+    #       CREATE DATABASE dex;
+
+# =============================================================================
+# DEX IDP - Lightweight OIDC Provider
+# https://dexidp.io/docs/
+# Dex is a federated OIDC provider that connects to upstream identity providers
+# Supports: Google, GitHub, LDAP, SAML, Microsoft, and more
+#
+# USE CASE: Mobile apps need OIDC with PKCE but Google doesn't support PKCE
+# for public clients. Dex acts as a proxy:
+#   Mobile App (public client, PKCE) -> Dex -> Google (with secret)
+# =============================================================================
+dex:
+  enabled: false  # Set to true to deploy Dex as the OIDC provider
+
+  # Image configuration
+  image:
+    repository: ghcr.io/dexidp/dex
+    tag: "v2.41.1"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # Resource limits (Dex is very lightweight ~50MB RAM)
+  resources:
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 5556
+
+  # Persistence for SQLite storage (optional, recommended for production)
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class
+    accessMode: ReadWriteOnce
+    size: 1Gi
+
+  # Dex configuration
+  config:
+    # Issuer URL - MUST be accessible by clients (including mobile apps)
+    # For local: http://<release-name>-dex:5556/dex
+    # For production: https://auth.yourdomain.com/dex
+    # IMPORTANT: This URL must be reachable from mobile devices!
+    issuer: "https://auth.your-domain.com/dex"  # Public URL for mobile access
+
+    # Storage backend (sqlite3 or postgres)
+    storage:
+      type: sqlite3  # Use "postgres" for HA deployments
+      config: {}
+      # For postgres:
+      # config:
+      #   host: slar-postgresql
+      #   port: 5432
+      #   database: dex
+      #   user: dex
+      #   password: dex
+      #   sslMode: disable
+
+    # Token expiry settings
+    expiry:
+      signingKeys: "6h"
+      idTokens: "24h"
+      refreshTokens:
+        validIfNotUsedFor: "168h"  # 7 days
+        absoluteLifetime: "720h"   # 30 days
+
+    # OAuth2 settings
+    oauth2:
+      skipApprovalScreen: true  # Don't show "Allow access?" screen
+      responseTypes:
+        - code
+        - token
+        - id_token
+
+    # Enable gRPC API (optional, for programmatic access)
+    grpc: false
+
+    # Static clients (SLAR applications)
+    staticClients:
+      # Web client - confidential client with secret
+      slar:
+        id: "slar-web"
+        name: "SLAR Web Application"
+        secret: "slar-dex-secret"  # Change in production!
+        redirectURIs:
+          - https://your-domain.com/api/auth/callback/oidc
+
+      # Mobile client - PUBLIC client (no secret required)
+      # This allows mobile apps to use PKCE without needing a client secret
+      mobile:
+        enabled: true
+        id: "slar-mobile"
+        name: "SLAR Mobile App"
+        # PUBLIC CLIENT: Set to true to allow PKCE flow without secret
+        public: true
+        redirectURIs:
+          - "slar://auth/callback"
+          - "com.slar.slar://oauth/callback"
+
+      # Additional clients (optional)
+      additional: []
+
+    # Enable local password database (for testing/development only)
+    # NOT RECOMMENDED for production - use connectors instead
+    enablePasswordDB: false
+    staticPasswords: []
+    # Example static passwords (for testing):
+    # staticPasswords:
+    #   - email: "admin@example.com"
+    #     hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"  # password
+    #     username: "admin"
+    #     userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+
+  # ==========================================================================
+  # IDENTITY PROVIDER CONNECTORS
+  # Configure at least one connector to allow users to login
+  # ==========================================================================
+  connectors:
+    # Google Workspace / Gmail
+    # https://dexidp.io/docs/connectors/google/
+    #
+    # HOW TO SET UP:
+    # 1. Go to Google Cloud Console -> APIs & Services -> Credentials
+    # 2. Create OAuth 2.0 Client ID (Web application type)
+    # 3. Add redirect URI: https://your-dex-domain/dex/callback
+    # 4. Copy Client ID and Client Secret below
+    # 5. Set enabled: true
+    google:
+      enabled: false  # Set to true after configuring clientID/clientSecret
+      name: "Google"
+      clientID: ""      # REQUIRED: From Google Cloud Console
+      clientSecret: ""  # REQUIRED: From Google Cloud Console
+      redirectURI: ""   # Auto-generated: <issuer>/callback
+      # IMPORTANT: Restrict to specific domains (recommended for enterprise)
+      hostedDomains: []
+      # hostedDomains:
+      #   - yourcompany.com
+      #   - subsidiary.com
+      # For Google Workspace groups (optional):
+      # serviceAccountFilePath: "/etc/dex/google/sa.json"
+      # serviceAccountSecretName: "dex-google-sa"
+      # adminEmail: "admin@yourcompany.com"
+
+    # GitHub / GitHub Enterprise
+    # https://dexidp.io/docs/connectors/github/
+    github:
+      enabled: false
+      name: "GitHub"
+      clientID: ""      # From GitHub OAuth App
+      clientSecret: ""  # From GitHub OAuth App
+      redirectURI: ""   # Auto-generated if empty
+      # Restrict to specific organizations (recommended)
+      orgs: []
+      # orgs:
+      #   - name: your-org
+      #     teams:
+      #       - engineering
+      #       - devops
+      loadAllGroups: false
+      teamNameField: "slug"
+      useLoginAsID: false
+
+    # LDAP / Active Directory
+    # https://dexidp.io/docs/connectors/ldap/
+    ldap:
+      enabled: false
+      name: "LDAP"
+      host: ""  # ldap.example.com:636
+      insecureNoSSL: false
+      insecureSkipVerify: false
+      bindDN: ""
+      bindPW: ""
+      userSearch:
+        baseDN: ""
+        filter: "(objectClass=person)"
+        username: "uid"
+        idAttr: "uid"
+        emailAttr: "mail"
+        nameAttr: "cn"
+      groupSearch: {}
+      # groupSearch:
+      #   baseDN: "ou=Groups,dc=example,dc=com"
+      #   filter: "(objectClass=groupOfNames)"
+      #   userMatchers:
+      #     - userAttr: DN
+      #       groupAttr: member
+      #   nameAttr: cn
+
+    # Upstream OIDC Provider (Okta, Auth0, Azure AD, etc.)
+    # https://dexidp.io/docs/connectors/oidc/
+    oidc:
+      enabled: false
+      id: "upstream-oidc"
+      name: "SSO"
+      issuer: ""       # https://your-idp.com
+      clientID: ""
+      clientSecret: ""
+      redirectURI: ""  # Auto-generated if empty
+      scopes:
+        - openid
+        - profile
+        - email
+
+    # Additional custom connectors
+    additional: []
+    # Example SAML connector:
+    # additional:
+    #   - type: saml
+    #     id: okta-saml
+    #     name: Okta SAML
+    #     config:
+    #       ssoURL: https://yourcompany.okta.com/app/.../sso/saml
+    #       ca: /etc/dex/saml/ca.crt
+    #       redirectURI: https://auth.yourdomain.com/dex/callback
+    #       usernameAttr: name
+    #       emailAttr: email
+
+# =============================================================================
+# AUTO-GENERATED CONFIG
+# Set config.enabled=true to auto-generate the slar-secrets Secret
+# This eliminates the need to manually create secrets before deployment
+# =============================================================================
+config:
+  # If true, the chart will create a Secret containing `config.yaml`.
+  # If `existingSecret` is set, the chart will NOT create a Secret (pre-created is preferred).
+  enabled: false
+
+  # Optional: use an already-created Secret instead of generating one.
+  # This is the recommended approach for production (manage secrets externally).
+  existingSecret: ""
+
+  # Name to use for the config Secret when creating it (or the default expected name when not creating).
+  # Ignored when `existingSecret` is set.
+  secretName: "slar-secrets"
+  # Database - leave empty to use internal PostgreSQL
+  database_url: ""
+  external_database_url: ""  # Use this if postgresql.enabled=false
+  port: "8080"
+  redis_url: ""
+  # URLs
+  public_url: ""  # Leave empty to auto-detect from Kong service
+  data_dir: "./data"
+  
+  # OIDC Configuration
+  # Leave empty to use internal Dex IDP (when dex.enabled=true)
+  # Or configure to use external OIDC provider (Okta, Auth0, Azure AD, etc.)
+  oidc_issuer: ""  # e.g., "http://slar-dex:5556/dex" or "https://auth.company.com"
+  oidc_client_id: "slar-web"  # Must match dex.config.staticClients.slar.id
+  oidc_client_secret: "slar-dex-secret"  # Must match dex.config.staticClients.slar.secret
+  oidc_web_client_id: ""
+  oidc_mobile_client_id: ""
+  oidc_audience: ""
+  # Notification Gateway (optional)
+  notification_gateway:
+    url: ""
+    instance_id: ""
+    api_token: ""
+  # External Integrations (required for AI features)
+  anthropic_api_key: ""  # Required: sk-ant-xxx
+  slack_bot_token: ""    # Optional: xoxb-xxx
+  slack_app_token: ""    # Optional: xapp-xxx
+  # AI Configuration
+  ai_incident_analytics:
+    enabled: true
+    model: "sonnet"
+    permission_mode: "default"
+    setting_sources:
+      - project
+      - user
+    allowed_tools:
+      - mcp__incident_tools__search_incidents
+      - mcp__incident_tools__get_incident_stats
+      - mcp__incident_tools__get_current_time
+      - mcp__incident_tools__get_incident_by_id
+      - mcp__incident_tools__get_incidents_by_time

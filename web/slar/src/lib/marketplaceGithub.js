@@ -8,6 +8,8 @@
  * - Download plugin files on demand (lazy loading)
  */
 
+import { getConfigSync } from './config';
+
 /**
  * Decode JWT token to extract user_id (client-side, no verification)
  *
@@ -407,14 +409,15 @@ export async function downloadEntireMarketplace(owner, repo, branch = 'main', au
     }
 
     // Call AI service endpoint to git clone
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    // SECURITY: Send token via Authorization header, not in request body
+    const aiServiceUrl = getConfigSync().aiApiUrl;
     const response = await fetch(`${aiServiceUrl}/api/marketplace/clone`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         owner,
         repo,
         branch: branch || 'main',
@@ -484,14 +487,15 @@ export async function updateMarketplace(marketplaceName, authToken, onProgress) 
       });
     }
 
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    // SECURITY: Send token via Authorization header, not in request body
+    const aiServiceUrl = getConfigSync().aiApiUrl;
     const response = await fetch(`${aiServiceUrl}/api/marketplace/update`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         marketplace_name: marketplaceName,
       }),
     });
@@ -526,6 +530,55 @@ export async function updateMarketplace(marketplaceName, authToken, onProgress) 
     };
   } catch (error) {
     console.error('[marketplaceGithub] Error updating marketplace:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Refresh skills for a marketplace (re-scan without git fetch)
+ *
+ * Use this to update skills metadata for marketplaces that were cloned
+ * before skill auto-discovery was implemented.
+ */
+export async function refreshMarketplaceSkills(marketplaceName, authToken) {
+  try {
+    console.log('[marketplaceGithub] Refreshing skills for marketplace:', { marketplaceName });
+
+    const aiServiceUrl = getConfigSync().aiApiUrl;
+    const response = await fetch(`${aiServiceUrl}/api/marketplace/refresh-skills`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        marketplace_name: marketplaceName,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Backend returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to refresh skills');
+    }
+
+    console.log(`[marketplaceGithub] ✅ ${data.message}`);
+
+    return {
+      success: true,
+      message: data.message,
+      plugins: data.plugins
+    };
+  } catch (error) {
+    console.error('[marketplaceGithub] Error refreshing marketplace skills:', error);
     return {
       success: false,
       error: error.message
@@ -623,15 +676,16 @@ export async function fetchMarketplaceMetadata(owner, repo, branch = 'main', aut
   try {
     console.log('[marketplaceGithub] 🌐 Fetching marketplace metadata (lightweight):', { owner, repo, branch });
 
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    // SECURITY: Send token via Authorization header, not in request body
+    const aiServiceUrl = getConfigSync().aiApiUrl;
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/fetch-metadata`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         owner,
         repo,
         branch,
@@ -689,15 +743,16 @@ export async function installPluginFromMarketplace(
       version
     });
 
-    const aiServiceUrl = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+    // SECURITY: Send token via Authorization header, not in request body
+    const aiServiceUrl = getConfigSync().aiApiUrl;
 
     const response = await fetch(`${aiServiceUrl}/api/marketplace/install-plugin`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        auth_token: authToken,
         marketplace_name: marketplaceName,
         plugin_name: pluginName,
         version

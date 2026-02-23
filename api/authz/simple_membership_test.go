@@ -350,16 +350,17 @@ func TestSimpleMembershipManager_GetResourceMembers(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name:         "get org members",
+			name:         "get org members with user info",
 			resourceType: ResourceOrg,
 			resourceID:   "org-1",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at").
+				// Query now JOINs with users table and includes name, email
+				mock.ExpectQuery("SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at").
 					WithArgs(ResourceOrg, "org-1").
-					WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by"}).
-						AddRow("mem-1", "user-1", "org", "org-1", "owner", now, now, "").
-						AddRow("mem-2", "user-2", "org", "org-1", "admin", now, now, "user-1").
-						AddRow("mem-3", "user-3", "org", "org-1", "member", now, now, "user-1"))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by", "name", "email"}).
+						AddRow("mem-1", "user-1", "org", "org-1", "owner", now, now, "", "John Doe", "john@example.com").
+						AddRow("mem-2", "user-2", "org", "org-1", "admin", now, now, "user-1", "Jane Smith", "jane@example.com").
+						AddRow("mem-3", "user-3", "org", "org-1", "member", now, now, "user-1", "Bob Wilson", "bob@example.com"))
 			},
 			wantLen: 3,
 			wantErr: false,
@@ -369,11 +370,25 @@ func TestSimpleMembershipManager_GetResourceMembers(t *testing.T) {
 			resourceType: ResourceProject,
 			resourceID:   "proj-empty",
 			mockFunc: func() {
-				mock.ExpectQuery("SELECT id, user_id, resource_type, resource_id, role, created_at, updated_at").
+				mock.ExpectQuery("SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at").
 					WithArgs(ResourceProject, "proj-empty").
-					WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by"}))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by", "name", "email"}))
 			},
 			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name:         "members with NULL user info (LEFT JOIN)",
+			resourceType: ResourceOrg,
+			resourceID:   "org-2",
+			mockFunc: func() {
+				// When user doesn't exist in users table, name/email should be empty
+				mock.ExpectQuery("SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at").
+					WithArgs(ResourceOrg, "org-2").
+					WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by", "name", "email"}).
+						AddRow("mem-4", "user-4", "org", "org-2", "owner", now, now, "", "", ""))
+			},
+			wantLen: 1,
 			wantErr: false,
 		},
 	}
@@ -392,6 +407,103 @@ func TestSimpleMembershipManager_GetResourceMembers(t *testing.T) {
 				t.Errorf("unfulfilled expectations: %v", err)
 			}
 		})
+	}
+}
+
+func TestSimpleMembershipManager_GetResourceMembers_UserInfo(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock: %v", err)
+	}
+	defer db.Close()
+
+	mgr := NewSimpleMembershipManager(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Test that user info (name, email) is correctly populated
+	mock.ExpectQuery("SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at").
+		WithArgs(ResourceOrg, "org-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by", "name", "email"}).
+			AddRow("mem-1", "user-1", "org", "org-1", "owner", now, now, "", "Chon Le", "chon@example.com").
+			AddRow("mem-2", "user-2", "org", "org-1", "member", now, now, "user-1", "Test User", "test@example.com"))
+
+	members, err := mgr.GetResourceMembers(ctx, ResourceOrg, "org-1")
+	if err != nil {
+		t.Fatalf("GetResourceMembers() error = %v", err)
+	}
+
+	if len(members) != 2 {
+		t.Fatalf("GetResourceMembers() len = %v, want 2", len(members))
+	}
+
+	// Verify first member (owner)
+	if members[0].Name != "Chon Le" {
+		t.Errorf("members[0].Name = %v, want 'Chon Le'", members[0].Name)
+	}
+	if members[0].Email != "chon@example.com" {
+		t.Errorf("members[0].Email = %v, want 'chon@example.com'", members[0].Email)
+	}
+	if members[0].Role != RoleOwner {
+		t.Errorf("members[0].Role = %v, want 'owner'", members[0].Role)
+	}
+
+	// Verify second member
+	if members[1].Name != "Test User" {
+		t.Errorf("members[1].Name = %v, want 'Test User'", members[1].Name)
+	}
+	if members[1].Email != "test@example.com" {
+		t.Errorf("members[1].Email = %v, want 'test@example.com'", members[1].Email)
+	}
+	if members[1].InvitedBy != "user-1" {
+		t.Errorf("members[1].InvitedBy = %v, want 'user-1'", members[1].InvitedBy)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestSimpleMembershipManager_GetResourceMembers_EmptyUserInfo(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock: %v", err)
+	}
+	defer db.Close()
+
+	mgr := NewSimpleMembershipManager(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Test LEFT JOIN behavior - when user doesn't exist, name/email should be empty strings
+	mock.ExpectQuery("SELECT m.id, m.user_id, m.resource_type, m.resource_id, m.role, m.created_at, m.updated_at").
+		WithArgs(ResourceOrg, "org-orphan").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "resource_type", "resource_id", "role", "created_at", "updated_at", "invited_by", "name", "email"}).
+			AddRow("mem-orphan", "deleted-user", "org", "org-orphan", "member", now, now, "", "", ""))
+
+	members, err := mgr.GetResourceMembers(ctx, ResourceOrg, "org-orphan")
+	if err != nil {
+		t.Fatalf("GetResourceMembers() error = %v", err)
+	}
+
+	if len(members) != 1 {
+		t.Fatalf("GetResourceMembers() len = %v, want 1", len(members))
+	}
+
+	// User info should be empty but not cause error
+	if members[0].Name != "" {
+		t.Errorf("members[0].Name = %v, want empty string", members[0].Name)
+	}
+	if members[0].Email != "" {
+		t.Errorf("members[0].Email = %v, want empty string", members[0].Email)
+	}
+	// UserID should still be present
+	if members[0].UserID != "deleted-user" {
+		t.Errorf("members[0].UserID = %v, want 'deleted-user'", members[0].UserID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
 

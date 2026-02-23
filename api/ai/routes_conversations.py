@@ -1,5 +1,5 @@
 """
-Conversation History API Routes
+Conversation History API Routes (REFACTORED with dependency injection)
 
 This module handles Claude conversation history storage and retrieval
 for resume functionality.
@@ -7,40 +7,64 @@ for resume functionality.
 Endpoints:
 - GET /api/conversations - List user's conversations
 - GET /api/conversations/{conversation_id} - Get conversation details
-- PUT /api/conversations/{conversation_id} - Update conversation (title, archive)
+- GET /api/conversations/{conversation_id}/messages - Get messages
+- PUT /api/conversations/{conversation_id} - Update conversation
 - DELETE /api/conversations/{conversation_id} - Delete conversation
 """
 
 import json
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel, Field
+from typing import Optional
 
+from dependencies import get_current_user, UserContext
 from database_util import execute_query
-from supabase_storage import extract_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """
-    Sanitize error messages to prevent information disclosure.
-    """
-    logger.error(f"❌ Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
+# ==========================================
+# Pydantic Schemas
+# ==========================================
 
-    if isinstance(error, (ConnectionError, TimeoutError)):
-        return "Service temporarily unavailable. Please try again."
-    elif isinstance(error, PermissionError):
-        return "Access denied. Please check your permissions."
-    elif isinstance(error, ValueError):
-        return "Invalid input provided. Please check your request."
-    elif "auth" in str(error).lower() or "token" in str(error).lower():
-        return "Authentication failed. Please verify your credentials."
-    elif "database" in str(error).lower() or "postgres" in str(error).lower():
-        return "Database error. Please contact support if this persists."
-    else:
-        return "An internal error occurred. Please contact support if this persists."
+class ConversationListResponse(BaseModel):
+    """Response for GET /api/conversations."""
+    success: bool
+    conversations: list
+    total: int
+
+
+class ConversationResponse(BaseModel):
+    """Response for GET /api/conversations/{id}."""
+    success: bool
+    conversation: Optional[dict] = None
+
+
+class MessagesResponse(BaseModel):
+    """Response for GET /api/conversations/{id}/messages."""
+    success: bool
+    messages: list
+
+
+class UpdateConversationRequest(BaseModel):
+    """Request to update conversation."""
+    title: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+class UpdateConversationResponse(BaseModel):
+    """Response for PUT /api/conversations/{id}."""
+    success: bool
+    message: str
+
+
+class DeleteConversationResponse(BaseModel):
+    """Response for DELETE /api/conversations/{id}."""
+    success: bool
+    message: str
 
 
 # ==========================================
@@ -207,50 +231,30 @@ def get_conversation_messages(conversation_id: str, limit: int = 100) -> list:
 # API Endpoints
 # ==========================================
 
-@router.get("")
-async def list_conversations(request: Request):
+@router.get("", response_model=ConversationListResponse)
+async def list_conversations(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    archived: bool = Query(False),
+    user: UserContext = Depends(get_current_user)
+):
     """
     List user's conversations for resume functionality.
 
+    Authentication:
+    - Requires valid Authorization header
+
     Query params:
-        auth_token: Bearer token
-        limit: Number of conversations to return (default: 20)
-        offset: Pagination offset (default: 0)
-        archived: Include archived conversations (default: false)
+    - limit: Number of conversations to return (default: 20, max: 100)
+    - offset: Pagination offset (default: 0)
+    - archived: Include archived conversations (default: false)
 
     Returns:
-        {
-            "success": bool,
-            "conversations": [
-                {
-                    "id": "uuid",
-                    "conversation_id": "claude-session-id",
-                    "title": "Help me build a web app",
-                    "first_message": "Help me build a web application...",
-                    "last_message_at": "2025-12-20T10:00:00Z",
-                    "message_count": 5,
-                    "model": "sonnet",
-                    "created_at": "2025-12-20T09:00:00Z"
-                }
-            ],
-            "total": 50
-        }
+    - List of conversations with metadata
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-        limit = int(request.query_params.get("limit", "20"))
-        offset = int(request.query_params.get("offset", "0"))
-        include_archived = request.query_params.get("archived", "false").lower() == "true"
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         # Build query based on archived filter
-        if include_archived:
+        if archived:
             conversations = execute_query(
                 """
                 SELECT id, conversation_id, title, first_message, last_message_at,
@@ -260,12 +264,12 @@ async def list_conversations(request: Request):
                 ORDER BY last_message_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (user_id, limit, offset),
+                (user.user_id, limit, offset),
                 fetch="all"
             )
             total_result = execute_query(
                 "SELECT COUNT(*) as count FROM claude_conversations WHERE user_id = %s",
-                (user_id,),
+                (user.user_id,),
                 fetch="one"
             )
         else:
@@ -278,188 +282,174 @@ async def list_conversations(request: Request):
                 ORDER BY last_message_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (user_id, limit, offset),
+                (user.user_id, limit, offset),
                 fetch="all"
             )
             total_result = execute_query(
                 "SELECT COUNT(*) as count FROM claude_conversations WHERE user_id = %s AND is_archived = FALSE",
-                (user_id,),
+                (user.user_id,),
                 fetch="one"
             )
 
         total = total_result["count"] if total_result else 0
 
-        return {
-            "success": True,
-            "conversations": conversations or [],
-            "total": total
-        }
+        return ConversationListResponse(
+            success=True,
+            conversations=conversations or [],
+            total=total
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "listing conversations")
-        }
+        logger.error(f"Error listing conversations for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred listing conversations. Please try again."
+        )
 
 
-@router.get("/{conversation_id}")
-async def get_conversation(conversation_id: str, request: Request):
+@router.get("/{conversation_id}", response_model=ConversationResponse)
+async def get_conversation(
+    conversation_id: str,
+    user: UserContext = Depends(get_current_user)
+):
     """
     Get details of a specific conversation.
 
-    Path params:
-        conversation_id: Claude conversation ID
+    Authentication:
+    - Requires valid Authorization header
 
-    Query params:
-        auth_token: Bearer token
+    Path params:
+    - conversation_id: Claude conversation ID
 
     Returns:
-        {
-            "success": bool,
-            "conversation": {...}
-        }
+    - Conversation details
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         conversation = execute_query(
             """
             SELECT * FROM claude_conversations
             WHERE conversation_id = %s AND user_id = %s
             """,
-            (conversation_id, user_id),
+            (conversation_id, user.user_id),
             fetch="one"
         )
 
         if not conversation:
-            return {"success": False, "error": "Conversation not found"}
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
 
-        return {
-            "success": True,
-            "conversation": conversation
-        }
+        return ConversationResponse(
+            success=True,
+            conversation=conversation
+        )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting conversation")
-        }
+        logger.error(f"Error getting conversation {conversation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred getting conversation. Please try again."
+        )
 
 
-@router.get("/{conversation_id}/messages")
-async def get_messages(conversation_id: str, request: Request):
+@router.get("/{conversation_id}/messages", response_model=MessagesResponse)
+async def get_messages(
+    conversation_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    user: UserContext = Depends(get_current_user)
+):
     """
     Get messages for a conversation (for resume/history display).
 
+    Authentication:
+    - Requires valid Authorization header
+
     Path params:
-        conversation_id: Claude conversation ID
+    - conversation_id: Claude conversation ID
 
     Query params:
-        auth_token: Bearer token
-        limit: Max messages to return (default: 100)
+    - limit: Max messages to return (default: 100, max: 1000)
 
     Returns:
-        {
-            "success": bool,
-            "messages": [
-                {
-                    "id": "uuid",
-                    "role": "user|assistant|system",
-                    "content": "message content",
-                    "message_type": "text|tool_use|tool_result",
-                    "created_at": "2025-12-20T10:00:00Z"
-                }
-            ]
-        }
+    - List of messages
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-        limit = int(request.query_params.get("limit", "100"))
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         # Verify user owns this conversation
         conversation = execute_query(
             "SELECT id FROM claude_conversations WHERE conversation_id = %s AND user_id = %s",
-            (conversation_id, user_id),
+            (conversation_id, user.user_id),
             fetch="one"
         )
 
         if not conversation:
-            return {"success": False, "error": "Conversation not found"}
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
 
         # Get messages
         messages = get_conversation_messages(conversation_id, limit)
 
-        return {
-            "success": True,
-            "messages": messages
-        }
+        return MessagesResponse(
+            success=True,
+            messages=messages
+        )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting messages")
-        }
+        logger.error(f"Error getting messages for {conversation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred getting messages. Please try again."
+        )
 
 
-@router.put("/{conversation_id}")
-async def update_conversation(conversation_id: str, request: Request):
+@router.put("/{conversation_id}", response_model=UpdateConversationResponse)
+async def update_conversation(
+    conversation_id: str,
+    body: UpdateConversationRequest,
+    user: UserContext = Depends(get_current_user)
+):
     """
     Update conversation metadata (title, archived status).
 
+    Authentication:
+    - Requires valid Authorization header
+
     Path params:
-        conversation_id: Claude conversation ID
+    - conversation_id: Claude conversation ID
 
     Request body:
-        {
-            "auth_token": "Bearer ...",
-            "title": "New title",
-            "is_archived": true
-        }
+    - title: New title (optional)
+    - is_archived: Archive status (optional)
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
     try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         # Build update query based on provided fields
         updates = []
         params = []
 
-        if "title" in body:
+        if body.title is not None:
             updates.append("title = %s")
-            params.append(body["title"])
+            params.append(body.title)
 
-        if "is_archived" in body:
+        if body.is_archived is not None:
             updates.append("is_archived = %s")
-            params.append(body["is_archived"])
+            params.append(body.is_archived)
 
         if not updates:
-            return {"success": False, "error": "No fields to update"}
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No fields to update"
+            )
 
-        params.extend([conversation_id, user_id])
+        params.extend([conversation_id, user.user_id])
 
         execute_query(
             f"""
@@ -471,54 +461,58 @@ async def update_conversation(conversation_id: str, request: Request):
             fetch="none"
         )
 
-        return {"success": True, "message": "Conversation updated"}
+        return UpdateConversationResponse(
+            success=True,
+            message="Conversation updated"
+        )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "updating conversation")
-        }
+        logger.error(f"Error updating conversation {conversation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred updating conversation. Please try again."
+        )
 
 
-@router.delete("/{conversation_id}")
-async def delete_conversation(conversation_id: str, request: Request):
+@router.delete("/{conversation_id}", response_model=DeleteConversationResponse)
+async def delete_conversation(
+    conversation_id: str,
+    user: UserContext = Depends(get_current_user)
+):
     """
     Delete a conversation.
 
-    Path params:
-        conversation_id: Claude conversation ID
+    Authentication:
+    - Requires valid Authorization header
 
-    Query params:
-        auth_token: Bearer token
+    Path params:
+    - conversation_id: Claude conversation ID
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get("authorization", "")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         execute_query(
             """
             DELETE FROM claude_conversations
             WHERE conversation_id = %s AND user_id = %s
             """,
-            (conversation_id, user_id),
+            (conversation_id, user.user_id),
             fetch="none"
         )
 
-        logger.info(f"🗑️ Deleted conversation {conversation_id} for user {user_id}")
+        logger.info(f"🗑️ Deleted conversation {conversation_id} for user {user.user_id}")
 
-        return {"success": True, "message": "Conversation deleted"}
+        return DeleteConversationResponse(
+            success=True,
+            message="Conversation deleted"
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting conversation")
-        }
+        logger.error(f"Error deleting conversation {conversation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred deleting conversation. Please try again."
+        )

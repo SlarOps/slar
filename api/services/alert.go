@@ -1,28 +1,23 @@
 package services
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/vanchonlee/slar/db"
 )
 
 type AlertService struct {
 	PG         *sql.DB
-	Redis      *redis.Client
 	FCMService *FCMService
 }
 
-func NewAlertService(pg *sql.DB, redis *redis.Client, fcmService *FCMService) *AlertService {
+func NewAlertService(pg *sql.DB, fcmService *FCMService) *AlertService {
 	return &AlertService{
 		PG:         pg,
-		Redis:      redis,
 		FCMService: fcmService,
 	}
 }
@@ -123,7 +118,7 @@ func (s *AlertService) CreateAlertFromRequest(c *gin.Context) (db.Alert, error) 
 	alert.CurrentEscalationLevel = 1
 
 	// Auto-assign to current on-call user
-	userService := NewUserService(s.PG, s.Redis)
+	userService := NewUserService(s.PG)
 	onCallUser, err := userService.GetCurrentOnCallUser()
 	if err == nil {
 		alert.AssignedTo = onCallUser.ID
@@ -151,12 +146,6 @@ func (s *AlertService) CreateAlertFromRequest(c *gin.Context) (db.Alert, error) 
 		alert.ID, alert.Title, alert.Description, alert.Status, alert.CreatedAt, alert.UpdatedAt, alert.Severity, alert.Source, assignedTo, assignedAt, alert.EscalationStatus, alert.CurrentEscalationLevel)
 	if err != nil {
 		return alert, err
-	}
-
-	// Add to Redis queue for processing (if Redis is available)
-	if s.Redis != nil {
-		b, _ := json.Marshal(alert)
-		s.Redis.RPush(context.Background(), "alerts:queue", b)
 	}
 
 	// Send FCM notification to assigned user
@@ -371,7 +360,7 @@ func (s *AlertService) CanUserAckAlert(alertID, userID string) (bool, error) {
 	}
 
 	// 2. Current on-call person can ack any alert
-	userService := NewUserService(s.PG, s.Redis)
+	userService := NewUserService(s.PG)
 	onCallUser, err := userService.GetCurrentOnCallUser()
 	if err == nil && onCallUser.ID == userID {
 		return true, nil

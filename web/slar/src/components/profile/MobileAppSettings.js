@@ -22,8 +22,8 @@ export default function MobileAppSettings({ userId }) {
   useEffect(() => {
     if (!qrData) return;
 
-    // expires_at is inside signed_token.payload
-    const expiresAt = qrData.signed_token?.payload?.expires_at || 0;
+    // V4: expires_at is at top level
+    const expiresAt = qrData.expires_at || 0;
 
     const interval = setInterval(() => {
       const remaining = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
@@ -57,21 +57,17 @@ export default function MobileAppSettings({ userId }) {
       const data = await apiClient.generateMobileConnectQR();
       setQrData(data);
 
-      // Generate QR code image
-      // IMPORTANT: Only encode signed_token in QR (not auth_config)
-      // auth_config contains long strings that make QR too dense to scan
-      // Mobile app will fetch auth_config separately after registration
-      const qrPayload = {
-        signed_token: data.signed_token
-      };
+      // V4: Ultra-simple QR - just code + URL
+      // Mobile fetches full config via GET /mobile/connect/:code
+      const qrPayload = data.qr; // {c: "abc123", u: "https://..."}
       const qrString = JSON.stringify(qrPayload);
-      console.log('QR Data length:', qrString.length);
+      console.log('QR Data length:', qrString.length, 'bytes');
       console.log('QR Data:', qrString);
 
       const qrImageUrl = await QRCode.toDataURL(qrString, {
-        width: 400,  // Larger for better scanning
+        width: 300,  // Smaller is fine now - less data
         margin: 2,
-        errorCorrectionLevel: 'M',  // Medium error correction
+        errorCorrectionLevel: 'L',  // Low error correction is enough for small data
         color: {
           dark: '#000000',
           light: '#ffffff'

@@ -1,5 +1,5 @@
 """
-Audit log routes for AI Agent API.
+Audit log routes for AI Agent API (REFACTORED with dependency injection).
 Provides endpoints to query and export audit logs.
 
 Split from claude_agent_api_v1.py for better code organization.
@@ -10,11 +10,12 @@ import io
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
+from typing import Optional
 
+from dependencies import get_auth_context, AuthContext
 from database_util import execute_query
-from supabase_storage import extract_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -22,57 +23,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["audit"])
 
 
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """
-    Sanitize error messages to prevent information disclosure.
-    """
-    logger.error(f"Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
-
-    if isinstance(error, (ConnectionError, TimeoutError)):
-        return "Service temporarily unavailable. Please try again."
-    elif isinstance(error, PermissionError):
-        return "Access denied. Please check your permissions."
-    elif isinstance(error, ValueError):
-        return "Invalid input provided. Please check your request."
-    elif "auth" in str(error).lower() or "token" in str(error).lower():
-        return "Authentication failed. Please verify your credentials."
-    elif "database" in str(error).lower() or "postgres" in str(error).lower():
-        return "Database error. Please contact support if this persists."
-    else:
-        return "An internal error occurred. Please contact support if this persists."
-
-
-def _get_user_id_from_request(request: Request) -> tuple[str | None, dict | None]:
-    """
-    Extract user_id from request. Returns (user_id, error_response).
-    If error, user_id is None and error_response contains the error dict.
-    """
-    auth_token = request.query_params.get("auth_token") or request.headers.get(
-        "authorization", ""
-    )
-
-    if not auth_token:
-        return None, {"success": False, "error": "Authentication required"}
-
-    # Remove "Bearer " prefix if present
-    if auth_token.lower().startswith("bearer "):
-        auth_token = auth_token[7:]
-
-    user_id = extract_user_id_from_token(auth_token)
-    if not user_id:
-        return None, {"success": False, "error": "Invalid or expired authentication token"}
-
-    return user_id, None
-
-
 @router.get("/audit-logs")
-async def get_audit_logs(request: Request):
+async def get_audit_logs(
+    ctx: AuthContext = Depends(get_auth_context),
+    event_category: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    filter_user_id: Optional[str] = Query(None, alias="user_id"),
+    session_id: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     """
     Get audit logs with filtering and pagination.
 
+    Authentication:
+    - Requires valid Authorization header
+
     Query Parameters:
-    - org_id: Organization ID (required for ReBAC)
-    - project_id: Project ID (optional)
+    - org_id: Organization ID (optional - from dependency)
+    - project_id: Project ID (optional - from dependency)
     - event_category: Filter by category (session, chat, tool, security)
     - event_type: Filter by specific event type
     - status: Filter by status (success, failure, pending)
@@ -82,109 +54,97 @@ async def get_audit_logs(request: Request):
     - end_date: End date (ISO string)
     - limit: Max results (default 50, max 500)
     - offset: Pagination offset
+
+    Returns:
+    - List of audit logs with pagination info
     """
-    user_id, error = _get_user_id_from_request(request)
-    if error:
-        return error
-
     try:
-        # Get query parameters
-        org_id = request.query_params.get("org_id")
-        project_id = request.query_params.get("project_id")
-        event_category = request.query_params.get("event_category")
-        event_type = request.query_params.get("event_type")
-        status = request.query_params.get("status")
-        filter_user_id = request.query_params.get("user_id")
-        session_id = request.query_params.get("session_id")
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-        limit = min(int(request.query_params.get("limit", 50)), 500)
-        offset = int(request.query_params.get("offset", 0))
-
         # Build query with filters using %s placeholders for psycopg2
         conditions = ["1=1"]
         params = []
 
         # User can see all their own logs (regardless of org_id/project_id)
-        conditions.append("user_id = %s")
-        params.append(user_id)
+        conditions.append("aal.user_id = %s")
+        params.append(ctx.user_id)
 
-        if org_id:
-            conditions.append("org_id = %s")
-            params.append(org_id)
+        if ctx.org_id:
+            conditions.append("aal.org_id = %s")
+            params.append(ctx.org_id)
 
-        if project_id:
-            conditions.append("project_id = %s")
-            params.append(project_id)
+        if ctx.project_id:
+            conditions.append("aal.project_id = %s")
+            params.append(ctx.project_id)
 
         if event_category:
-            conditions.append("event_category = %s")
+            conditions.append("aal.event_category = %s")
             params.append(event_category)
 
         if event_type:
-            conditions.append("event_type = %s")
+            conditions.append("aal.event_type = %s")
             params.append(event_type)
 
-        if status:
-            conditions.append("status = %s")
-            params.append(status)
+        if status_filter:
+            conditions.append("aal.status = %s")
+            params.append(status_filter)
 
         if filter_user_id:
-            conditions.append("user_id = %s")
+            conditions.append("aal.user_id = %s")
             params.append(filter_user_id)
 
         if session_id:
-            conditions.append("session_id = %s")
+            conditions.append("aal.session_id = %s")
             params.append(session_id)
 
         if start_date:
-            conditions.append("event_time >= %s")
+            conditions.append("aal.event_time >= %s")
             params.append(start_date)
 
         if end_date:
-            conditions.append("event_time <= %s")
+            conditions.append("aal.event_time <= %s")
             params.append(end_date)
 
         where_clause = " AND ".join(conditions)
 
-        # Count total
+        # Count total (strip alias prefix for simple count — no JOIN needed)
+        count_where = where_clause.replace("aal.", "")
         count_query = f"""
             SELECT COUNT(*) as total
             FROM agent_audit_logs
-            WHERE {where_clause}
+            WHERE {count_where}
         """
         count_result = execute_query(count_query, tuple(params), fetch="one")
         total = count_result["total"] if count_result else 0
 
-        # Get logs with pagination
+        # Get logs with pagination — JOIN users to get email for all records
         query = f"""
             SELECT
-                event_id,
-                event_time,
-                event_type,
-                event_category,
-                user_id,
-                user_email,
-                org_id,
-                project_id,
-                session_id,
-                device_cert_id,
-                source_ip,
-                user_agent,
-                instance_id,
-                action,
-                resource_type,
-                resource_id,
-                request_params,
-                status,
-                error_code,
-                error_message,
-                response_data,
-                duration_ms,
-                metadata
-            FROM agent_audit_logs
+                aal.event_id,
+                aal.event_time,
+                aal.event_type,
+                aal.event_category,
+                aal.user_id,
+                COALESCE(u.email, aal.user_email) AS user_email,
+                aal.org_id,
+                aal.project_id,
+                aal.session_id,
+                aal.device_cert_id,
+                aal.source_ip,
+                aal.user_agent,
+                aal.instance_id,
+                aal.action,
+                aal.resource_type,
+                aal.resource_id,
+                aal.request_params,
+                aal.status,
+                aal.error_code,
+                aal.error_message,
+                aal.response_data,
+                aal.duration_ms,
+                aal.metadata
+            FROM agent_audit_logs aal
+            LEFT JOIN users u ON u.id = aal.user_id
             WHERE {where_clause}
-            ORDER BY event_time DESC
+            ORDER BY aal.event_time DESC
             LIMIT %s OFFSET %s
         """
         params.extend([limit, offset])
@@ -209,35 +169,35 @@ async def get_audit_logs(request: Request):
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "fetching audit logs"),
-            "logs": [],
-            "total": 0,
-        }
+        logger.error(f"Error fetching audit logs for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching audit logs. Please try again."
+        )
 
 
 @router.get("/audit-logs/stats")
-async def get_audit_stats(request: Request):
+async def get_audit_stats(
+    ctx: AuthContext = Depends(get_auth_context),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+):
     """
     Get audit log statistics/summary.
 
+    Authentication:
+    - Requires valid Authorization header
+
     Query Parameters:
-    - org_id: Organization ID (optional)
-    - project_id: Project ID (optional)
+    - org_id: Organization ID (optional - from dependency)
+    - project_id: Project ID (optional - from dependency)
     - start_date: Start date (ISO string)
     - end_date: End date (ISO string)
+
+    Returns:
+    - Statistics aggregated by category, status, etc.
     """
-    user_id, error = _get_user_id_from_request(request)
-    if error:
-        return error
-
     try:
-        org_id = request.query_params.get("org_id")
-        project_id = request.query_params.get("project_id")
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-
         # Default to last 24 hours if no date range
         if not start_date:
             start_date = (datetime.utcnow() - timedelta(days=1)).isoformat()
@@ -250,15 +210,15 @@ async def get_audit_stats(request: Request):
 
         # User can see all their own logs
         conditions.append("user_id = %s")
-        params.append(user_id)
+        params.append(ctx.user_id)
 
-        if org_id:
+        if ctx.org_id:
             conditions.append("org_id = %s")
-            params.append(org_id)
+            params.append(ctx.org_id)
 
-        if project_id:
+        if ctx.project_id:
             conditions.append("project_id = %s")
-            params.append(project_id)
+            params.append(ctx.project_id)
 
         conditions.append("event_time >= %s")
         params.append(start_date)
@@ -324,88 +284,90 @@ async def get_audit_stats(request: Request):
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "fetching audit stats"),
-            "stats": None,
-        }
+        logger.error(f"Error fetching audit stats for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching audit stats. Please try again."
+        )
 
 
 @router.get("/audit-logs/export")
-async def export_audit_logs(request: Request):
+async def export_audit_logs(
+    ctx: AuthContext = Depends(get_auth_context),
+    event_category: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+):
     """
     Export audit logs to CSV format.
 
+    Authentication:
+    - Requires valid Authorization header
+
     Query Parameters:
-    - org_id: Organization ID (optional)
-    - project_id: Project ID (optional)
+    - org_id: Organization ID (optional - from dependency)
+    - project_id: Project ID (optional - from dependency)
     - event_category: Filter by category
     - start_date: Start date (ISO string)
     - end_date: End date (ISO string)
+
+    Returns:
+    - CSV file download with audit logs (max 10000 rows)
     """
-    user_id, error = _get_user_id_from_request(request)
-    if error:
-        return error
-
     try:
-        org_id = request.query_params.get("org_id")
-        project_id = request.query_params.get("project_id")
-        event_category = request.query_params.get("event_category")
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-
         # Build query conditions using %s placeholders
         conditions = ["1=1"]
         params = []
 
         # User can see all their own logs
-        conditions.append("user_id = %s")
-        params.append(user_id)
+        conditions.append("aal.user_id = %s")
+        params.append(ctx.user_id)
 
-        if org_id:
-            conditions.append("org_id = %s")
-            params.append(org_id)
+        if ctx.org_id:
+            conditions.append("aal.org_id = %s")
+            params.append(ctx.org_id)
 
-        if project_id:
-            conditions.append("project_id = %s")
-            params.append(project_id)
+        if ctx.project_id:
+            conditions.append("aal.project_id = %s")
+            params.append(ctx.project_id)
 
         if event_category:
-            conditions.append("event_category = %s")
+            conditions.append("aal.event_category = %s")
             params.append(event_category)
 
         if start_date:
-            conditions.append("event_time >= %s")
+            conditions.append("aal.event_time >= %s")
             params.append(start_date)
 
         if end_date:
-            conditions.append("event_time <= %s")
+            conditions.append("aal.event_time <= %s")
             params.append(end_date)
 
         where_clause = " AND ".join(conditions)
 
-        # Get logs (limit to 10000 for export)
+        # Get logs (limit to 10000 for export) — JOIN users for email
         query = f"""
             SELECT
-                event_id,
-                event_time,
-                event_type,
-                event_category,
-                user_id,
-                user_email,
-                org_id,
-                session_id,
-                action,
-                resource_type,
-                resource_id,
-                status,
-                error_code,
-                error_message,
-                duration_ms,
-                source_ip
-            FROM agent_audit_logs
+                aal.event_id,
+                aal.event_time,
+                aal.event_type,
+                aal.event_category,
+                aal.user_id,
+                COALESCE(u.email, aal.user_email) AS user_email,
+                aal.org_id,
+                aal.session_id,
+                aal.action,
+                aal.resource_type,
+                aal.resource_id,
+                aal.status,
+                aal.error_code,
+                aal.error_message,
+                aal.duration_ms,
+                aal.source_ip
+            FROM agent_audit_logs aal
+            LEFT JOIN users u ON u.id = aal.user_id
             WHERE {where_clause}
-            ORDER BY event_time DESC
+            ORDER BY aal.event_time DESC
             LIMIT 10000
         """
 
@@ -468,7 +430,8 @@ async def export_audit_logs(request: Request):
         )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "exporting audit logs"),
-        }
+        logger.error(f"Error exporting audit logs for user {ctx.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred exporting audit logs. Please try again."
+        )

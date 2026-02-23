@@ -16,6 +16,7 @@ const NAV_LINKS = [
   { href: '/organizations', label: 'Organizations' },
   { href: '/projects', label: 'Projects' },
   { href: '/audit', label: 'Audit Logs' },
+  { href: '/cost', label: 'AI Costs' },
 ];
 
 export default function MobileNav() {

@@ -1,197 +1,212 @@
 """
-Memory (CLAUDE.md) routes for AI Agent API.
+Memory (CLAUDE.md) routes for AI Agent API (REFACTORED with dependency injection).
 
 Handles:
-- GET /api/memory - Get memory content
-- POST /api/memory - Create/update memory
-- DELETE /api/memory - Delete memory
+- GET /api/memory - Get project memory content
+- POST /api/memory - Create/update project memory
+- DELETE /api/memory - Delete project memory
+
+Memory is project-scoped: all users in the same project share one CLAUDE.md.
+This matches Claude Code's "project" scope (.claude/CLAUDE.md).
 """
 
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel, Field
+from typing import Optional
 
-from supabase_storage import extract_user_id_from_token, sync_memory_to_workspace
-from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
+from dependencies import get_current_user, UserContext
+from workspace_service import sync_memory_to_workspace
+from database_util import execute_query
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["memory"])
 
 
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """Sanitize error messages to prevent information disclosure."""
-    logger.error(f"Error {context}: {type(error).__name__}: {str(error)}", exc_info=True)
-    return f"An error occurred {context}. Please try again."
+# ============================================================================
+# Pydantic Schemas
+# ============================================================================
+
+class MemoryResponse(BaseModel):
+    """Response for GET /api/memory."""
+    success: bool
+    content: str = ""
+    updated_at: Optional[str] = None
+    last_updated_by: Optional[str] = None
 
 
-@router.get("/memory")
-async def get_memory(request: Request):
+class UpdateMemoryRequest(BaseModel):
+    """Request to update memory."""
+    content: str = Field(..., description="CLAUDE.md content")
+    project_id: str = Field(..., description="Project ID (required - memory is project-scoped)")
+
+
+class UpdateMemoryResponse(BaseModel):
+    """Response for POST /api/memory."""
+    success: bool
+    content: str
+    updated_at: str
+
+
+class DeleteMemoryResponse(BaseModel):
+    """Response for DELETE /api/memory."""
+    success: bool
+    message: str
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
+
+@router.get("/memory", response_model=MemoryResponse)
+async def get_memory(
+    project_id: str = Query(..., description="Project UUID (required)"),
+    user: UserContext = Depends(get_current_user)
+):
     """
-    Get CLAUDE.md content (memory/context) for current user from PostgreSQL.
+    Get CLAUDE.md content for a project.
+
+    All users in the same project see the same memory.
+
+    Authentication:
+    - Requires valid Authorization header
 
     Query params:
-        auth_token: Bearer token (or from Authorization header)
-        scope: Memory scope ('local' or 'user', default: 'local')
+    - project_id: Project UUID (required)
 
     Returns:
-        {
-            "success": bool,
-            "content": str,
-            "updated_at": str
-        }
+    - Memory content and metadata
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-        scope = request.query_params.get("scope", "local")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         result = execute_query(
-            "SELECT * FROM claude_memory WHERE user_id = %s AND scope = %s",
-            (user_id, scope),
+            "SELECT content, updated_at, last_updated_by FROM claude_memory WHERE project_id = %s",
+            (project_id,),
             fetch="one"
         )
 
         if result:
-            return {
-                "success": True,
-                "content": result.get("content", ""),
-                "updated_at": str(result.get("updated_at")) if result.get("updated_at") else None,
-            }
+            return MemoryResponse(
+                success=True,
+                content=result.get("content", ""),
+                updated_at=str(result.get("updated_at")) if result.get("updated_at") else None,
+                last_updated_by=str(result.get("last_updated_by")) if result.get("last_updated_by") else None,
+            )
         else:
-            return {"success": True, "content": "", "updated_at": None}
+            return MemoryResponse(
+                success=True,
+                content="",
+                updated_at=None,
+                last_updated_by=None
+            )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "getting memory")
-        }
+        logger.error(f"Error getting memory for project {project_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred getting memory. Please try again."
+        )
 
 
-@router.post("/memory")
-async def update_memory(request: Request):
+@router.post("/memory", response_model=UpdateMemoryResponse)
+async def update_memory(
+    body: UpdateMemoryRequest,
+    user: UserContext = Depends(get_current_user)
+):
     """
-    Create or update CLAUDE.md content (memory/context).
+    Create or update CLAUDE.md content for a project.
+
+    All users in the same project share this memory.
+
+    Authentication:
+    - Requires valid Authorization header
 
     Request body:
-        {
-            "auth_token": "Bearer ...",
-            "content": "## My Context\\n\\n...",
-            "scope": "local" or "user" (optional, default: "local")
-        }
+    - content: CLAUDE.md content
+    - project_id: Project UUID (required)
 
     Returns:
-        {
-            "success": bool,
-            "content": str,
-            "updated_at": str
-        }
+    - Updated memory content and timestamp
     """
     try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        content = body.get("content", "")
-        scope = body.get("scope", "local")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        # Ensure user exists in users table (required for foreign key)
-        user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
-            email=user_info.get("email") if user_info else None,
-            name=user_info.get("name") if user_info else None
-        )
-
         execute_query(
             """
-            INSERT INTO claude_memory (user_id, content, scope)
+            INSERT INTO claude_memory (project_id, content, last_updated_by)
             VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, scope) DO UPDATE SET
+            ON CONFLICT (project_id) DO UPDATE SET
                 content = EXCLUDED.content,
+                last_updated_by = EXCLUDED.last_updated_by,
                 updated_at = NOW()
             """,
-            (user_id, content, scope),
+            (body.project_id, body.content, user.user_id),
             fetch="none"
         )
 
-        logger.info(f"Memory updated for user {user_id} ({len(content)} chars)")
+        logger.info(f"Memory updated for project {body.project_id} by user {user.user_id} ({len(body.content)} chars)")
 
-        sync_result = await sync_memory_to_workspace(user_id, scope)
+        # Sync to workspace file for the current user
+        sync_result = await sync_memory_to_workspace(user.user_id, project_id=body.project_id)
         if sync_result["success"]:
             logger.info(f"Synced memory to file: {sync_result['message']}")
         else:
             logger.warning(f"Failed to sync memory: {sync_result['message']}")
 
-        return {
-            "success": True,
-            "content": content,
-            "updated_at": datetime.utcnow().isoformat(),
-        }
+        return UpdateMemoryResponse(
+            success=True,
+            content=body.content,
+            updated_at=datetime.utcnow().isoformat(),
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "updating memory")
-        }
+        logger.error(f"Error updating memory for project {body.project_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred updating memory. Please try again."
+        )
 
 
-@router.delete("/memory")
-async def delete_memory(request: Request):
+@router.delete("/memory", response_model=DeleteMemoryResponse)
+async def delete_memory(
+    project_id: str = Query(..., description="Project UUID (required)"),
+    user: UserContext = Depends(get_current_user)
+):
     """
-    Delete CLAUDE.md content (memory/context).
+    Delete CLAUDE.md content for a project.
+
+    Authentication:
+    - Requires valid Authorization header
 
     Query params:
-        auth_token: Bearer token
-        scope: Memory scope ('local' or 'user', default: 'local')
+    - project_id: Project UUID (required)
 
     Returns:
-        {"success": bool, "message": str}
+    - Success message
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
-        scope = request.query_params.get("scope", "local")
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
         execute_query(
-            "DELETE FROM claude_memory WHERE user_id = %s AND scope = %s",
-            (user_id, scope),
+            "DELETE FROM claude_memory WHERE project_id = %s",
+            (project_id,),
             fetch="none"
         )
 
-        logger.info(f"Memory deleted for user {user_id}")
+        logger.info(f"Memory deleted for project {project_id}")
 
-        sync_result = await sync_memory_to_workspace(user_id, scope)
+        # Sync empty content to workspace file
+        sync_result = await sync_memory_to_workspace(user.user_id, project_id=project_id)
         if sync_result["success"]:
             logger.info(f"Synced memory to file: {sync_result['message']}")
         else:
             logger.warning(f"Failed to sync memory: {sync_result['message']}")
 
-        return {"success": True, "message": "Memory deleted successfully"}
+        return DeleteMemoryResponse(
+            success=True,
+            message="Memory deleted successfully"
+        )
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "deleting memory")
-        }
+        logger.error(f"Error deleting memory for project {project_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred deleting memory. Please try again."
+        )

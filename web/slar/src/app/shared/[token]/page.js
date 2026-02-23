@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { MessageComponent } from '../../../components/ai-agent';
+import { getConfigSync } from '../../../lib/config';
 
 // Public shared conversation viewer - no auth required
 export default function SharedConversationPage() {
@@ -23,8 +24,8 @@ export default function SharedConversationPage() {
       setError(null);
 
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-        const response = await fetch(`${apiUrl}/api/shared/${token}`);
+        const apiUrl = getConfigSync().apiUrl;
+        const response = await fetch(`${apiUrl}/shared/${token}`);
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vanchonlee/slar/db"
+	"github.com/vanchonlee/slar/internal/logger"
 	"github.com/vanchonlee/slar/services"
 )
 
@@ -41,7 +42,7 @@ func (w *IncidentWorker) StartIncidentWorker() {
 
 // processEscalations finds incidents that need escalation and processes them
 func (w *IncidentWorker) processEscalations() {
-	log.Printf("DEBUG: Starting escalation check...")
+	logger.Debug("Starting escalation check...")
 
 	// Find incidents that need escalation
 	incidents, err := w.getIncidentsNeedingEscalation()
@@ -54,7 +55,7 @@ func (w *IncidentWorker) processEscalations() {
 
 	// Debug: Log details of each incident found
 	for i, incident := range incidents {
-		log.Printf("DEBUG: Incident %d - ID: %s, Status: %s, EscalationStatus: %s, Level: %d, LastEscalated: %v, Created: %v",
+		logger.Debug("Incident %d - ID: %s, Status: %s, EscalationStatus: %s, Level: %d, LastEscalated: %v, Created: %v",
 			i+1, incident.ID, incident.Status, incident.EscalationStatus,
 			incident.CurrentEscalationLevel, incident.LastEscalatedAt, incident.CreatedAt)
 	}
@@ -95,10 +96,10 @@ func (w *IncidentWorker) getIncidentsNeedingEscalation() ([]db.Incident, error) 
 		LIMIT 5
 	`
 
-	log.Printf("DEBUG: Checking all triggered incidents...")
+	logger.Debug("Checking all triggered incidents...")
 	debugRows, err := w.PG.Query(debugQuery)
 	if err != nil {
-		log.Printf("DEBUG: Failed to run debug query: %v", err)
+		logger.Debug("Failed to run debug query: %v", err)
 	} else {
 		defer debugRows.Close()
 		debugCount := 0
@@ -114,19 +115,19 @@ func (w *IncidentWorker) getIncidentsNeedingEscalation() ([]db.Incident, error) 
 				&currentLevel, &lastEscalated, &created, &currentTime, &currentTimeUTC, &createdAtUTC,
 				&minutesSinceCreated, &minutesSinceEscalated, &currentTimeoutMinutes, &hasNextLevel)
 			if err != nil {
-				log.Printf("DEBUG: Error scanning debug row: %v", err)
+				logger.Debug("Error scanning debug row: %v", err)
 				continue
 			}
 
 			debugCount++
-			log.Printf("DEBUG: Incident %s - Status: %s, EscPolicy: %v, EscStatus: %s, Level: %d",
+			logger.Debug("Incident %s - Status: %s, EscPolicy: %v, EscStatus: %s, Level: %d",
 				id, status, escalationPolicyID.String, escalationStatus, currentLevel)
-			log.Printf("DEBUG:   Created: %v | Current: %v", created.Time, currentTime.Time)
-			log.Printf("DEBUG:   Created UTC: %v | Current UTC: %v", createdAtUTC.Time, currentTimeUTC.Time)
-			log.Printf("DEBUG:   MinSinceCreated: %.1f, MinSinceEscalated: %v, TimeoutMinutes: %d, HasNextLevel: %t",
+			logger.Debug("  Created: %v | Current: %v", created.Time, currentTime.Time)
+			logger.Debug("  Created UTC: %v | Current UTC: %v", createdAtUTC.Time, currentTimeUTC.Time)
+			logger.Debug("  MinSinceCreated: %.1f, MinSinceEscalated: %v, TimeoutMinutes: %d, HasNextLevel: %t",
 				minutesSinceCreated.Float64, minutesSinceEscalated.Float64, currentTimeoutMinutes, hasNextLevel)
 		}
-		log.Printf("DEBUG: Found %d total triggered incidents", debugCount)
+		logger.Debug("Found %d total triggered incidents", debugCount)
 	}
 
 	query := `
@@ -222,9 +223,9 @@ func (w *IncidentWorker) getIncidentsNeedingEscalation() ([]db.Incident, error) 
 
 // processIncidentEscalation handles escalation for a single incident
 func (w *IncidentWorker) processIncidentEscalation(incident db.Incident) {
-	log.Printf("DEBUG: Starting escalation for incident %s (current level %d, status: %s, policy: %s)",
+	logger.Debug("Starting escalation for incident %s (current level %d, status: %s, policy: %s)",
 		incident.ID, incident.CurrentEscalationLevel, incident.EscalationStatus, incident.EscalationPolicyID)
-	log.Printf("DEBUG: Escalation state - Level %d means: %s",
+	logger.Debug("Escalation state - Level %d means: %s",
 		incident.CurrentEscalationLevel,
 		func() string {
 			if incident.CurrentEscalationLevel == 0 {
@@ -240,9 +241,9 @@ func (w *IncidentWorker) processIncidentEscalation(incident db.Incident) {
 		return
 	}
 
-	log.Printf("DEBUG: Found %d escalation levels for policy %s", len(escalationLevels), incident.EscalationPolicyID)
+	logger.Debug("Found %d escalation levels for policy %s", len(escalationLevels), incident.EscalationPolicyID)
 	for i, level := range escalationLevels {
-		log.Printf("DEBUG: Level %d - Number: %d, Type: %s, Target: %s", i+1, level.LevelNumber, level.TargetType, level.TargetID)
+		logger.Debug("Level %d - Number: %d, Type: %s, Target: %s", i+1, level.LevelNumber, level.TargetType, level.TargetID)
 	}
 
 	if len(escalationLevels) == 0 {
@@ -254,7 +255,7 @@ func (w *IncidentWorker) processIncidentEscalation(incident db.Incident) {
 	// Determine next escalation level
 	// current_escalation_level: 0 = not escalated, 1 = level 1, 2 = level 2, etc.
 	nextLevel := incident.CurrentEscalationLevel + 1
-	log.Printf("DEBUG: Next escalation level should be %d (current: %d)", nextLevel, incident.CurrentEscalationLevel)
+	logger.Debug("Next escalation level should be %d (current: %d)", nextLevel, incident.CurrentEscalationLevel)
 
 	if nextLevel > len(escalationLevels) {
 		log.Printf("Worker: incident %s has reached maximum escalation level (next: %d, max: %d)",
@@ -285,7 +286,7 @@ func (w *IncidentWorker) processIncidentEscalation(incident db.Incident) {
 		return
 	}
 
-	log.Printf("DEBUG: Found target level %d - Type: %s, Target: %s",
+	logger.Debug("Found target level %d - Type: %s, Target: %s",
 		targetLevel.LevelNumber, targetLevel.TargetType, targetLevel.TargetID)
 
 	// Process escalation based on target type
@@ -413,7 +414,7 @@ func (w *IncidentWorker) escalateToUser(incident db.Incident, userID string) boo
 
 // escalateToUserWithNotification assigns incident to a specific user with optional notification
 func (w *IncidentWorker) escalateToUserWithNotification(incident db.Incident, userID string, sendNotification bool) bool {
-	log.Printf("DEBUG: Assigning incident %s to user %s (sendNotification: %v)", incident.ID, userID, sendNotification)
+	logger.Debug("Assigning incident %s to user %s (sendNotification: %v)", incident.ID, userID, sendNotification)
 
 	query := `
 		UPDATE incidents
@@ -429,9 +430,9 @@ func (w *IncidentWorker) escalateToUserWithNotification(incident db.Incident, us
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		log.Printf("DEBUG: Failed to get rows affected: %v", err)
+		logger.Debug("Failed to get rows affected: %v", err)
 	} else {
-		log.Printf("DEBUG: Assignment query affected %d rows", rowsAffected)
+		logger.Debug("Assignment query affected %d rows", rowsAffected)
 	}
 
 	log.Printf("Worker: assigned incident %s to user %s", incident.ID, userID)
@@ -456,7 +457,7 @@ func (w *IncidentWorker) escalateToUserWithNotification(incident db.Incident, us
 // escalateToScheduler finds current on-call user in scheduler and assigns
 // This uses the effective_shifts view which automatically handles schedule overrides
 func (w *IncidentWorker) escalateToScheduler(incident db.Incident, schedulerID string) bool {
-	log.Printf("DEBUG: Escalating to scheduler %s for incident %s (policy: %s, group: %s)",
+	logger.Debug("Escalating to scheduler %s for incident %s (policy: %s, group: %s)",
 		schedulerID, incident.ID, incident.EscalationPolicyID, incident.GroupID)
 
 	// Find current on-call user using effective_shifts view
@@ -482,7 +483,7 @@ func (w *IncidentWorker) escalateToScheduler(incident db.Incident, schedulerID s
 		return false
 	}
 
-	log.Printf("DEBUG: Found on-call user (effective) %s for scheduler %s", userID, schedulerID)
+	logger.Debug("Found on-call user (effective) %s for scheduler %s", userID, schedulerID)
 
 	// Assign without sending assignment notification (we'll send escalation notification instead)
 	success := w.escalateToUserWithNotification(incident, userID, false)
@@ -546,7 +547,7 @@ func (w *IncidentWorker) escalateToExternal(incident db.Incident, targetID strin
 
 // updateIncidentEscalation updates incident escalation status
 func (w *IncidentWorker) updateIncidentEscalation(incidentID string, level int, status string) {
-	log.Printf("DEBUG: Updating incident %s escalation - Level: %d, Status: %s", incidentID, level, status)
+	logger.Debug("Updating incident %s escalation - Level: %d, Status: %s", incidentID, level, status)
 
 	query := `
 		UPDATE incidents
@@ -564,9 +565,9 @@ func (w *IncidentWorker) updateIncidentEscalation(incidentID string, level int, 
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		log.Printf("DEBUG: Failed to get rows affected for escalation update: %v", err)
+		logger.Debug("Failed to get rows affected for escalation update: %v", err)
 	} else {
-		log.Printf("DEBUG: Escalation update affected %d rows", rowsAffected)
+		logger.Debug("Escalation update affected %d rows", rowsAffected)
 	}
 }
 

@@ -214,13 +214,18 @@ export async function getMCPConfig(userId) {
 /**
  * Get MCP servers from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, config: object, error?: string}>}
  */
-export async function getMCPServersFromDB(userId) {
+export async function getMCPServersFromDB(userId, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL');
+    console.log('[workspaceManager] 📂 Loading MCP servers from PostgreSQL', { orgId, projectId });
 
-    const result = await apiClient.getMCPServers();
+    const result = await apiClient.getMCPServers({
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get MCP servers');
@@ -257,13 +262,18 @@ export async function getMCPServersFromDB(userId) {
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} serverName - Server name
  * @param {object} serverConfig - Server configuration
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, server?: object, error?: string}>}
  */
-export async function saveMCPServerToDB(userId, serverName, serverConfig) {
+export async function saveMCPServerToDB(userId, serverName, serverConfig, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig });
+    console.log('[workspaceManager] 💾 Saving MCP server to PostgreSQL:', { serverName, serverConfig, orgId, projectId });
 
-    const result = await apiClient.saveMCPServer(serverName, serverConfig);
+    const result = await apiClient.saveMCPServer(serverName, serverConfig, {
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save MCP server');
@@ -281,13 +291,18 @@ export async function saveMCPServerToDB(userId, serverName, serverConfig) {
  * Delete MCP server from PostgreSQL (NEW - instant, no S3 lag!)
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} serverName - Server name to delete
+ * @param {string} orgId - Organization ID (REQUIRED for ReBAC)
+ * @param {string} projectId - Project ID (optional)
  * @returns {Promise<{success: boolean, message?: string, error?: string}>}
  */
-export async function deleteMCPServerFromDB(userId, serverName) {
+export async function deleteMCPServerFromDB(userId, serverName, orgId, projectId = null) {
   try {
-    console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', serverName);
+    console.log('[workspaceManager] 🗑️ Deleting MCP server from PostgreSQL:', { serverName, orgId, projectId });
 
-    const result = await apiClient.deleteMCPServer(serverName);
+    const result = await apiClient.deleteMCPServer(serverName, {
+      org_id: orgId,
+      project_id: projectId
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete MCP server');
@@ -309,15 +324,16 @@ export async function deleteMCPServerFromDB(userId, serverName) {
 
 /**
  * Get CLAUDE.md content from PostgreSQL (NEW - instant, no S3 lag!)
+ * Memory is project-scoped: all users in the same project share one CLAUDE.md
  * @param {string} userId - User ID (not used, auth token contains user_id)
- * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
+ * @param {string} projectId - Project UUID (required)
  * @returns {Promise<{success: boolean, content: string, updated_at?: string, error?: string}>}
  */
-export async function getMemoryFromDB(userId, scope = 'local') {
+export async function getMemoryFromDB(userId, projectId) {
   try {
-    console.log('[workspaceManager] 📂 Loading CLAUDE.md from PostgreSQL');
+    console.log('[workspaceManager] 📂 Loading CLAUDE.md from PostgreSQL for project:', projectId);
 
-    const result = await apiClient.getMemory(scope);
+    const result = await apiClient.getMemory(projectId);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to get memory');
@@ -338,16 +354,17 @@ export async function getMemoryFromDB(userId, scope = 'local') {
 
 /**
  * Update CLAUDE.md content in PostgreSQL (NEW - instant, no S3 lag!)
+ * Memory is project-scoped: all users in the same project share one CLAUDE.md
  * @param {string} userId - User ID (not used, auth token contains user_id)
  * @param {string} content - Markdown content for CLAUDE.md
- * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
+ * @param {string} projectId - Project UUID (required)
  * @returns {Promise<{success: boolean, content?: string, updated_at?: string, error?: string}>}
  */
-export async function saveMemoryToDB(userId, content, scope = 'local') {
+export async function saveMemoryToDB(userId, content, projectId) {
   try {
-    console.log('[workspaceManager] 💾 Saving CLAUDE.md to PostgreSQL');
+    console.log('[workspaceManager] 💾 Saving CLAUDE.md to PostgreSQL for project:', projectId);
 
-    const result = await apiClient.saveMemory(content, scope);
+    const result = await apiClient.saveMemory(content, projectId);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to save memory');
@@ -363,15 +380,16 @@ export async function saveMemoryToDB(userId, content, scope = 'local') {
 
 /**
  * Delete CLAUDE.md content from PostgreSQL (NEW - instant, no S3 lag!)
+ * Memory is project-scoped: all users in the same project share one CLAUDE.md
  * @param {string} userId - User ID (not used, auth token contains user_id)
- * @param {string} scope - Memory scope ('local' or 'user', default: 'local')
+ * @param {string} projectId - Project UUID (required)
  * @returns {Promise<{success: boolean, message?: string, error?: string}>}
  */
-export async function deleteMemoryFromDB(userId, scope = 'local') {
+export async function deleteMemoryFromDB(userId, projectId) {
   try {
-    console.log('[workspaceManager] 🗑️ Deleting CLAUDE.md from PostgreSQL');
+    console.log('[workspaceManager] 🗑️ Deleting CLAUDE.md from PostgreSQL for project:', projectId);
 
-    const result = await apiClient.deleteMemory(scope);
+    const result = await apiClient.deleteMemory(projectId);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to delete memory');

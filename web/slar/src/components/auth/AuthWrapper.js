@@ -2,13 +2,13 @@
 
 import { useAuth } from '../../contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from '../../lib/api';
 
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback', '/', '/onboarding', '/shared'];
 
 export default function AuthWrapper({ children }) {
-  const { user, session, loading } = useAuth();
+  const { user, session, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [checkingOnboarding, setCheckingOnboarding] = useState(false);
@@ -20,6 +20,13 @@ export default function AuthWrapper({ children }) {
 
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith('/shared/');
   const isOnboardingPage = pathname === '/onboarding';
+
+  // Handle session invalidation (401 from API)
+  const handleSessionInvalid = useCallback(async () => {
+    console.log('Session invalid (401), signing out...');
+    await signOut();
+    router.push('/login');
+  }, [signOut, router]);
 
   useEffect(() => {
     const checkOnboardingStatus = async () => {
@@ -54,9 +61,20 @@ export default function AuthWrapper({ children }) {
           router.push('/onboarding');
         }
       } catch (err) {
-        // If API fails, still redirect to onboarding (user likely has no orgs)
-        console.log('Onboarding check failed, redirecting to onboarding:', err.message);
-        router.push('/onboarding');
+        // Check if it's an auth-related error - sign out and redirect to login
+        // 401 = Unauthorized (token invalid/expired)
+        // 403 = Forbidden (token valid but user not authorized, often due to OIDC mismatch)
+        if (err.status === 401 || err.status === 403) {
+          console.log(`Auth error (${err.status}), signing out:`, err.message);
+          await handleSessionInvalid();
+          return;
+        }
+        // For other errors (network, server errors), log and let user retry
+        // Don't redirect to onboarding - that's only for users with no orgs
+        console.error('Onboarding check failed:', err.message);
+        // Mark as checked to prevent infinite retries, user can refresh to retry
+        lastCheckedUserIdRef.current = user.id;
+        setOnboardingChecked(true);
       } finally {
         isCheckingRef.current = false;
         setCheckingOnboarding(false);
@@ -69,14 +87,14 @@ export default function AuthWrapper({ children }) {
         router.push('/login');
       } else if (user && (pathname === '/login' || pathname === '/signup')) {
         // Redirect to dashboard if authenticated and on auth pages
-        router.push('/dashboard');
+        router.push('/incidents');
       } else if (user && !isOnboardingPage && lastCheckedUserIdRef.current !== user.id) {
         // Check if user needs onboarding (no organizations)
         // Only check if we haven't checked for this specific user yet
         checkOnboardingStatus();
       }
     }
-  }, [user?.id, loading, pathname, router, isPublicRoute, isOnboardingPage]); // Removed session from deps
+  }, [user?.id, loading, pathname, router, isPublicRoute, isOnboardingPage, handleSessionInvalid]); // Removed session from deps
 
   // Show loading spinner while checking authentication or onboarding status
   if (loading || checkingOnboarding) {

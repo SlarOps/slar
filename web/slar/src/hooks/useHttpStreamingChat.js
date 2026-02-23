@@ -4,8 +4,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8002';
+import { getConfigSync } from '../lib/config';
 
 export function useHttpStreamingChat() {
   const [messages, setMessages] = useState([]);
@@ -56,7 +55,8 @@ export function useHttpStreamingChat() {
       };
 
       // Start streaming
-      const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+      const aiApiUrl = getConfigSync().aiApiUrl;
+      const response = await fetch(`${aiApiUrl}/api/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -240,7 +240,8 @@ export function useHttpStreamingChat() {
 
   const approveTool = useCallback(async (approvalId, reason) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/approvals/${approvalId}`, {
+      const aiApiUrl = getConfigSync().aiApiUrl;
+      const response = await fetch(`${aiApiUrl}/api/approvals/${approvalId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved: true, reason })
@@ -258,7 +259,8 @@ export function useHttpStreamingChat() {
 
   const denyTool = useCallback(async (approvalId, reason) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/approvals/${approvalId}`, {
+      const aiApiUrl = getConfigSync().aiApiUrl;
+      const response = await fetch(`${aiApiUrl}/api/approvals/${approvalId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved: false, reason })

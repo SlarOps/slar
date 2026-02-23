@@ -38,3 +38,13 @@ home: https://github.com/slarops/slar
 # Sources
 sources:
   - https://github.com/slarops/slar
+
+# Dependencies (optional - recommended to use helmfile for separate deployment)
+# NOTE: For production, deploy PostgreSQL via CloudNativePG operator (see ../cloudnativepg)
+#       This provides pgmq + pgvector extensions required by SLAR
+#
+# Authentication: SLAR supports any OIDC-compliant provider
+# - Dex IDP (lightweight, included) - for Google/GitHub/LDAP federation
+# - External OIDC providers (Keycloak, Auth0, Okta, Azure AD, etc.)
+dependencies: []
+  # No external chart dependencies - Dex is deployed as native templates

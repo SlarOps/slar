@@ -21,15 +21,15 @@ export default function NotificationStatus() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (session?.access_token && user?.id) {
+    if (session?.access_token) {
       apiClient.setToken(session.access_token);
       loadNotificationConfig();
     }
-  }, [session, user]);
+  }, [session]);
 
   const loadNotificationConfig = async () => {
     try {
-      const response = await apiClient.getUserNotificationConfig(user.id);
+      const response = await apiClient.getUserNotificationConfig();
       setConfig(response);
     } catch (error) {
       console.error('Failed to load notification config:', error);

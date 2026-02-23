@@ -40,15 +40,17 @@ type NotificationConfigResponse struct {
 }
 
 // GetNotificationConfig gets user's notification configuration
-// GET /api/users/{id}/notifications/config
+// GET /api/users/me/notifications/config
 func (h *NotificationHandler) GetNotificationConfig(c *gin.Context) {
-	userID := c.Param("id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+	// Get user_id from context (set by auth middleware, already converted to UUID)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+	userIDStr := userID.(string)
 
-	config, err := h.SlackService.GetUserNotificationConfig(userID)
+	config, err := h.SlackService.GetUserNotificationConfig(userIDStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification config", "details": err.Error()})
 		return
@@ -68,13 +70,15 @@ func (h *NotificationHandler) GetNotificationConfig(c *gin.Context) {
 }
 
 // UpdateNotificationConfig updates user's notification configuration
-// PUT /api/users/{id}/notifications/config
+// PUT /api/users/me/notifications/config
 func (h *NotificationHandler) UpdateNotificationConfig(c *gin.Context) {
-	userID := c.Param("id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+	// Get user_id from context (set by auth middleware, already converted to UUID)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+	userIDStr := userID.(string)
 
 	var req NotificationConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -83,14 +87,14 @@ func (h *NotificationHandler) UpdateNotificationConfig(c *gin.Context) {
 	}
 
 	// Update notification config
-	if err := h.SlackService.UpdateUserNotificationConfig(userID, req.SlackUserID, req.SlackChannelID,
+	if err := h.SlackService.UpdateUserNotificationConfig(userIDStr, req.SlackUserID, req.SlackChannelID,
 		req.SlackEnabled, req.EmailEnabled, req.PushEnabled, req.Timezone); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update notification config", "details": err.Error()})
 		return
 	}
 
 	response := NotificationConfigResponse{
-		UserID:         userID,
+		UserID:         userIDStr,
 		SlackUserID:    req.SlackUserID,
 		SlackChannelID: req.SlackChannelID,
 		SlackEnabled:   req.SlackEnabled,
@@ -104,18 +108,20 @@ func (h *NotificationHandler) UpdateNotificationConfig(c *gin.Context) {
 }
 
 // TestSlackNotification sends a test Slack notification to user
-// POST /api/users/{id}/notifications/test/slack
+// POST /api/users/me/notifications/test/slack
 func (h *NotificationHandler) TestSlackNotification(c *gin.Context) {
-	userID := c.Param("id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+	// Get user_id from context (set by auth middleware, already converted to UUID)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+	userIDStr := userID.(string)
 
 	// Create a dummy incident for testing
-	testIncidentID := "test-incident-" + userID
+	testIncidentID := "test-incident-" + userIDStr
 
-	err := h.SlackService.SendIncidentNotification(userID, testIncidentID, "test")
+	err := h.SlackService.SendIncidentNotification(userIDStr, testIncidentID, "test")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to send test notification",
@@ -126,25 +132,27 @@ func (h *NotificationHandler) TestSlackNotification(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":     "Test Slack notification sent successfully",
-		"user_id":     userID,
+		"user_id":     userIDStr,
 		"incident_id": testIncidentID,
 		"type":        "test",
 	})
 }
 
 // GetNotificationStats gets notification statistics for user
-// GET /api/users/{id}/notifications/stats
+// GET /api/users/me/notifications/stats
 func (h *NotificationHandler) GetNotificationStats(c *gin.Context) {
-	userID := c.Param("id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+	// Get user_id from context (set by auth middleware, already converted to UUID)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+	userIDStr := userID.(string)
 
 	// This would be implemented to return notification stats from notification_logs table
 	// For now, return a placeholder response
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":              userID,
+		"user_id":              userIDStr,
 		"total_notifications":  0,
 		"slack_notifications":  0,
 		"email_notifications":  0,

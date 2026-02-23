@@ -32,27 +32,38 @@ func NewMobileHandler(pg *sql.DB, identityService *services.IdentityService) *Mo
 	}
 }
 
-// MobileConnectQR represents the QR code payload for mobile app connection
-// NOTE: Field order matters for signature verification!
+// MobileConnectQR represents the simplified QR code payload (V4)
+// Only contains code + URL, mobile fetches full config via API
 type MobileConnectQR struct {
-	Type         string `json:"type"`
-	Version      int    `json:"version"`
-	BackendURL   string `json:"backend_url"`
-	GatewayURL   string `json:"gateway_url"`
-	InstanceID   string `json:"instance_id"`
-	InstanceName string `json:"instance_name"`
-	UserID       string `json:"user_id"`
-	ConnectToken string `json:"connect_token"`
-	Nonce        string `json:"nonce"`
-	ExpiresAt    int64  `json:"expires_at"`
+	Code string `json:"c"` // Short connect code
+	URL  string `json:"u"` // Backend URL
+}
+
+// MobileConnectConfig stores full config for a connect code
+// Stored server-side, fetched by mobile after scanning QR
+type MobileConnectConfig struct {
+	Code         string    `json:"-"`                     // Not returned in response
+	UserID       string    `json:"-"`                     // QR-generating user's ID (for signed_token)
+	InstanceID   string    `json:"instance_id"`
+	InstanceName string    `json:"instance_name"`
+	BackendURL   string    `json:"backend_url"`
+	GatewayURL   string    `json:"gateway_url,omitempty"`
+	AuthConfig   AuthConfig `json:"auth_config"`
+	CreatedAt    time.Time `json:"-"`
+	ExpiresAt    time.Time `json:"expires_at"`
 }
 
 // AuthConfig contains auth configuration for a self-hosted instance
 // Returned separately from signed_token to avoid signature issues
+// NOTE: Migrated from Supabase to OIDC standard authentication
 type AuthConfig struct {
-	SupabaseURL     string `json:"supabase_url,omitempty"`
-	SupabaseAnonKey string `json:"supabase_anon_key,omitempty"`
-	AgentURL        string `json:"agent_url,omitempty"` // AI Agent URL (separate domain)
+	// OIDC Configuration (standard authentication)
+	OIDCIssuer   string `json:"oidc_issuer,omitempty"`   // OIDC IdP issuer URL (e.g., https://auth.example.com)
+	OIDCClientID string `json:"oidc_client_id,omitempty"` // OIDC client ID for mobile app
+	OIDCAudience string `json:"oidc_audience,omitempty"` // OIDC audience (required for Zitadel to return JWT tokens)
+
+	// AI Agent URL (separate domain for WebSocket connection)
+	AgentURL string `json:"agent_url,omitempty"`
 }
 
 // VerifyConnectRequest represents the request to verify a connect token
@@ -91,9 +102,14 @@ type MobileConnectToken struct {
 // In-memory token store (in production, use Redis)
 var connectTokenStore = make(map[string]*MobileConnectToken)
 
+// In-memory config store for V4 QR codes (in production, use Redis with TTL)
+var connectConfigStore = make(map[string]*MobileConnectConfig)
+
 // GenerateMobileConnectQR generates a QR code payload for mobile app connection
 // POST /api/mobile/connect/generate
+// V4: Ultra-simple QR - just code + URL, mobile fetches config via API
 func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
+	// User authentication is still required to generate QR (prevents abuse)
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
@@ -121,99 +137,135 @@ func (h *MobileHandler) GenerateMobileConnectQR(c *gin.Context) {
 		instanceName = "SLAR Instance"
 	}
 
-	// Generate connect token (expires in 5 minutes)
-	connectToken, err := generateConnectToken()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+	// Generate short connect code (12 chars hex = 48 bits entropy)
+	codeBytes := make([]byte, 6)
+	if _, err := rand.Read(codeBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate code"})
 		return
 	}
+	code := hex.EncodeToString(codeBytes)
 
-	// Generate unique nonce for replay attack prevention
-	nonce, err := generateNonce()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate nonce"})
-		return
+	// Config valid for 10 minutes
+	expiresAt := time.Now().Add(10 * time.Minute)
+
+	// Build auth config
+	mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID")
+	if mobileClientID == "" {
+		mobileClientID = os.Getenv("OIDC_CLIENT_ID")
+	}
+	authConfig := AuthConfig{
+		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),
+		OIDCClientID: mobileClientID,
+		OIDCAudience: os.Getenv("OIDC_AUDIENCE"),
+		AgentURL:     os.Getenv("AGENT_URL"),
 	}
 
-	expiresAt := time.Now().Add(5 * time.Minute)
-
-	// Store token in memory (in production, use Redis with TTL)
-	connectTokenStore[connectToken] = &MobileConnectToken{
-		Token:     connectToken,
-		UserID:    userID,
-		ExpiresAt: expiresAt,
-	}
-
-	// Build QR payload
-	qrPayload := MobileConnectQR{
-		Type:         "slar_mobile_connect",
-		Version:      2, // Bump version for nonce support
-		BackendURL:   backendURL,
-		GatewayURL:   gatewayURL,
+	// Store full config server-side (including userID for signed_token generation)
+	config := &MobileConnectConfig{
+		Code:         code,
+		UserID:       userID,
 		InstanceID:   instanceID,
 		InstanceName: instanceName,
-		UserID:       userID,
-		ConnectToken: connectToken,
-		Nonce:        nonce,
-		ExpiresAt:    expiresAt.Unix(),
+		BackendURL:   backendURL,
+		GatewayURL:   gatewayURL,
+		AuthConfig:   authConfig,
+		CreatedAt:    time.Now(),
+		ExpiresAt:    expiresAt,
 	}
+	connectConfigStore[code] = config
 
-	// Sign the payload
-	payloadBytes, err := json.Marshal(qrPayload)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal payload"})
-		return
-	}
+	// Clean up expired configs (simple cleanup, production should use Redis TTL)
+	go cleanupExpiredConfigs()
 
-	// Debug: Log what we're signing
-	fmt.Printf("Signing payload JSON: %s\n", string(payloadBytes))
-
-	signature, err := h.IdentityService.Sign(payloadBytes)
-	if err != nil {
-		// Log error but maybe proceed without signature if identity service fails?
-		// No, security requirement is strict.
-		fmt.Printf("Failed to sign QR payload: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign payload"})
-		return
-	}
-
-	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
-	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
-	if supabaseURL == "" {
-		supabaseURL = os.Getenv("SUPABASE_URL")
-	}
-
-	// Build auth config (for mobile to authenticate with self-hosted API)
-	// These are public values (anon key is safe to share)
-	// NOTE: auth_config is NOT included in QR to keep QR size small
-	// Mobile app fetches auth_config separately after device registration
-	authConfig := AuthConfig{
-		SupabaseURL:     supabaseURL,
-		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
-		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
-	}
-
-	// Return QR content - frontend should encode the signed_token as QR
-	// auth_config is returned separately for the web UI to display
-	// Mobile app will fetch auth_config via /mobile/auth-config endpoint after registration
-	signedToken := gin.H{
-		"signed_token": gin.H{
-			"payload":   qrPayload,
-			"signature": signature,
-		},
+	// Build minimal QR payload
+	qrPayload := MobileConnectQR{
+		Code: code,
+		URL:  backendURL,
 	}
 
 	// Debug: Log payload size
-	payloadJSON, _ := json.Marshal(signedToken)
-	fmt.Printf("QR payload size: %d bytes\n", len(payloadJSON))
+	payloadJSON, _ := json.Marshal(qrPayload)
+	fmt.Printf("QR payload size: %d bytes (code: %s)\n", len(payloadJSON), code)
 
 	c.JSON(http.StatusOK, gin.H{
-		"signed_token": gin.H{
-			"payload":   qrPayload,
-			"signature": signature,
-		},
-		"auth_config": authConfig, // Not included in QR, just for web UI info
+		"qr":          qrPayload,                    // This goes into QR code
+		"auth_config": authConfig,                   // For web UI display only
+		"expires_at":  expiresAt.Unix(),             // For countdown display
 	})
+}
+
+// GetMobileConnectConfig returns config for a connect code
+// GET /api/mobile/connect/:code
+// Includes signed_token for direct device registration with noti-gw
+func (h *MobileHandler) GetMobileConnectConfig(c *gin.Context) {
+	code := c.Param("code")
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Code is required"})
+		return
+	}
+
+	// Look up config
+	config, exists := connectConfigStore[code]
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Invalid or expired code"})
+		return
+	}
+
+	// Check expiration
+	if time.Now().After(config.ExpiresAt) {
+		delete(connectConfigStore, code)
+		c.JSON(http.StatusGone, gin.H{"error": "Code has expired"})
+		return
+	}
+
+	// Build response with config fields
+	response := gin.H{
+		"instance_id":   config.InstanceID,
+		"instance_name": config.InstanceName,
+		"backend_url":   config.BackendURL,
+		"auth_config":   config.AuthConfig,
+		"expires_at":    config.ExpiresAt,
+	}
+	if config.GatewayURL != "" {
+		response["gateway_url"] = config.GatewayURL
+	}
+
+	// Generate signed_token for direct noti-gw device registration
+	// Uses the QR-generating user's ID (the user who wants to connect their mobile)
+	if h.IdentityService != nil && config.GatewayURL != "" && config.UserID != "" {
+		nonce, err := generateNonce()
+		if err == nil {
+			payload := map[string]interface{}{
+				"instance_id": config.InstanceID,
+				"user_id":     config.UserID,
+				"nonce":       nonce,
+				"expires_at":  config.ExpiresAt.Unix(),
+			}
+
+			signature, err := h.IdentityService.SignMap(payload)
+			if err == nil {
+				response["signed_token"] = gin.H{
+					"payload":   payload,
+					"signature": signature,
+				}
+				fmt.Printf("V4: signed_token generated for code %s\n", code)
+			} else {
+				fmt.Printf("V4: Failed to sign token for code %s: %v\n", code, err)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// cleanupExpiredConfigs removes expired configs from store
+func cleanupExpiredConfigs() {
+	now := time.Now()
+	for code, config := range connectConfigStore {
+		if now.After(config.ExpiresAt) {
+			delete(connectConfigStore, code)
+		}
+	}
 }
 
 // VerifyMobileConnect verifies the connect token and returns session credentials
@@ -595,23 +647,24 @@ func generateNonce() (string, error) {
 
 // GetAuthConfig returns auth configuration for mobile app after device registration
 // GET /api/mobile/auth-config
-// This is called by mobile app after QR scan to get Supabase credentials and AI agent URL
+// This is called by mobile app after QR scan to get OIDC credentials and AI agent URL
 // (not included in QR to keep it small and scannable)
 func (h *MobileHandler) GetAuthConfig(c *gin.Context) {
 	// This endpoint can be public - it only returns public config
-	// (anon key is safe to share, it's in the frontend anyway)
+	// (OIDC issuer and client_id are safe to share)
 	instanceID := os.Getenv("SLAR_INSTANCE_ID")
 
-	// Use mobile-specific Supabase URL if available, otherwise fallback to web URL
-	supabaseURL := os.Getenv("MOBILE_SUPABASE_URL")
-	if supabaseURL == "" {
-		supabaseURL = os.Getenv("SUPABASE_URL")
+	// Use mobile-specific client ID if configured, otherwise fallback to default
+	mobileClientID := os.Getenv("OIDC_MOBILE_CLIENT_ID")
+	if mobileClientID == "" {
+		mobileClientID = os.Getenv("OIDC_CLIENT_ID") // Fallback to default
 	}
 
 	authConfig := AuthConfig{
-		SupabaseURL:     supabaseURL,
-		SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
-		AgentURL:        os.Getenv("AGENT_URL"), // AI Agent URL (separate domain)
+		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),   // e.g., https://auth.example.com
+		OIDCClientID: mobileClientID,             // e.g., slar-mobile (mobile-specific)
+		OIDCAudience: os.Getenv("OIDC_AUDIENCE"), // Required for Zitadel to return JWT tokens (use Project ID)
+		AgentURL:     os.Getenv("AGENT_URL"),     // AI Agent URL (separate domain)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -91,3 +91,24 @@ app.kubernetes.io/version: {{ .root.Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{- end }}
+
+{{/*
+Config secret name selection:
+- If config.existingSecret is set, prefer it.
+- Else use config.secretName (default: slar-secrets).
+*/}}
+{{- define "slar.configSecretName" -}}
+{{- if .Values.config.existingSecret -}}
+{{- .Values.config.existingSecret -}}
+{{- else -}}
+{{- default "slar-secrets" .Values.config.secretName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether to create the config Secret from values.
+If existingSecret is provided, we never create a Secret (pre-created is preferred).
+*/}}
+{{- define "slar.createConfigSecret" -}}
+{{- and (.Values.config.enabled | default false) (not .Values.config.existingSecret) -}}
+{{- end -}}

@@ -3,7 +3,6 @@ Marketplace and plugins routes for AI Agent API.
 
 Handles:
 - POST /api/marketplace/install-plugin - Install plugin from marketplace
-- POST /api/plugins/install - Install plugin (legacy)
 - POST /api/marketplace/fetch-metadata - Fetch marketplace metadata from GitHub
 - POST /api/marketplace/clone - Clone marketplace repository (git clone)
 - POST /api/marketplace/update - Update marketplace repository (git fetch)
@@ -21,20 +20,19 @@ import json
 import logging
 import re
 import shutil
+import yaml
 from pathlib import Path
-from asyncio import Lock
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request
 
-from supabase_storage import (
-    extract_user_id_from_token,
-    get_supabase_client,
+from workspace_service import (
     get_user_workspace_path,
-    unzip_installed_plugins,
+    extract_user_id_from_token,
 )
-from database_util import execute_query, ensure_user_exists, extract_user_info_from_token
+from database_util import execute_query, ensure_user_exists, extract_user_info_from_token, resolve_user_id_from_token
 from git_utils import (
     build_github_url,
     clone_repository,
@@ -49,11 +47,143 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["marketplace"])
 
-# Per-user locks to prevent race conditions when installing plugins
-user_plugin_locks = {}
-
 _MARKETPLACE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
+
+# =============================================================================
+# SKILL DISCOVERY FUNCTIONS
+# =============================================================================
+
+def parse_yaml_frontmatter(file_path: Path) -> Optional[dict]:
+    """
+    Parse YAML frontmatter from a SKILL.md file.
+
+    SKILL.md format:
+    ---
+    name: skill-name
+    description: Skill description...
+    ---
+    # Content...
+
+    Returns:
+        dict with frontmatter fields, or None if parsing fails
+    """
+    try:
+        content = file_path.read_text(encoding='utf-8')
+
+        # Check for YAML frontmatter markers
+        if not content.startswith('---'):
+            return None
+
+        # Find the closing ---
+        end_marker = content.find('---', 3)
+        if end_marker == -1:
+            return None
+
+        # Extract and parse YAML
+        yaml_content = content[3:end_marker].strip()
+        frontmatter = yaml.safe_load(yaml_content)
+
+        if not isinstance(frontmatter, dict):
+            return None
+
+        return frontmatter
+    except Exception as e:
+        logger.warning(f"Failed to parse YAML frontmatter from {file_path}: {e}")
+        return None
+
+
+def discover_skills_in_plugin(plugin_dir: Path) -> list:
+    """
+    Discover all skills in a plugin directory by scanning for SKILL.md files.
+
+    Expected structure:
+        plugin_dir/
+        ├── skills/
+        │   ├── skill-name-1/SKILL.md
+        │   └── skill-name-2/SKILL.md
+
+    Returns:
+        List of skill metadata dicts: [{"name": "...", "description": "...", "path": "..."}]
+    """
+    skills = []
+    skills_dir = plugin_dir / "skills"
+
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        logger.debug(f"No skills directory found in {plugin_dir}")
+        return skills
+
+    # Scan for SKILL.md files in subdirectories
+    for skill_md_path in skills_dir.glob("*/SKILL.md"):
+        frontmatter = parse_yaml_frontmatter(skill_md_path)
+
+        skill_folder_name = skill_md_path.parent.name
+
+        if frontmatter:
+            skill_info = {
+                "name": frontmatter.get("name", skill_folder_name),
+                "description": frontmatter.get("description", ""),
+                "path": f"skills/{skill_folder_name}/SKILL.md"
+            }
+        else:
+            # Fallback: use folder name if no frontmatter
+            skill_info = {
+                "name": skill_folder_name,
+                "description": "",
+                "path": f"skills/{skill_folder_name}/SKILL.md"
+            }
+
+        skills.append(skill_info)
+        logger.debug(f"Discovered skill: {skill_info['name']} in {plugin_dir}")
+
+    logger.info(f"Discovered {len(skills)} skill(s) in {plugin_dir.name}")
+    return skills
+
+
+def enrich_plugins_with_skills(marketplace_dir: Path, plugins: list) -> list:
+    """
+    Enrich plugin metadata with discovered skills.
+
+    For each plugin in the list, scan its directory for SKILL.md files
+    and add the skills array to the plugin metadata.
+
+    Args:
+        marketplace_dir: Root directory of the cloned marketplace
+        plugins: List of plugin metadata from marketplace.json
+
+    Returns:
+        Enriched list of plugins with skills arrays
+    """
+    enriched_plugins = []
+
+    for plugin in plugins:
+        plugin_copy = dict(plugin)
+        source = plugin.get("source", "./")
+
+        # Normalize source path
+        source_clean = source.replace("./", "").strip("/")
+
+        if source_clean:
+            plugin_dir = marketplace_dir / source_clean
+        else:
+            plugin_dir = marketplace_dir
+
+        if plugin_dir.exists() and plugin_dir.is_dir():
+            discovered_skills = discover_skills_in_plugin(plugin_dir)
+            plugin_copy["skills"] = discovered_skills
+            logger.info(f"Plugin '{plugin.get('name')}': {len(discovered_skills)} skill(s) discovered")
+        else:
+            plugin_copy["skills"] = []
+            logger.warning(f"Plugin directory not found: {plugin_dir}")
+
+        enriched_plugins.append(plugin_copy)
+
+    return enriched_plugins
+
+
+# =============================================================================
+# VALIDATION FUNCTIONS
+# =============================================================================
 
 def _is_valid_marketplace_name(name: str) -> bool:
     """
@@ -119,16 +249,18 @@ async def install_plugin_from_marketplace(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
-        logger.info(f"User {user_id}: Installing plugin {plugin_name} from {marketplace_name}")
+        provider_id = extract_user_id_from_token(auth_token)
+        logger.info(f"User {provider_id}: Installing plugin {plugin_name} from {marketplace_name}")
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         # Get marketplace metadata from PostgreSQL
         def get_marketplace_metadata_sync():
@@ -153,15 +285,46 @@ async def install_plugin_from_marketplace(request: Request):
                 "error": f"Marketplace '{marketplace_name}' not found. Please clone it first.",
             }
 
-        # Verify git repository exists
+        # Verify git repository exists — auto re-clone if directory is missing
         workspace_path = get_user_workspace_path(user_id)
         marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
         if not await is_git_repository(marketplace_dir):
-            return {
-                "success": False,
-                "error": f"Marketplace '{marketplace_name}' not cloned. Please clone it first.",
-            }
+            repository_url = marketplace_record.get("repository_url", "")
+            branch = marketplace_record.get("branch", "main")
+            stored_credential = marketplace_record.get("credential_name")
+
+            if not repository_url:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' is not on disk and repository_url is missing. Please delete and re-add this marketplace.",
+                }
+
+            logger.warning(
+                f"Marketplace '{marketplace_name}' not found on disk during install — auto re-cloning from {repository_url}"
+            )
+
+            if marketplace_dir.exists():
+                shutil.rmtree(marketplace_dir)
+
+            clone_kwargs = dict(
+                repo_url=repository_url,
+                target_dir=marketplace_dir,
+                branch=branch,
+                depth=1,
+                user_id=user_id,
+            )
+            if stored_credential:
+                clone_kwargs["credential_name"] = stored_credential
+
+            clone_ok, clone_result = await clone_repository(**clone_kwargs)
+            if not clone_ok:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' was missing and auto re-clone failed: {clone_result}",
+                }
+
+            logger.info(f"Auto re-clone successful before install (commit: {clone_result[:8]})")
 
         # Calculate install path from marketplace metadata
         # We use a Path object and ensure it's relative to the marketplace
@@ -247,138 +410,6 @@ async def install_plugin_from_marketplace(request: Request):
         }
 
 
-@router.post("/plugins/install")
-async def install_plugin(request: Request):
-    """
-    Install a plugin to user's installed_plugins.json.
-
-    Uses per-user lock to serialize access and prevent race conditions.
-
-    Request body:
-        {
-            "auth_token": "Bearer ...",
-            "plugin": {
-                "name": "skill-name",
-                "marketplaceName": "anthropic-agent-skills",
-                "version": "1.0.0",
-                "installPath": "...",
-                "isLocal": false
-            }
-        }
-
-    Returns:
-        {"success": bool, "message": str, "pluginKey": str}
-    """
-    try:
-        body = await request.json()
-        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
-        plugin = body.get("plugin", {})
-
-        if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
-
-        if not plugin or not plugin.get("name") or not plugin.get("marketplaceName"):
-            return {
-                "success": False,
-                "error": "Missing required plugin fields: name, marketplaceName",
-            }
-
-        if not plugin.get("marketplaceName") or not re.fullmatch(r"^[A-Za-z0-9_.-]+$", plugin.get("marketplaceName")):
-            return {
-                "success": False,
-                "error": f"Invalid marketplace name: {plugin.get('marketplaceName')}",
-            }
-
-        user_id = extract_user_id_from_token(auth_token)
-        if not user_id:
-            return {"success": False, "error": "Invalid auth token"}
-
-        if user_id not in user_plugin_locks:
-            user_plugin_locks[user_id] = Lock()
-
-        user_lock = user_plugin_locks[user_id]
-
-        logger.info(f"Acquiring lock for user {user_id} to install plugin: {plugin['name']}")
-
-        async with user_lock:
-            logger.info(f"Lock acquired for user {user_id}")
-
-            supabase = get_supabase_client()
-            plugins_json_path = ".claude/plugins/installed_plugins.json"
-
-            try:
-                response = supabase.storage.from_(user_id).download(plugins_json_path)
-                current_data = json.loads(response)
-                plugins = current_data.get("plugins", {})
-            except Exception as e:
-                logger.info(f"No installed_plugins.json found, creating new: {e}")
-                plugins = {}
-
-            plugin_key = f"{plugin['name']}@{plugin['marketplaceName']}"
-            now = datetime.utcnow().isoformat() + "Z"
-
-            if plugin_key in plugins:
-                logger.info(f"Updating existing plugin: {plugin_key}")
-                plugins[plugin_key] = {
-                    **plugins[plugin_key],
-                    "version": plugin.get("version", plugins[plugin_key].get("version", "unknown")),
-                    "lastUpdated": now,
-                    "installPath": plugin.get("installPath", plugins[plugin_key].get("installPath", "")),
-                    "gitCommitSha": plugin.get("gitCommitSha", plugins[plugin_key].get("gitCommitSha")),
-                    "isLocal": plugin.get("isLocal", plugins[plugin_key].get("isLocal", False)),
-                }
-            else:
-                logger.info(f"Adding new plugin: {plugin_key}")
-                # Build default install path using Path object to avoid traversal strings
-                marketplace_name = plugin['marketplaceName']
-                plugin_name = plugin['name']
-                default_install_path = str(Path(".claude") / "plugins" / "marketplaces" / marketplace_name / plugin_name)
-                
-                plugins[plugin_key] = {
-                    "version": plugin.get("version", "unknown"),
-                    "installedAt": now,
-                    "lastUpdated": now,
-                    "installPath": plugin.get("installPath", default_install_path),
-                    "isLocal": plugin.get("isLocal", False),
-                }
-
-                if plugin.get("gitCommitSha"):
-                    plugins[plugin_key]["gitCommitSha"] = plugin["gitCommitSha"]
-
-            updated_data = {"version": 1, "plugins": plugins}
-            json_blob = json.dumps(updated_data, indent=2).encode("utf-8")
-
-            supabase.storage.from_(user_id).upload(
-                path=plugins_json_path,
-                file=json_blob,
-                file_options={"content-type": "application/json", "upsert": "true"},
-            )
-
-            logger.info(f"Plugin installed successfully: {plugin_key}")
-
-        logger.info(f"Lock released for user {user_id}")
-
-        logger.info(f"Unzipping plugin to local workspace for user {user_id}...")
-        unzip_result = await unzip_installed_plugins(user_id)
-
-        if unzip_result["success"]:
-            logger.info(f"Plugin unzipped to local: {unzip_result['message']}")
-        else:
-            logger.warning(f"Failed to unzip plugin: {unzip_result['message']}")
-
-        return {
-            "success": True,
-            "message": f"Plugin {plugin['name']} installed successfully",
-            "pluginKey": plugin_key,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": sanitize_error_message(e, "installing plugin")
-        }
-
-
 @router.post("/marketplace/fetch-metadata")
 async def fetch_marketplace_metadata(request: Request):
     """
@@ -417,18 +448,20 @@ async def fetch_marketplace_metadata(request: Request):
             }
 
         try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"User {user_id}: Fetching metadata for {owner}/{repo}@{branch}")
+            provider_id = extract_user_id_from_token(auth_token)
+            logger.info(f"User {provider_id}: Fetching metadata for {owner}/{repo}@{branch}")
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
         )
+        if not user_id:
+            return {"success": False, "error": "Failed to resolve user"}
 
         marketplace_json_url = f"https://api.github.com/repos/{owner}/{repo}/contents/.claude-plugin/marketplace.json?ref={branch}"
         repository_url = f"https://github.com/{owner}/{repo}"
@@ -549,6 +582,7 @@ async def clone_marketplace(request: Request):
         repo = body.get("repo")
         branch = body.get("branch", "main")
         marketplace_name = body.get("marketplace_name") or f"{owner}-{repo}"
+        credential_name = body.get("credential_name")  # Optional: Vault credential for private repos
 
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
@@ -563,20 +597,21 @@ async def clone_marketplace(request: Request):
             }
 
         try:
-            user_id = extract_user_id_from_token(auth_token)
-            logger.info(f"User {user_id}: Cloning {owner}/{repo}@{branch}")
+            provider_id = extract_user_id_from_token(auth_token)
+            logger.info(f"User {provider_id}: Cloning {owner}/{repo}@{branch}")
         except Exception as e:
             return {"success": False, "error": f"Invalid auth token: {str(e)}"}
 
-        # Ensure user exists in users table (required for foreign key)
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
         user_info = extract_user_info_from_token(auth_token)
-        if not ensure_user_exists(
-            user_id,
+        user_id = ensure_user_exists(
+            provider_id,
             email=user_info.get("email") if user_info else None,
             name=user_info.get("name") if user_info else None
-        ):
-            logger.warning(f"Failed to ensure user exists: {user_id}")
-            # Continue anyway - the user might already exist
+        )
+        if not user_id:
+            logger.warning(f"Failed to resolve user: {provider_id}")
+            return {"success": False, "error": "Failed to resolve user"}
 
         # Build paths
         workspace_path = get_user_workspace_path(user_id)
@@ -584,15 +619,30 @@ async def clone_marketplace(request: Request):
         repo_url = build_github_url(owner, repo)
         repository_url = f"https://github.com/{owner}/{repo}"
 
-        logger.info(f"Cloning {repo_url} -> {marketplace_dir}")
+        # If target directory exists, remove it first
+        # This handles cases like:
+        # - Clone succeeded but DB insert failed
+        # - Volume data loss requiring re-sync
+        # - Manual cleanup needed
+        if marketplace_dir.exists():
+            import shutil
+            logger.warning(f"Target directory exists, removing: {marketplace_dir}")
+            shutil.rmtree(marketplace_dir)
 
-        # Clone the repository
-        success, result = await clone_repository(
+        logger.info(f"Cloning {repo_url} -> {marketplace_dir}" + (f" (credential: {credential_name})" if credential_name else ""))
+
+        # Clone the repository (with automatic Vault credential injection if available)
+        clone_kwargs = dict(
             repo_url=repo_url,
             target_dir=marketplace_dir,
             branch=branch,
-            depth=1  # Shallow clone for efficiency
+            depth=1,  # Shallow clone for efficiency
+            user_id=user_id,  # Enable Vault credential lookup for private repos
         )
+        if credential_name:
+            clone_kwargs["credential_name"] = credential_name
+
+        success, result = await clone_repository(**clone_kwargs)
 
         if not success:
             return {
@@ -621,6 +671,12 @@ async def clone_marketplace(request: Request):
                 "plugins": [],
             }
 
+        # Auto-discover skills for each plugin
+        raw_plugins = marketplace_metadata.get("plugins", [])
+        enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+        marketplace_metadata["plugins"] = enriched_plugins
+        logger.info(f"Enriched {len(enriched_plugins)} plugin(s) with skills")
+
         # Save to PostgreSQL
         logger.info("Saving marketplace metadata to PostgreSQL...")
 
@@ -635,13 +691,14 @@ async def clone_marketplace(request: Request):
                 "version": marketplace_metadata.get("version", "unknown"),
                 "plugins": marketplace_metadata.get("plugins", []),
                 "git_commit_sha": commit_sha,
+                "credential_name": credential_name,
                 "status": "active",
             }
 
             execute_query(
                 """
-                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, git_commit_sha, status, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO marketplaces (user_id, name, repository_url, branch, display_name, description, version, plugins, git_commit_sha, credential_name, status, last_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     repository_url = EXCLUDED.repository_url,
                     branch = EXCLUDED.branch,
@@ -650,6 +707,7 @@ async def clone_marketplace(request: Request):
                     version = EXCLUDED.version,
                     plugins = EXCLUDED.plugins,
                     git_commit_sha = EXCLUDED.git_commit_sha,
+                    credential_name = EXCLUDED.credential_name,
                     status = EXCLUDED.status,
                     last_synced_at = NOW(),
                     updated_at = NOW()
@@ -658,7 +716,7 @@ async def clone_marketplace(request: Request):
                     user_id, marketplace_name, repository_url, branch,
                     marketplace_record["display_name"], marketplace_record["description"],
                     marketplace_record["version"], json.dumps(marketplace_record["plugins"]),
-                    commit_sha, "active"
+                    commit_sha, credential_name, "active"
                 ),
                 fetch="none"
             )
@@ -681,6 +739,122 @@ async def clone_marketplace(request: Request):
         return {
             "success": False,
             "error": sanitize_error_message(e, "cloning repository")
+        }
+
+
+@router.post("/marketplace/refresh-skills")
+async def refresh_marketplace_skills(request: Request):
+    """
+    Re-scan and refresh skills for an already cloned marketplace.
+
+    Use this to update skills metadata without pulling new changes from git.
+    Useful when marketplace was cloned before skill discovery was implemented.
+
+    Request body:
+        {
+            "auth_token": "Bearer ...",
+            "marketplace_name": "anthropic-agent-skills"
+        }
+
+    Returns:
+        {"success": bool, "message": str, "plugins": [...]}
+    """
+    try:
+        body = await request.json()
+        auth_token = body.get("auth_token") or request.headers.get("authorization", "")
+        marketplace_name = body.get("marketplace_name")
+
+        if not auth_token:
+            return {"success": False, "error": "Missing auth_token"}
+
+        if not marketplace_name:
+            return {"success": False, "error": "Missing required field: marketplace_name"}
+
+        if not _is_valid_marketplace_name(marketplace_name):
+            return {
+                "success": False,
+                "error": f"Invalid marketplace name: {marketplace_name}",
+            }
+
+        user_id = resolve_user_id_from_token(auth_token)
+        logger.info(f"User {user_id}: Refreshing skills for marketplace '{marketplace_name}'")
+
+        # Get marketplace from DB
+        def get_marketplace_sync():
+            return execute_query(
+                "SELECT * FROM marketplaces WHERE user_id = %s AND name = %s",
+                (user_id, marketplace_name),
+                fetch="one"
+            )
+
+        marketplace = await asyncio.get_event_loop().run_in_executor(
+            None, get_marketplace_sync
+        )
+
+        if not marketplace:
+            return {
+                "success": False,
+                "error": f"Marketplace '{marketplace_name}' not found",
+            }
+
+        # Get marketplace directory
+        workspace_path = get_user_workspace_path(user_id)
+        marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
+
+        if not marketplace_dir.exists():
+            return {
+                "success": False,
+                "error": f"Marketplace directory not found. Please re-clone the marketplace.",
+            }
+
+        # Read marketplace.json
+        marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
+        if not marketplace_json_path.exists():
+            return {
+                "success": False,
+                "error": "marketplace.json not found in repository",
+            }
+
+        try:
+            marketplace_metadata = json.loads(marketplace_json_path.read_text())
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to parse marketplace.json: {str(e)}",
+            }
+
+        # Re-discover skills for all plugins
+        raw_plugins = marketplace_metadata.get("plugins", [])
+        enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+
+        total_skills = sum(len(p.get("skills", [])) for p in enriched_plugins)
+        logger.info(f"Refreshed {len(enriched_plugins)} plugin(s) with {total_skills} total skill(s)")
+
+        # Update database
+        def update_db_sync():
+            execute_query(
+                """
+                UPDATE marketplaces SET
+                    plugins = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s AND name = %s
+                """,
+                (json.dumps(enriched_plugins), user_id, marketplace_name),
+                fetch="none"
+            )
+
+        await asyncio.get_event_loop().run_in_executor(None, update_db_sync)
+
+        return {
+            "success": True,
+            "message": f"Refreshed skills for {len(enriched_plugins)} plugin(s), found {total_skills} skill(s)",
+            "plugins": enriched_plugins,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": sanitize_error_message(e, "refreshing marketplace skills")
         }
 
 
@@ -718,7 +892,7 @@ async def update_marketplace(request: Request):
                 "error": f"Invalid marketplace name: {marketplace_name}",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Updating marketplace '{marketplace_name}'")
 
         # Get marketplace metadata from PostgreSQL
@@ -740,19 +914,113 @@ async def update_marketplace(request: Request):
             }
 
         branch = marketplace.get("branch", "main")
+        stored_credential = marketplace.get("credential_name")
+        repository_url = marketplace.get("repository_url", "")
         workspace_path = get_user_workspace_path(user_id)
         marketplace_dir = get_marketplace_dir(workspace_path, marketplace_name)
 
-        # Verify it's a git repository
+        # Auto-recover: if directory is missing or not a git repo, re-clone instead of failing.
+        # This handles volume wipes and partial installs without requiring manual intervention.
         if not await is_git_repository(marketplace_dir):
+            if not repository_url:
+                return {
+                    "success": False,
+                    "error": f"Marketplace '{marketplace_name}' directory is missing and repository_url is not stored. Please delete and re-add this marketplace.",
+                }
+
+            logger.warning(
+                f"Marketplace '{marketplace_name}' not found on disk — auto re-cloning from {repository_url}"
+            )
+
+            # Remove stale directory if it exists but isn't a valid git repo
+            if marketplace_dir.exists():
+                shutil.rmtree(marketplace_dir)
+
+            clone_kwargs = dict(
+                repo_url=repository_url,
+                target_dir=marketplace_dir,
+                branch=branch,
+                depth=1,
+                user_id=user_id,
+            )
+            if stored_credential:
+                clone_kwargs["credential_name"] = stored_credential
+
+            clone_ok, clone_result = await clone_repository(**clone_kwargs)
+            if not clone_ok:
+                return {
+                    "success": False,
+                    "error": f"Auto re-clone failed: {clone_result}",
+                }
+
+            new_commit_sha = clone_result
+            logger.info(f"Auto re-clone successful (commit: {new_commit_sha[:8]})")
+
+            # Re-read marketplace.json and rescan skills
+            marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
+            marketplace_metadata = None
+            if marketplace_json_path.exists():
+                try:
+                    marketplace_metadata = json.loads(marketplace_json_path.read_text())
+                    raw_plugins = marketplace_metadata.get("plugins", [])
+                    enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+                    marketplace_metadata["plugins"] = enriched_plugins
+                except Exception as e:
+                    logger.warning(f"Failed to parse marketplace.json after re-clone: {e}")
+
+            def update_db_after_reclone():
+                if marketplace_metadata:
+                    execute_query(
+                        """
+                        UPDATE marketplaces SET
+                            plugins = %s,
+                            git_commit_sha = %s,
+                            last_synced_at = NOW(),
+                            updated_at = NOW()
+                        WHERE user_id = %s AND name = %s
+                        """,
+                        (
+                            json.dumps(marketplace_metadata.get("plugins", [])),
+                            new_commit_sha,
+                            user_id, marketplace_name,
+                        ),
+                        fetch="none",
+                    )
+                else:
+                    execute_query(
+                        """
+                        UPDATE marketplaces SET
+                            git_commit_sha = %s,
+                            last_synced_at = NOW(),
+                            updated_at = NOW()
+                        WHERE user_id = %s AND name = %s
+                        """,
+                        (new_commit_sha, user_id, marketplace_name),
+                        fetch="none",
+                    )
+
+            await asyncio.get_event_loop().run_in_executor(None, update_db_after_reclone)
+
             return {
-                "success": False,
-                "error": f"Marketplace '{marketplace_name}' is not a git repository. Please re-clone it.",
+                "success": True,
+                "message": f"Marketplace '{marketplace_name}' was missing and has been re-cloned",
+                "had_changes": True,
+                "old_commit_sha": marketplace.get("git_commit_sha", "unknown"),
+                "new_commit_sha": new_commit_sha,
+                "re_cloned": True,
             }
 
-        # Fetch and reset
-        logger.info(f"Fetching updates for {marketplace_name}...")
-        success, result, had_changes = await fetch_and_reset(marketplace_dir, branch)
+        # Fetch and reset (with automatic Vault credential injection if available)
+        logger.info(f"Fetching updates for {marketplace_name}..." + (f" (credential: {stored_credential})" if stored_credential else ""))
+        fetch_kwargs = dict(
+            repo_dir=marketplace_dir,
+            branch=branch,
+            user_id=user_id,  # Enable Vault credential lookup for private repos
+        )
+        if stored_credential:
+            fetch_kwargs["credential_name"] = stored_credential
+
+        success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
         if not success:
             return {
@@ -763,14 +1031,22 @@ async def update_marketplace(request: Request):
         new_commit_sha = result
         old_commit_sha = marketplace.get("git_commit_sha", "unknown")
 
-        # Re-read marketplace.json if changed
+        # Always re-read marketplace.json and re-scan skills (even if no git changes)
+        # This ensures skills are discovered for marketplaces cloned before skill discovery
         marketplace_json_path = marketplace_dir / ".claude-plugin" / "marketplace.json"
         marketplace_metadata = None
 
-        if had_changes and marketplace_json_path.exists():
+        if marketplace_json_path.exists():
             try:
                 marketplace_metadata = json.loads(marketplace_json_path.read_text())
-                logger.info(f"Updated marketplace.json: {marketplace_metadata.get('name')}")
+                logger.info(f"Read marketplace.json: {marketplace_metadata.get('name')}")
+
+                # Always re-discover skills for each plugin
+                raw_plugins = marketplace_metadata.get("plugins", [])
+                enriched_plugins = enrich_plugins_with_skills(marketplace_dir, raw_plugins)
+                marketplace_metadata["plugins"] = enriched_plugins
+                total_skills = sum(len(p.get("skills", [])) for p in enriched_plugins)
+                logger.info(f"Enriched {len(enriched_plugins)} plugin(s) with {total_skills} total skill(s)")
             except Exception as e:
                 logger.warning(f"Failed to parse marketplace.json: {e}")
 
@@ -854,13 +1130,13 @@ async def update_all_marketplaces(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         logger.info(f"User {user_id}: Updating all marketplaces")
 
         # Get all marketplaces
         def get_all_marketplaces_sync():
             return execute_query(
-                "SELECT name, branch FROM marketplaces WHERE user_id = %s AND status = 'active'",
+                "SELECT name, branch, credential_name FROM marketplaces WHERE user_id = %s AND status = 'active'",
                 (user_id,),
                 fetch="all"
             )
@@ -882,6 +1158,7 @@ async def update_all_marketplaces(request: Request):
         for mp in marketplaces:
             mp_name = mp["name"]
             mp_branch = mp.get("branch", "main")
+            mp_credential = mp.get("credential_name")
             mp_dir = get_marketplace_dir(workspace_path, mp_name)
 
             if not await is_git_repository(mp_dir):
@@ -892,7 +1169,11 @@ async def update_all_marketplaces(request: Request):
                 })
                 continue
 
-            success, result, had_changes = await fetch_and_reset(mp_dir, mp_branch)
+            fetch_kwargs = dict(repo_dir=mp_dir, branch=mp_branch, user_id=user_id)
+            if mp_credential:
+                fetch_kwargs["credential_name"] = mp_credential
+
+            success, result, had_changes = await fetch_and_reset(**fetch_kwargs)
 
             if success:
                 # Update commit SHA in DB
@@ -954,14 +1235,13 @@ async def delete_marketplace(marketplace_name: str, request: Request):
         {"success": bool, "message": str, "cleaned_items": list}
     """
     try:
-        auth_token = request.query_params.get("auth_token") or request.headers.get(
-            "authorization", ""
-        )
+        # SECURITY: Only accept token from Authorization header, not URL query params
+        auth_token = request.headers.get("authorization", "")
 
         if not auth_token:
-            return {"success": False, "error": "Missing auth_token"}
+            return {"success": False, "error": "Missing Authorization header"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 

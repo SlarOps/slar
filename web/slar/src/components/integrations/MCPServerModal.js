@@ -43,6 +43,8 @@ export default function MCPServerModal({
   onClose,
   mode = 'create', // 'create' or 'edit'
   server = null,
+  orgId = null,
+  projectId = null,
   onServerCreated,
   onServerUpdated
 }) {
@@ -143,7 +145,7 @@ export default function MCPServerModal({
       // If editing and name changed, delete old server first
       if (isEditMode && server.name !== serverName) {
         try {
-          await deleteMCPServerFromDB(session.user.id, server.name);
+          await deleteMCPServerFromDB(session.user.id, server.name, orgId, projectId);
         } catch (deleteError) {
           console.error('Failed to delete old server:', deleteError);
           // Continue anyway - the save will update if old name still exists
@@ -154,7 +156,9 @@ export default function MCPServerModal({
       const saveResult = await saveMCPServerToDB(
         session.user.id,
         serverName,
-        serverConfig
+        serverConfig,
+        orgId,
+        projectId
       );
 
       if (saveResult.success) {

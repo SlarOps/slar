@@ -1,12 +1,36 @@
 // API client for SLAR backend
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-export const AI_BASE_URL = process.env.NEXT_PUBLIC_AI_API_URL || '/ai';
+import { getConfigSync, fetchConfig } from './config';
 
 class APIClient {
   constructor() {
-    this.baseURL = API_BASE_URL;
-    this.aiBaseURL = AI_BASE_URL;
+    this._configLoaded = false;
     this.token = null;
+  }
+
+  /**
+   * Get API base URL dynamically from runtime config
+   */
+  get baseURL() {
+    return getConfigSync().apiUrl;
+  }
+
+  /**
+   * Get AI API base URL dynamically from runtime config
+   */
+  get aiBaseURL() {
+    return getConfigSync().aiApiUrl;
+  }
+
+  /**
+   * Initialize API client - loads config async on client-side
+   * Call this early in your app lifecycle
+   */
+  async init() {
+    if (!this._configLoaded) {
+      await fetchConfig();
+      this._configLoaded = true;
+    }
+    return this;
   }
 
   setToken(token) {
@@ -34,18 +58,25 @@ class APIClient {
     try {
       const response = await fetch(url, config);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Try to parse error response body for detailed error message
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          // API returns error in 'error' or 'message' field
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          // If response body is not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        const error = new Error(errorMessage);
+        error.status = response.status;
+        throw error;
       }
       return await response.json();
     } catch (error) {
       console.error('API request failed:', error);
       throw error;
     }
-  }
-
-  // Get environment configuration (unified config endpoint)
-  async getEnvConfig() {
-    return this.request('/env', {}, this.baseURL);
   }
 
   // Dashboard endpoints
@@ -1127,29 +1158,29 @@ class APIClient {
   // NOTIFICATION CONFIGURATION APIs
   // ===========================
 
-  // Get user notification configuration
-  async getUserNotificationConfig(userId) {
-    return this.request(`/users/${userId}/notifications/config`);
+  // Get current user's notification configuration
+  async getUserNotificationConfig() {
+    return this.request('/users/me/notifications/config');
   }
 
-  // Update user notification configuration
-  async updateUserNotificationConfig(userId, configData) {
-    return this.request(`/users/${userId}/notifications/config`, {
+  // Update current user's notification configuration
+  async updateUserNotificationConfig(configData) {
+    return this.request('/users/me/notifications/config', {
       method: 'PUT',
       body: JSON.stringify(configData)
     });
   }
 
-  // Test Slack notification
-  async testSlackNotification(userId) {
-    return this.request(`/users/${userId}/notifications/test/slack`, {
+  // Test Slack notification for current user
+  async testSlackNotification() {
+    return this.request('/users/me/notifications/test/slack', {
       method: 'POST'
     });
   }
 
-  // Get notification statistics
-  async getUserNotificationStats(userId) {
-    return this.request(`/users/${userId}/notifications/stats`);
+  // Get notification statistics for current user
+  async getUserNotificationStats() {
+    return this.request('/users/me/notifications/stats');
   }
 
   // Get current user info
@@ -1975,24 +2006,41 @@ class APIClient {
 
   /**
    * Get MCP servers from AI backend
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} MCP servers result
    */
-  async getMCPServers() {
-    return this.request('/api/mcp-servers', {}, this.aiBaseURL);
+  async getMCPServers(filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id MANDATORY, project_id optional
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
   }
 
   /**
    * Save MCP server to AI backend
    * @param {string} serverName - Server name
-   * @param {object} serverConfig - Server configuration
+   * @param {object} config - Server configuration
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} Save result
    */
-  async saveMCPServer(serverName, serverConfig) {
-    return this.request('/api/mcp-servers', {
+  async saveMCPServer(serverName, config, filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id MANDATORY
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers${queryString ? `?${queryString}` : ''}`, {
       method: 'POST',
       body: JSON.stringify({
         server_name: serverName,
-        ...serverConfig
+        project_id: filters.project_id,
+        ...config
       })
     }, this.aiBaseURL);
   }
@@ -2000,43 +2048,63 @@ class APIClient {
   /**
    * Delete MCP server from AI backend
    * @param {string} serverName - Server name
+   * @param {object} filters - Filters with org_id (required) and project_id (optional)
    * @returns {Promise<object>} Delete result
    */
-  async deleteMCPServer(serverName) {
-    return this.request(`/api/mcp-servers/${encodeURIComponent(serverName)}`, {
+  async deleteMCPServer(serverName, filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id MANDATORY, project_id optional
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    const queryString = params.toString();
+    return this.request(`/api/mcp-servers/${serverName}${queryString ? `?${queryString}` : ''}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
   }
 
   /**
    * Get memory (CLAUDE.md) from AI backend
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Memory content
    */
-  async getMemory(scope = 'local') {
-    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {}, this.aiBaseURL);
+  async getMemory(projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
+    return this.request(`/api/memory?project_id=${encodeURIComponent(projectId)}`, {}, this.aiBaseURL);
   }
 
   /**
    * Save memory (CLAUDE.md) to AI backend
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
    * @param {string} content - Markdown content
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Save result
    */
-  async saveMemory(content, scope = 'local') {
+  async saveMemory(content, projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
     return this.request('/api/memory', {
       method: 'POST',
-      body: JSON.stringify({ content, scope })
+      body: JSON.stringify({ content, project_id: projectId })
     }, this.aiBaseURL);
   }
 
   /**
    * Delete memory (CLAUDE.md) from AI backend
-   * @param {string} scope - Memory scope ('local' or 'user')
+   * Memory is project-scoped: all users in the same project share one CLAUDE.md
+   * @param {string} projectId - Project UUID (required)
    * @returns {Promise<object>} Delete result
    */
-  async deleteMemory(scope = 'local') {
-    return this.request(`/api/memory?scope=${encodeURIComponent(scope)}`, {
+  async deleteMemory(projectId) {
+    if (!projectId) {
+      return { success: false, error: 'Missing project_id parameter' };
+    }
+    return this.request(`/api/memory?project_id=${encodeURIComponent(projectId)}`, {
       method: 'DELETE'
     }, this.aiBaseURL);
   }
@@ -2153,6 +2221,145 @@ class APIClient {
   }
 
   // ========================================
+  // AI Cost Tracking
+  // ========================================
+
+  /**
+   * Get cost logs with filtering and pagination (project-scoped)
+   * ReBAC: org_id and project_id are required (cost logs are project-scoped like credentials)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.model] - Filter by model
+   * @param {string} [filters.time_range] - Time range ('1h', '24h', '7d', '30d')
+   * @param {number} [filters.limit] - Max results (default 50, max 500)
+   * @param {number} [filters.offset] - Pagination offset
+   * @returns {Promise<object>} { success, logs, total, limit, offset }
+   */
+  async getCostLogs(filters = {}) {
+    const params = new URLSearchParams();
+
+    // ReBAC: org_id and project_id MANDATORY (project-scoped like credentials)
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+
+    // Filters
+    if (filters.model) params.append('model', filters.model);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    // Pagination
+    if (filters.limit) params.append('limit', filters.limit.toString());
+    if (filters.offset) params.append('offset', filters.offset.toString());
+
+    const queryString = params.toString();
+    return this.request(`/api/cost-logs${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get cost statistics (project-scoped)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.time_range] - Time range ('1h', '24h', '7d', '30d')
+   * @returns {Promise<object>} { success, stats, by_model, daily }
+   */
+  async getCostStats(filters = {}) {
+    const params = new URLSearchParams();
+
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    const queryString = params.toString();
+    return this.request(`/api/cost-logs/stats${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Export cost logs as CSV (project-scoped)
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} filters.project_id - Project ID (required - project-scoped)
+   * @param {string} [filters.model] - Filter by model
+   * @param {string} [filters.time_range] - Time range
+   * @returns {Promise<Blob>} CSV file blob
+   */
+  async exportCostLogs(filters = {}) {
+    const params = new URLSearchParams();
+
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.model) params.append('model', filters.model);
+    if (filters.time_range) params.append('time_range', filters.time_range);
+
+    const queryString = params.toString();
+    const url = `${this.aiBaseURL}/api/cost-logs/export${queryString ? `?${queryString}` : ''}`;
+
+    const response = await fetch(url, {
+      headers: {
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  // ===========================
+  // CREDENTIALS (Vault - AI Backend)
+  // ===========================
+
+  async getVaultStatus() {
+    return this.request('/api/credentials/status', {}, this.aiBaseURL);
+  }
+
+  async getCredentialTypes() {
+    return this.request('/api/credentials/types', {}, this.aiBaseURL);
+  }
+
+  /**
+   * Get user's role in project for credential authorization
+   * @param {string} projectId - Project ID
+   * @returns {Promise<{success: boolean, role: string|null}>}
+   */
+  async getCredentialRole(projectId) {
+    return this.request(`/api/credentials/role?project_id=${encodeURIComponent(projectId)}`, {}, this.aiBaseURL);
+  }
+
+  async listCredentials(type = null, projectId = null) {
+    const params = new URLSearchParams();
+    if (type) params.append('credential_type', type);
+    if (projectId) params.append('project_id', projectId);
+    const queryString = params.toString();
+    return this.request(`/api/credentials${queryString ? `?${queryString}` : ''}`, {}, this.aiBaseURL);
+  }
+
+  async storeCredential(credential) {
+    return this.request('/api/credentials', {
+      method: 'POST',
+      body: JSON.stringify(credential)
+    }, this.aiBaseURL);
+  }
+
+  async updateCredentialMetadata(type, name, updates) {
+    return this.request(`/api/credentials/${type}/${name}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    }, this.aiBaseURL);
+  }
+
+  async deleteCredential(type, name, projectId = null) {
+    const params = new URLSearchParams();
+    if (projectId) params.append('project_id', projectId);
+    const queryString = params.toString();
+    return this.request(`/api/credentials/${type}/${name}${queryString ? `?${queryString}` : ''}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  // ========================================
   // Conversation Sharing
   // ========================================
 
@@ -2199,6 +2406,186 @@ class APIClient {
   async revokeConversationShare(conversationId, shareId) {
     return this.request(`/conversations/${conversationId}/shares/${shareId}`, {
       method: 'DELETE'
+    });
+  }
+
+  // ===========================
+  // SKILL REPOSITORIES (Option 1B)
+  // ===========================
+
+  /**
+   * Add a skill repository (clone and discover skills)
+   * @param {object} repo - Repository config
+   * @param {string} repo.repository_url - GitHub URL
+   * @param {string} [repo.branch] - Branch name (default: main)
+   * @param {string} [repo.credential_name] - Credential for private repos
+   * @returns {Promise<{success: boolean, repository: object, skills_count: number}>}
+   */
+  async addSkillRepository(repo) {
+    return this.request('/api/skills/add-repository', {
+      method: 'POST',
+      body: JSON.stringify(repo)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * List all skill repositories for current user
+   * @returns {Promise<{success: boolean, repositories: Array}>}
+   */
+  async getSkillRepositories() {
+    return this.request('/api/skills/repositories', {}, this.aiBaseURL);
+  }
+
+  /**
+   * List installed skills
+   * @param {string} [repositoryName] - Optional filter by repository
+   * @returns {Promise<{success: boolean, skills: Array}>}
+   */
+  async getInstalledSkills(repositoryName = null) {
+    const params = repositoryName ? `?repository_name=${encodeURIComponent(repositoryName)}` : '';
+    return this.request(`/api/skills/installed${params}`, {}, this.aiBaseURL);
+  }
+
+  /**
+   * Install an individual skill
+   * @param {object} skill - Skill install config
+   * @param {string} skill.skill_name - Skill name
+   * @param {string} skill.repository_name - Repository name
+   * @param {string} skill.skill_path - Path to SKILL.md
+   * @param {string} [skill.version] - Skill version
+   * @returns {Promise<{success: boolean, skill: object}>}
+   */
+  async installSkill(skill) {
+    return this.request('/api/skills/install', {
+      method: 'POST',
+      body: JSON.stringify(skill)
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Uninstall a skill
+   * @param {string} skillId - Installed skill ID (UUID)
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async uninstallSkill(skillId) {
+    return this.request(`/api/skills/uninstall/${skillId}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Update skill repository (git fetch)
+   * @param {string} repositoryName - Repository name
+   * @returns {Promise<{success: boolean, had_changes: boolean}>}
+   */
+  async updateSkillRepository(repositoryName) {
+    return this.request('/api/skills/update', {
+      method: 'POST',
+      body: JSON.stringify({ repository_name: repositoryName })
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Delete skill repository and all installed skills
+   * @param {string} repositoryName - Repository name
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async deleteSkillRepository(repositoryName) {
+    return this.request(`/api/skills/repositories/${encodeURIComponent(repositoryName)}`, {
+      method: 'DELETE'
+    }, this.aiBaseURL);
+  }
+
+  /**
+   * Install single skill directly from GitHub URL (sparse checkout)
+   * @param {object} options - Install options
+   * @param {string} options.skill_url - GitHub URL to skill folder
+   * @param {string} [options.credential_name] - Credential for private repos
+   * @returns {Promise<{success: boolean, skill: object}>}
+   */
+  async installSkillFromUrl(options) {
+    return this.request('/api/skills/install-from-url', {
+      method: 'POST',
+      body: JSON.stringify(options)
+    }, this.aiBaseURL);
+  }
+
+  // ========================================
+  // Agent Policy Engine
+  // ========================================
+
+  /**
+   * List agent policies for an org (with optional project scoping).
+   * Computed Scope: returns org-wide policies + project-specific policies.
+   * @param {object} filters - Query filters
+   * @param {string} filters.org_id - Organization ID (required)
+   * @param {string} [filters.project_id] - Project ID (optional)
+   * @param {boolean} [filters.active_only] - Return only active policies
+   * @returns {Promise<{policies: object[], total: number}>}
+   */
+  async getPolicies(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.org_id) params.append('org_id', filters.org_id);
+    if (filters.project_id) params.append('project_id', filters.project_id);
+    if (filters.active_only !== undefined) params.append('active_only', String(filters.active_only));
+    const qs = params.toString();
+    return this.request(`/policies${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * Get a single policy by ID.
+   * @param {string} id - Policy ID
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<object>} Policy
+   */
+  async getPolicy(id, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`);
+  }
+
+  /**
+   * Create a new agent policy (admin/owner only).
+   * @param {object} data - Policy data
+   * @param {string} data.org_id - Organization ID (required)
+   * @param {string} [data.project_id] - Project ID (null = org-wide)
+   * @param {string} data.name - Policy name (unique per org)
+   * @param {string} [data.description] - Description
+   * @param {string} data.effect - "allow" | "deny"
+   * @param {string} data.principal_type - "role" | "user" | "*"
+   * @param {string} [data.principal_value] - Role name or user_id (null for "*")
+   * @param {string} data.tool_pattern - fnmatch glob (e.g. "mcp__bash__*")
+   * @param {number} [data.priority] - Priority (higher wins, default 0)
+   * @returns {Promise<object>} Created policy
+   */
+  async createPolicy(data) {
+    return this.request('/policies', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Update an existing policy (admin/owner only).
+   * @param {string} id - Policy ID
+   * @param {object} data - Fields to update (all optional)
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<object>} Updated policy
+   */
+  async updatePolicy(id, data, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Delete a policy (admin/owner only).
+   * @param {string} id - Policy ID
+   * @param {string} orgId - Organization ID (required for tenant isolation)
+   * @returns {Promise<{message: string}>}
+   */
+  async deletePolicy(id, orgId) {
+    return this.request(`/policies/${id}?org_id=${encodeURIComponent(orgId)}`, {
+      method: 'DELETE',
     });
   }
 }

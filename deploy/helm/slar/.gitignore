@@ -1,1 +1,14 @@
+# Environment files with secrets
 .env.*
+
+# Local config files with real credentials
+# Use config.dev.yaml as template, copy to config.local.yaml
+config.local.yaml
+config.prod.yaml
+config.staging.yaml
+
+# Values overrides with secrets
+values.local.yaml
+values.prod.yaml
+values.staging.yaml
+secrets.yaml

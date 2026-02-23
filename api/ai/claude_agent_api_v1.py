@@ -6,6 +6,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx  # For Control Plane registration
+
 # Load config from YAML (unifies config with Go API)
 import config_loader
 config_loader.load_config()
@@ -15,6 +17,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict
+from config import config
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -34,7 +37,8 @@ from claude_agent_sdk import (
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id
+from incident_tools import create_incident_tools_server, set_auth_token, set_org_id, set_project_id as set_incident_project_id
+from memory_tools import create_memory_tools_server, set_user_id, set_project_id as set_memory_project_id
 from zero_trust_verifier import get_verifier, init_verifier
 from audit_service import (
     get_audit_service,
@@ -43,16 +47,20 @@ from audit_service import (
     EventType,
     EventStatus,
 )
+from cost_tracking_service import (
+    get_cost_service,
+    init_cost_tracking_service,
+    shutdown_cost_tracking_service,
+)
 from audit_hooks import build_hooks_config
-from supabase_storage import (
+from authz.dependencies import init_authz_client, get_authz_client
+from workspace_service import (
     extract_user_id_from_token,
     get_user_mcp_servers,
     get_user_workspace_path,
     load_user_plugins,
-    sync_mcp_config_to_local,
     sync_memory_to_workspace,
     sync_user_skills,
-    unzip_installed_plugins,
     get_user_allowed_tools,
     add_user_allowed_tool,
     delete_user_allowed_tool,
@@ -60,7 +68,8 @@ from supabase_storage import (
 
 # Import database routes (split for better organization)
 from routes_db import router as db_router
-from database_util import execute_query
+from database_util import execute_query, resolve_user_id_from_token
+import vault_client
 
 # Import conversation routes and helper functions
 from routes_conversations import (
@@ -79,6 +88,8 @@ from routes_mcp import router as mcp_router
 from routes_tools import router as tools_router
 from routes_memory import router as memory_router
 from routes_marketplace import router as marketplace_router
+from routes_skills import router as skills_router
+from routes_skills_direct import router as skills_direct_router
 from incident_analytics import start_pgmq_consumer, stop_pgmq_consumer
 
 # Configure logging
@@ -121,6 +132,129 @@ def sanitize_error_message(error: Exception, context: str = "") -> str:
 
 
 # ==========================================
+# Credential Export to Agent Env
+# ==========================================
+
+async def load_exported_credentials(user_id: str, project_id: str = None) -> Dict[str, str]:
+    """
+    Load all credentials marked as export_to_agent=True from Vault.
+
+    Tries project-scoped credentials first (if project_id provided),
+    then falls back to user-scoped credentials for backward compatibility.
+
+    Uses env_mappings to map credential JSON keys to env var names.
+    Supports both single-value and multi-key credentials:
+
+    Single-value: data={"value": "dd-api-xxx"}
+      env_mappings={"DATADOG_API_KEY": "value"}
+      -> {"DATADOG_API_KEY": "dd-api-xxx"}
+
+    Multi-key: data={"username": "admin", "password": "secret"}
+      env_mappings={"OS_USER": "username", "OS_PASS": "password"}
+      -> {"OS_USER": "admin", "OS_PASS": "secret"}
+
+    Args:
+        user_id: User ID for Vault path scoping (fallback)
+        project_id: Project ID for project-scoped credentials (preferred)
+
+    Returns:
+        Dict mapping env var names to resolved values
+    """
+    vault = vault_client.get_vault_client()
+    if not vault.is_available():
+        logger.debug("Vault not available, skipping credential export")
+        return {}
+
+    try:
+        exported_env: Dict[str, str] = {}
+
+        # Try project-scoped credentials first
+        if project_id:
+            # SECURITY: Verify user has access to project before loading credentials
+            authz = get_authz_client()
+            role = await authz.get_project_role(user_id, project_id)
+            if not role:
+                logger.warning(
+                    f"🔒 Authorization failed: User {user_id} has no access to project {project_id}. "
+                    "Skipping project credentials."
+                )
+                # Don't load project credentials if user has no access
+                # Continue to load user-scoped credentials only
+            else:
+                logger.info(f"✅ Authorization passed: User {user_id} has role {role} in project {project_id}")
+                credentials = vault_client.list_project_credentials(project_id)
+                for cred in credentials:
+                    cred_type = cred.get("type", "")
+                    cred_name = cred.get("name", "")
+
+                    cred_detail = vault_client.get_project_credential(
+                        project_id=project_id,
+                        credential_type=cred_type,
+                        credential_name=cred_name
+                    )
+                    if not cred_detail:
+                        continue
+
+                    _resolve_credential_env(cred_detail, cred_name, exported_env)
+
+        # Fall back to user-scoped credentials (backward compat)
+        user_credentials = vault_client.list_credentials(user_id)
+        for cred in user_credentials:
+            cred_type = cred.get("type", "")
+            cred_name = cred.get("name", "")
+
+            cred_detail = vault_client.get_credential(
+                user_id=user_id,
+                credential_type=cred_type,
+                credential_name=cred_name
+            )
+            if not cred_detail:
+                continue
+
+            _resolve_credential_env(cred_detail, cred_name, exported_env)
+
+        if exported_env:
+            logger.info(
+                f"Exported {len(exported_env)} env vars from credentials: "
+                f"{list(exported_env.keys())}"
+            )
+
+        return exported_env
+
+    except Exception as e:
+        logger.error(f"Failed to load exported credentials: {e}", exc_info=True)
+        return {}
+
+
+def _resolve_credential_env(cred_detail: dict, cred_name: str, exported_env: Dict[str, str]):
+    """Resolve env mappings from a credential detail into exported_env dict."""
+    metadata = cred_detail.get("metadata", {})
+    if not metadata.get("export_to_agent"):
+        return
+
+    env_mappings = metadata.get("env_mappings", {})
+    data = cred_detail.get("data", {})
+
+    if not env_mappings:
+        logger.warning(
+            f"Credential {cred_name} marked for export but no env_mappings set, skipping"
+        )
+        return
+
+    for env_var, json_key in env_mappings.items():
+        # Don't overwrite project-scoped vars with user-scoped ones
+        if env_var in exported_env:
+            continue
+        if json_key in data:
+            exported_env[env_var] = str(data[json_key])
+        else:
+            logger.warning(
+                f"Credential {cred_name}: key '{json_key}' not found in data "
+                f"(available: {list(data.keys())}), skipping {env_var}"
+            )
+
+
+# ==========================================
 # Rate Limiting
 # ==========================================
 
@@ -129,7 +263,7 @@ rate_limit_storage = defaultdict(list)
 rate_limit_lock = Lock()
 
 # Get rate limit from environment (default: 60 requests per minute)
-RATE_LIMIT_REQUESTS = int(os.getenv("AI_RATE_LIMIT", "60"))
+RATE_LIMIT_REQUESTS = int(os.getenv("AI_RATE_LIMIT", "300"))
 RATE_LIMIT_WINDOW = 60  # seconds
 
 
@@ -214,18 +348,166 @@ async def rate_limit_middleware(request: Request, call_next):
 cleanup_worker_task = None
 
 
+# ============================================================
+# Control Plane Registration Functions
+# ============================================================
+
+async def register_with_control_plane():
+    """
+    Register this agent with Control Plane on startup.
+    Agent initiates connection (outbound only) to register itself.
+
+    Registration modes:
+    - If AI_PROJECT_ID is set: Registers as project-specific (dedicated) agent
+    - If AI_PROJECT_ID is empty: Registers as org-level (default) agent
+    """
+    if not AI_ORG_ID:
+        logger.warning(
+            "⚠️  AI_ORG_ID not set - skipping CP registration. "
+            "This agent will not be discoverable by Control Plane."
+        )
+        return
+
+    # Determine scope
+    if AI_PROJECT_ID:
+        scope = f"project-specific (Project: {AI_PROJECT_ID})"
+    else:
+        scope = f"org-level default (Org: {AI_ORG_ID})"
+
+    payload = {
+        "project_id": AI_PROJECT_ID if AI_PROJECT_ID else "",  # Empty for org-level
+        "org_id": AI_ORG_ID,
+        "host": AI_HOST,
+        "port": AI_PORT,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{CONTROL_PLANE_URL}/internal/agents/register",
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(
+                f"✅ Registered with Control Plane: {result.get('message')} "
+                f"(Scope: {scope}, Org: {AI_ORG_ID})"
+            )
+    except Exception as e:
+        logger.error(f"❌ Failed to register with Control Plane: {e}")
+        raise  # Fail startup if can't register
+
+
+async def send_heartbeat():
+    """
+    Send heartbeat to Control Plane every 30 seconds.
+    This maintains the agent's "healthy" status.
+
+    Sends project_id if available (project-specific agent),
+    otherwise sends org_id (org-level agent).
+    """
+    if not AI_ORG_ID:
+        return
+
+    while True:
+        try:
+            await asyncio.sleep(30)
+
+            # Build payload based on scope
+            payload = {
+                "org_id": AI_ORG_ID,
+            }
+            if AI_PROJECT_ID:
+                payload["project_id"] = AI_PROJECT_ID
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{CONTROL_PLANE_URL}/internal/agents/heartbeat",
+                    json=payload,
+                    timeout=5.0,
+                )
+                response.raise_for_status()
+                logger.debug("💓 Heartbeat sent to Control Plane")
+        except asyncio.CancelledError:
+            logger.info("🛑 Heartbeat task cancelled")
+            break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                # CP restarted and lost registry - re-register
+                logger.warning("⚠️  Agent not registered in CP (404), attempting re-registration...")
+                try:
+                    await register_with_control_plane()
+                    logger.info("✅ Re-registered with Control Plane after restart")
+                except Exception as re_err:
+                    logger.error(f"❌ Re-registration failed: {re_err}")
+            else:
+                logger.warning(f"⚠️  Heartbeat failed: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️  Heartbeat failed: {e}")
+
+
+async def unregister_from_control_plane():
+    """
+    Unregister from Control Plane on graceful shutdown.
+    """
+    if not AI_ORG_ID:
+        return
+
+    try:
+        # Build payload based on scope
+        payload = {
+            "org_id": AI_ORG_ID,
+        }
+        if AI_PROJECT_ID:
+            payload["project_id"] = AI_PROJECT_ID
+
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{CONTROL_PLANE_URL}/internal/agents/unregister",
+                json=payload,
+                timeout=5.0,
+            )
+            logger.info("👋 Unregistered from Control Plane")
+    except Exception as e:
+        logger.warning(f"⚠️  Unregister failed (non-critical): {e}")
+
+
+# ============================================================
+# FastAPI Lifespan Management
+# ============================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI.
     Handles startup and shutdown events.
     """
+    global cp_heartbeat_task
+
     # Startup
     logger.info("🚀 Starting application...")
+
+    # Initialize AuthzClient (delegates all auth checks to Go API)
+    go_api_url = os.getenv("API_BASE_URL", "http://localhost:8080")
+    init_authz_client(go_api_url)
+    logger.info(f"AuthzClient initialized -> {go_api_url}")
 
     # Initialize audit service
     await init_audit_service()
     logger.info("📝 Audit service initialized")
+
+    # Initialize cost tracking service
+    await init_cost_tracking_service()
+    logger.info("💰 Cost tracking service initialized")
+
+    # Register with Control Plane (agent self-registration)
+    await register_with_control_plane()
+
+    # Start CP heartbeat task (if registered)
+    if AI_ORG_ID:
+        cp_heartbeat_task = asyncio.create_task(send_heartbeat())
+        logger.info("💓 CP Heartbeat task started (30s interval)")
 
     # Start PGMQ consumer for incident analytics
     await start_pgmq_consumer()
@@ -235,6 +517,28 @@ async def lifespan(app: FastAPI):
     # - heartbeat_task is per-connection (called in websocket endpoint)
     # - marketplace cleanup is now synchronous (no worker needed)
 
+    # Start Slack Worker
+    import threading
+    from workers.slack_worker import SlackWorker
+    
+    slack_stop_event = threading.Event()
+    slack_worker_thread = None
+    
+    try:
+        slack_worker = SlackWorker()
+        if slack_worker.enabled:
+            logger.info("🔌 Starting Slack Worker thread...")
+            # Pass stop_event to run method
+            slack_worker_thread = threading.Thread(
+                target=slack_worker.run, 
+                args=(slack_stop_event,),
+                daemon=True
+            )
+            slack_worker_thread.start()
+            logger.info("✅ Slack Worker thread started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Slack Worker: {e}")
+
     logger.info("✅ Application started")
 
     yield
@@ -242,13 +546,45 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Stopping application...")
 
+    # Stop CP heartbeat task
+    if cp_heartbeat_task:
+        logger.info("🛑 Stopping CP heartbeat task...")
+        cp_heartbeat_task.cancel()
+        try:
+            await cp_heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✅ CP Heartbeat task stopped")
+
+    # Unregister from Control Plane
+    await unregister_from_control_plane()
+
+    # Stop Slack Worker
+    if slack_worker_thread and slack_worker_thread.is_alive():
+        logger.info("🛑 Stopping Slack Worker...")
+        slack_stop_event.set()
+        slack_worker_thread.join(timeout=5.0)
+        logger.info("✅ Slack Worker stopped")
+
     # Stop PGMQ consumer
     await stop_pgmq_consumer()
     logger.info("🤖 Incident analytics PGMQ consumer stopped")
 
+    # Close AuthzClient HTTP connections
+    try:
+        authz_client = get_authz_client()
+        await authz_client.close()
+        logger.info("AuthzClient closed")
+    except RuntimeError:
+        pass  # Not initialized
+
     # Shutdown audit service (flush remaining events)
     await shutdown_audit_service()
     logger.info("📝 Audit service stopped")
+
+    # Shutdown cost tracking service (flush remaining events)
+    await shutdown_cost_tracking_service()
+    logger.info("💰 Cost tracking service stopped")
 
     logger.info("✅ Application stopped")
 
@@ -260,13 +596,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Control Plane registration configuration
+CONTROL_PLANE_URL = os.getenv("CONTROL_PLANE_URL", "http://localhost:8080")
+AI_PROJECT_ID = os.getenv("AI_PROJECT_ID")  # REQUIRED for CP registration
+AI_ORG_ID = os.getenv("AI_ORG_ID")  # REQUIRED for CP registration
+AI_HOST = os.getenv("AI_HOST", "localhost")  # Agent host (use "ai" in Docker)
+AI_PORT = os.getenv("AI_PORT", "8002")  # Agent port
+
+# Global CP heartbeat task reference (renamed to avoid conflict with heartbeat_task function)
+cp_heartbeat_task = None
+
 # CORS middleware - Configure allowed origins from environment
 # For development: use specific localhost domains
 # For production: MUST use specific domains only (never use "*")
 # SECURITY: Using "*" with allow_credentials=True is a security vulnerability
 ALLOWED_ORIGINS = os.getenv(
     "AI_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:8000"
+    "http://localhost:3000,http://localhost:8000,http://localhost:3001"
 ).split(",")
 
 # Strip whitespace from origins
@@ -278,7 +624,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -313,6 +659,25 @@ logger.info("[Memory] Memory routes loaded from routes_memory.py")
 
 app.include_router(marketplace_router)
 logger.info("[Marketplace] Marketplace routes loaded from routes_marketplace.py")
+
+app.include_router(skills_router)
+logger.info("[Skills] Skill repository routes loaded from routes_skills.py")
+
+app.include_router(skills_direct_router)
+logger.info("[Skills Direct] Direct skill installation routes loaded from routes_skills_direct.py")
+
+# Import and include Credential routes
+from routes_credentials import router as credentials_router
+app.include_router(credentials_router)
+logger.info("[Credentials] Credential routes loaded from routes_credentials.py")
+
+# Import and include Cost Tracking routes
+from routes_cost import router as cost_router
+app.include_router(cost_router)
+logger.info("[Cost] Cost tracking routes loaded from routes_cost.py")
+
+# Import policy engine
+from policy_evaluator import PolicyEvaluator
 
 # In-memory cache for user MCP configs
 # Simple dict cache - cleared on restart
@@ -392,6 +757,13 @@ async def message_router(
                     "[!] Routing permission response to permission_response_queue"
                 )
                 await permission_response_queue.put(data)
+            elif msg_type == "fetch_capabilities":
+                # Special request to fetch available commands (sends "/" to SDK)
+                # This is a silent request - won't show in chat, just returns capabilities
+                logger.info("[!] Routing fetch_capabilities to agent_queue")
+                data["prompt"] = "/"  # SDK returns commands list for "/"
+                data["silent"] = True  # Mark as silent - don't save to conversation
+                await agent_queue.put(data)
             else:
                 logger.info("[!] Routing agent message to agent_queue")
                 await agent_queue.put(data)
@@ -501,6 +873,7 @@ async def agent_task_streaming(
     hooks_config: Dict[str, Any] = None,
     initial_user_id: str = None,  # User ID from WebSocket auth (for early init)
     initial_auth_token: str = None,  # Auth token from WebSocket
+    policy_evaluator=None,  # PolicyEvaluator for filtering allowed_tools bypass list
 ):
     """
     TRUE Streaming Mode - Uses AsyncGenerator with ONE long-lived ClaudeSDKClient.
@@ -595,32 +968,38 @@ async def agent_task_streaming(
 
                 if data.get("project_id"):
                     context["project_id"] = data["project_id"]
-                    set_project_id(context["project_id"])
+                    set_incident_project_id(context["project_id"])
+                    set_memory_project_id(context["project_id"])
 
                 if data.get("user_id"):
                     context["user_id"] = data["user_id"]
+                    set_user_id(context["user_id"])
 
                 if not context["user_id"] and context["auth_token"]:
                     context["user_id"] = extract_user_id_from_token(context["auth_token"]) or ""
+                    if context["user_id"]:
+                        set_user_id(context["user_id"])
 
                 prompt = data.get("prompt", "")
+                is_silent = data.get("silent", False)  # Silent mode for fetch_capabilities
+
                 if not prompt:
                     logger.warning("⚠️ Empty prompt received, skipping")
                     continue
 
-                # Store first prompt (for new conversation)
-                if not context["first_prompt"] and not context["is_resuming"]:
+                # Store first prompt (for new conversation) - skip for silent requests
+                if not context["first_prompt"] and not context["is_resuming"] and not is_silent:
                     context["first_prompt"] = prompt
 
                 # Reset per-message state
                 assistant_text_buffer = []
-                user_message_saved = False
+                user_message_saved = is_silent  # Skip saving user message for silent requests
                 current_prompt = prompt
 
-                logger.info(f"📤 Yielding message to SDK: {prompt[:50]}...")
+                logger.info(f"📤 Yielding message to SDK: {prompt[:50]}... (silent={is_silent})")
 
-                # Audit log
-                if context["user_id"]:
+                # Audit log - skip for silent requests
+                if context["user_id"] and not is_silent:
                     audit = get_audit_service()
                     await audit.log_chat_message(
                         user_id=context["user_id"],
@@ -628,7 +1007,7 @@ async def agent_task_streaming(
                         conversation_id=context["conversation_id"],
                         message_preview=prompt,
                         org_id=context["org_id"],
-                        project_id=context["project_id"]
+                        project_id=context["project_id"],
                     )
 
                 # Yield message in SDK streaming input format
@@ -666,6 +1045,7 @@ async def agent_task_streaming(
         nonlocal session_initialized, assistant_text_buffer, user_message_saved
 
         was_interrupted = False  # Track if we broke due to interrupt
+        step_counter = 0  # Track conversation steps for cost logging
 
         while True:  # Keep running even after interrupts
             try:
@@ -706,9 +1086,18 @@ async def agent_task_streaming(
                         if isinstance(message, ResultMessage):
                             logger.info("📭 Interrupted turn ResultMessage received, marking for wait")
                             was_interrupted = True
+                            # Note: Cost is already tracked from AssistantMessage, not ResultMessage
                         continue  # Skip processing, keep draining
 
-                    logger.info(f"📨 Received: {type(message).__name__}")
+                    # Log loaded plugins from init message
+                    if isinstance(message, SystemMessage) and isinstance(message.data, dict):
+                        if message.data.get("subtype") == "init":
+                            loaded_plugins = message.data.get("plugins")
+                            slash_commands = message.data.get("slash_commands")
+                            logger.info(f"🔌 Loaded plugins: {loaded_plugins}")
+                            logger.info(f"📜 Available commands: {slash_commands}")
+
+                    logger.info(f"📨 Received: {message}")
 
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
@@ -741,6 +1130,8 @@ async def agent_task_streaming(
                                         })
                                     except Exception as e:
                                         logger.error(f"❌ TodoWrite error: {e}")
+
+                        # Note: Python SDK only has usage in ResultMessage, not AssistantMessage
 
                     elif isinstance(message, UserMessage):
                         for block in message.content:
@@ -795,11 +1186,51 @@ async def agent_task_streaming(
                                         "conversation_id": claude_session_id
                                     })
 
+                                # Send available commands/plugins to frontend (for autocomplete)
+                                slash_commands = message.data.get("slash_commands", [])
+                                plugins = message.data.get("plugins", [])
+                                skills = message.data.get("skills", [])
+                                agents = message.data.get("agents", [])
+
+                                if slash_commands or plugins or skills or agents:
+                                    await output_queue.put({
+                                        "type": "capabilities",
+                                        "slash_commands": slash_commands,
+                                        "plugins": plugins,
+                                        "skills": skills,
+                                        "agents": agents
+                                    })
+                                    logger.info(f"📤 Sent capabilities: {len(slash_commands)} commands, {len(plugins)} plugins")
+
                     elif isinstance(message, ResultMessage):
                         await output_queue.put({
                             "type": message.subtype,
                             "result": message.result
                         })
+
+                        # Track cost from ResultMessage (Python SDK only has usage here, not on AssistantMessage)
+                        if context.get("user_id") and message.usage and message.total_cost_usd > 0:
+                            step_counter += 1
+                            try:
+                                cost_service = get_cost_service()
+
+                                # Use session_id as message_id since Python SDK doesn't provide message.id
+                                message_id = f"{message.session_id}_{step_counter}"
+
+                                await cost_service.log_cost_from_assistant_message(
+                                    message=message,  # Pass ResultMessage (has usage)
+                                    user_id=context["user_id"],
+                                    model=context.get("model", "haiku"),
+                                    org_id=context.get("org_id"),
+                                    project_id=context.get("project_id"),
+                                    session_id=context.get("session_id"),
+                                    conversation_id=context.get("conversation_id"),
+                                    request_type="chat",
+                                    step_number=step_counter
+                                )
+                                logger.info(f"💰 Step {step_counter}: Logged cost ${message.total_cost_usd:.6f}")
+                            except Exception as e:
+                                logger.error(f"Failed to log cost: {e}", exc_info=True)
 
                         # Save assistant message when result received
                         if context["conversation_id"] and assistant_text_buffer:
@@ -900,7 +1331,12 @@ async def agent_task_streaming(
         if context["org_id"]:
             set_org_id(context["org_id"])
         if context["project_id"]:
-            set_project_id(context["project_id"])
+            set_incident_project_id(context["project_id"])
+            set_memory_project_id(context["project_id"])
+        
+        # Set user_id for memory tools tracking
+        if context["user_id"]:
+            set_user_id(context["user_id"])
 
         # Get user workspace
         if context["user_id"]:
@@ -910,7 +1346,11 @@ async def agent_task_streaming(
 
         # Load MCP servers
         incident_tools_server = create_incident_tools_server()
-        mcp_servers = {"incident_tools": incident_tools_server}
+        memory_tools_server = create_memory_tools_server()
+        mcp_servers = {
+            "incident_tools": incident_tools_server,
+            "memory_tools": memory_tools_server,
+        }
 
         user_mcp_servers = await get_user_mcp_servers(
             auth_token=context["auth_token"],
@@ -923,20 +1363,35 @@ async def agent_task_streaming(
         user_plugins = []
         if context["user_id"]:
             user_plugins = load_user_plugins(context["user_id"])
-            if user_plugins:
-                logger.info(f"📦 Loaded {len(user_plugins)} plugins")
+            logger.info(f"📦 Loaded {len(user_plugins)} plugins: {user_plugins}")
 
         # Load allowed tools
         allowed_tools = [
             "mcp__incident_tools__get_incidents_by_time",
             "mcp__incident_tools__get_incidents_by_id",
             "mcp__incident_tools__get_current_time",
-            "mcp__incident_tools__get_incident_stats"
+            "mcp__incident_tools__get_incident_stats",
+            "mcp__memory_tools__update_memory",
+            "Skill"
         ]
         if context["user_id"]:
             user_allowed = await get_user_allowed_tools(context["user_id"])
             if user_allowed:
                 allowed_tools.extend(user_allowed)
+
+        # POLICY ENGINE: Filter allowed_tools — tools in this list bypass permission_callback entirely.
+        # Remove tools covered by a DENY policy so the callback is still invoked for them.
+        if policy_evaluator:
+            try:
+                filtered_allowed = []
+                for tool in allowed_tools:
+                    if await policy_evaluator.is_denied(tool):
+                        logger.info(f"🚫 Policy: removing '{tool}' from allowed_tools bypass list (DENY policy)")
+                    else:
+                        filtered_allowed.append(tool)
+                allowed_tools = filtered_allowed
+            except Exception as _fe:
+                logger.warning(f"Policy allowed_tools filter failed: {_fe} — using unfiltered list")
 
         # Build hooks config
         actual_hooks_config = build_hooks_config(
@@ -961,18 +1416,29 @@ async def agent_task_streaming(
         # Create SDK options - use resume if continuing conversation
         resume_id = context["conversation_id"] if context["conversation_id"] else None
 
+        # Load exported credentials from Vault into env
+        agent_env = {}
+        if context["user_id"]:
+            agent_env = await load_exported_credentials(context["user_id"], project_id=context.get("project_id"))
+        
+        system_prompt = config.ai_agent_system_prompt
+
         options = ClaudeAgentOptions(
             can_use_tool=permission_callback,
             permission_mode="default",
             cwd=context["workspace"],
-            model="sonnet",
+            model="haiku",
             resume=resume_id,
             mcp_servers=mcp_servers,
             plugins=user_plugins,
-            setting_sources=["project", "user"],
+            setting_sources=["project"],
             allowed_tools=allowed_tools,
             hooks=actual_hooks_config,
+            env=agent_env,
+            system_prompt=system_prompt,
         )
+
+        print(f"🚀 Agent options: {options}")
 
         # Create message generator that includes first message
         async def full_message_generator():
@@ -1085,6 +1551,7 @@ async def agent_task(
     current_org_id = None  # Organization ID for metadata
     current_project_id = None  # Project ID for metadata
     is_resuming = False  # Flag to track if we're resuming an existing conversation
+    alt_step_counter = 0  # Track steps for cost logging
 
     try:
         while True:
@@ -1170,7 +1637,7 @@ async def agent_task(
                     conversation_id=conversation_id or current_conversation_id,
                     message_preview=prompt,
                     org_id=org_id or current_org_id,
-                    project_id=project_id or current_project_id
+                    project_id=project_id or current_project_id,
                 )
 
             # Note: Bucket sync is now handled by frontend via /api/sync-bucket
@@ -1188,11 +1655,16 @@ async def agent_task(
             # Set project_id for ReBAC project filtering (OPTIONAL)
             project_id = data.get("project_id", "")
             if project_id:
-                set_project_id(project_id)
+                set_incident_project_id(project_id)
+                set_memory_project_id(project_id)
                 logger.info(f"📁 Project ID set: {project_id}")
 
             # Use the current user_id (from Zero-Trust or JWT)
             user_id = current_user_id
+            
+            # Set user_id for memory tools
+            if user_id:
+                set_user_id(user_id)
 
             # Get user workspace directory (isolated per user)
             if user_id:
@@ -1205,8 +1677,12 @@ async def agent_task(
 
             # Create MCP server with all incident tools
             incident_tools_server = create_incident_tools_server()
+            memory_tools_server = create_memory_tools_server()
 
-            mcp_servers = {"incident_tools": incident_tools_server}
+            mcp_servers = {
+                "incident_tools": incident_tools_server,
+                "memory_tools": memory_tools_server,
+            }
 
             # Get user MCP servers
             # Secure flow: user_id from Zero-Trust session (no auth_token needed)
@@ -1234,8 +1710,10 @@ async def agent_task(
             allowed_tools = [
                 "mcp__incident_tools__get_incidents_by_time",
                 "mcp__incident_tools__get_incidents_by_id",
+                "mcp__incident_tools__get_incidents_by_id",
                 "mcp__incident_tools__get_current_time",
-                "mcp__incident_tools__get_incident_stats"
+                "mcp__incident_tools__get_incident_stats",
+                "mcp__memory_tools__update_memory"
             ]
             if user_id:
                 user_allowed = await get_user_allowed_tools(user_id)
@@ -1264,17 +1742,26 @@ async def agent_task(
                 project_id=current_project_id,
             ) if current_user_id else hooks_config
 
+            # Load exported credentials from Vault into env
+            agent_env = {}
+            if user_id:
+                agent_env = await load_exported_credentials(user_id, project_id=current_project_id)
+            
+            system_prompt = config.ai_agent_system_prompt
+
             options = ClaudeAgentOptions(
                 can_use_tool=permission_callback,
                 permission_mode="default",
                 cwd=user_workspace,
-                model="sonnet",
+                model="haiku",
                 resume=resume_id,  # Use conversation_id, not session_id!
                 mcp_servers=mcp_servers,
                 plugins=user_plugins,
-                setting_sources=["project","user"],
+                setting_sources=["project"],
                 allowed_tools=allowed_tools,
                 hooks=actual_hooks_config,  # Audit hooks with org_id/project_id
+                env=agent_env,
+                system_prompt=system_prompt,
             )
             async with ClaudeSDKClient(options) as client:
                 logger.info("\n📝 Sending query to Claude...")
@@ -1335,10 +1822,8 @@ async def agent_task(
                             logger.info("🛑 Receive loop - interrupted, waiting for SDK to finish")
                             continue  # Let SDK complete naturally after interrupt
 
-                        logger.info(f"Message: {message}")
 
                         # Process message normally
-                        logger.debug(f"Received message: {message}")
                         if isinstance(message, AssistantMessage):
                             for block in message.content:
                                 if isinstance(block, ThinkingBlock):
@@ -1376,6 +1861,8 @@ async def agent_task(
                                             })
                                         except Exception as e:
                                             logger.error(f"❌ Error processing TodoWrite: {e}", exc_info=True)
+
+                            # Note: Python SDK only has usage in ResultMessage, not AssistantMessage
 
                         # Handle UserMessage (tool results from SDK)
                         # Send to frontend so users can see what agent is executing
@@ -1446,10 +1933,50 @@ async def agent_task(
                                         "conversation_id": claude_session_id,  # Claude conversation (NEW!)
                                     })
 
+                                # Send available commands/plugins to frontend (for autocomplete)
+                                slash_commands = message.data.get("slash_commands", [])
+                                plugins = message.data.get("plugins", [])
+                                skills = message.data.get("skills", [])
+                                agents = message.data.get("agents", [])
+
+                                if slash_commands or plugins or skills or agents:
+                                    await output_queue.put({
+                                        "type": "capabilities",
+                                        "slash_commands": slash_commands,
+                                        "plugins": plugins,
+                                        "skills": skills,
+                                        "agents": agents
+                                    })
+                                    logger.info(f"📤 Sent capabilities: {len(slash_commands)} commands, {len(plugins)} plugins")
+
                         if isinstance(message, ResultMessage):
                             await output_queue.put(
                                 {"type": message.subtype, "result": message.result}
                             )
+
+                            # Track cost from ResultMessage (Python SDK only has usage here)
+                            if current_user_id and message.usage and message.total_cost_usd > 0:
+                                alt_step_counter += 1
+                                try:
+                                    cost_service = get_cost_service()
+
+                                    # Use session_id as message_id
+                                    message_id = f"{message.session_id}_{alt_step_counter}"
+
+                                    await cost_service.log_cost_from_assistant_message(
+                                        message=message,
+                                        user_id=current_user_id,
+                                        model=options.model if options else "haiku",
+                                        org_id=current_org_id,
+                                        project_id=current_project_id,
+                                        session_id=session_id,
+                                        conversation_id=current_conversation_id,
+                                        request_type="chat",
+                                        step_number=alt_step_counter
+                                    )
+                                    logger.info(f"💰 Step {alt_step_counter}: Logged cost ${message.total_cost_usd:.6f}")
+                                except Exception as e:
+                                    logger.error(f"Failed to log cost: {e}", exc_info=True)
 
                             # Save assistant message to DB when response is complete
                             if current_conversation_id and assistant_text_buffer:
@@ -1609,9 +2136,14 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
     """
     Verify WebSocket authentication before accepting connection.
 
+    Also ensures user exists in database (syncs from OIDC on first login).
+
     Returns:
         tuple: (is_valid, user_id or error_message)
     """
+    from workspace_service import get_user_info_from_token
+    from database_util import ensure_user_exists
+
     # Get token from query parameters
     token = websocket.query_params.get("token")
 
@@ -1620,13 +2152,31 @@ async def verify_websocket_auth(websocket: WebSocket) -> tuple[bool, str]:
         return False, "Missing authentication token"
 
     try:
-        # Verify JWT token
-        user_id = extract_user_id_from_token(token)
-        if not user_id:
+        # Get full user info (includes id, email, name)
+        logger.info(f"🔍 Verifying token...")
+        user_info = get_user_info_from_token(token)
+        logger.info(f"🔍 User info from token: {user_info}")
+
+        if not user_info or not user_info.get("id"):
             logger.warning("⚠️  WebSocket connection attempt with invalid token")
             return False, "Invalid authentication token"
 
-        logger.info(f"✅ WebSocket authenticated for user: {user_id}")
+        provider_id = user_info["id"]
+        email = user_info.get("email")
+        name = user_info.get("name")
+
+        # Ensure user exists and get actual DB user_id (may differ from provider_id)
+        # This matches Go API's ensureUserExistsByEmail behavior
+        logger.info(f"🔍 Ensuring user exists: provider_id={provider_id} ({email}, {name})")
+        user_id = ensure_user_exists(provider_id, email=email, name=name)
+        if user_id:
+            logger.info(f"✅ User resolved: provider_id={provider_id} -> db_id={user_id} ({email})")
+        else:
+            logger.warning(f"⚠️  Failed to resolve user: {provider_id}")
+            # Continue with provider_id as fallback
+            user_id = provider_id
+
+        logger.info(f"✅ WebSocket authenticated for user: {user_id} ({email})")
         return True, user_id
 
     except Exception as e:
@@ -1649,9 +2199,20 @@ async def websocket_chat(websocket: WebSocket):
     is_valid, result = await verify_websocket_auth(websocket)
     if not is_valid:
         logger.warning(f"🚫 WebSocket auth failed: {result}")
+        # Try to extract user_id from token payload for audit (even if verification failed)
+        claimed_user_id = None
+        try:
+            from database_util import extract_user_info_from_token
+            ws_token = websocket.query_params.get("token")
+            if ws_token:
+                info = extract_user_info_from_token(ws_token)
+                if info:
+                    claimed_user_id = info.get("user_id")
+        except Exception:
+            pass
         # Log auth failure
         await audit.log_auth_failed(
-            user_id=None,
+            user_id=claimed_user_id,
             error_code="INVALID_TOKEN",
             error_message=result,
             source_ip=client_ip,
@@ -1695,6 +2256,22 @@ async def websocket_chat(websocket: WebSocket):
         org_id=ws_org_id,
         project_id=ws_project_id
     )
+
+    # Initialize Policy Evaluator (declarative tool access control)
+    # Loads policies from Go API and resolves user role once per session.
+    policy_evaluator = None
+    if ws_org_id:
+        try:
+            policy_evaluator = PolicyEvaluator(
+                org_id=ws_org_id,
+                project_id=ws_project_id,
+                user_id=authenticated_user_id,
+                go_api_url=CONTROL_PLANE_URL,
+            )
+            await policy_evaluator.load_for_session()
+        except Exception as _pe:
+            logger.warning(f"PolicyEvaluator init failed: {_pe} — proceeding without policy enforcement")
+            policy_evaluator = None
 
     # Create separate queues with size limits
     agent_queue = asyncio.Queue(maxsize=100)
@@ -1742,6 +2319,33 @@ async def websocket_chat(websocket: WebSocket):
                 tool_input=input_data,
                 request_id=request_id
             )
+
+            # Policy Engine: evaluate declarative policies before prompting user
+            if policy_evaluator:
+                try:
+                    await policy_evaluator.refresh_if_stale()
+                    policy_result = await policy_evaluator.evaluate(tool_name)
+                    if policy_result.matched:
+                        if policy_result.effect == "deny":
+                            logger.info(f"🚫 Policy DENY: {policy_result.reason}")
+                            await audit.log_tool_denied(
+                                user_id=authenticated_user_id,
+                                session_id=ws_session_id,
+                                tool_name=tool_name,
+                                request_id=request_id
+                            )
+                            return PermissionResultDeny(
+                                message=f"Denied by policy: {policy_result.reason}"
+                            )
+                        elif policy_result.effect == "allow":
+                            # Layer 1 passed: user has permission for this tool.
+                            # Do NOT auto-execute — fall through to Layer 2 (user confirmation).
+                            # Only allowed_tools bypass list grants auto-execution without prompt.
+                            logger.info(f"✅ Policy ALLOW (layer 1 passed, proceeding to user confirmation): {policy_result.reason}")
+                except Exception as _eval_err:
+                    logger.warning(
+                        f"PolicyEvaluator.evaluate failed for {tool_name}: {_eval_err} — falling through to user prompt"
+                    )
 
             # Send permission request with unique ID via output queue
             await output_queue.put(
@@ -1831,6 +2435,7 @@ async def websocket_chat(websocket: WebSocket):
                 hooks_config,  # Audit hooks for tool execution logging
                 initial_user_id=authenticated_user_id,
                 initial_auth_token=ws_auth_token,
+                policy_evaluator=policy_evaluator,  # Policy Engine: filter allowed_tools bypass
             ),
             name="agent",
         )
@@ -1903,6 +2508,13 @@ async def websocket_chat(websocket: WebSocket):
                 del stop_events[session_id]
         except Exception:
             pass
+
+        # Clean up policy evaluator HTTP client
+        if policy_evaluator:
+            try:
+                await policy_evaluator.close()
+            except Exception:
+                pass
 
         logger.info("🧹 All tasks cleaned up")
 
@@ -2053,6 +2665,16 @@ async def websocket_secure_chat(websocket: WebSocket):
 
                     # Handle pong (not signed)
                     if signed_message.get("type") == "pong":
+                        continue
+
+                    # Handle fetch_capabilities (not signed - read-only capability query)
+                    if signed_message.get("type") == "fetch_capabilities":
+                        logger.info("[!] Secure: Routing fetch_capabilities to agent_queue")
+                        signed_message["prompt"] = "/"  # SDK returns commands list for "/"
+                        signed_message["silent"] = True  # Mark as silent
+                        signed_message["session_id"] = session_id
+                        signed_message["user_id"] = session.user_id
+                        await agent_queue.put(signed_message)
                         continue
 
                     # Verify signature on every message
@@ -2263,7 +2885,9 @@ if __name__ == "__main__":
     # Auto-reload can cause server restarts during file operations (like sync)
     # which leads to background tasks hanging
     reload_enabled = os.getenv("DEV_MODE", "false").lower() == "true"
+    port = int(os.getenv("AI_PORT", "8002"))
+    host = os.getenv("AI_HOST", "localhost")
 
     uvicorn.run(
-        "claude_agent_api_v1:app", host="0.0.0.0", port=8002, reload=reload_enabled
+        "claude_agent_api_v1:app", host=host, port=port, reload=reload_enabled
     )

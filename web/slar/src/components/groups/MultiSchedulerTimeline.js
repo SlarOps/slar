@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { apiClient } from '../../lib/api';
-import ScheduleTimeline from './ScheduleTimeline';
+import ScheduleTimeline from './ScheduleTimelineLazy';
 import ConfirmationModal from './ConfirmationModal';
 import CreateOverrideModal from './CreateOverrideModal';
 import OverrideDetailModal from './OverrideDetailModal';

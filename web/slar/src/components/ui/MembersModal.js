@@ -98,7 +98,8 @@ export default function MembersModal({
       onMemberUpdated?.();
     } catch (err) {
       console.error('Error adding member:', err);
-      setError('Failed to add member');
+      // Display actual error message from API
+      setError(err.message || 'Failed to add member');
     }
   };
 
@@ -111,7 +112,7 @@ export default function MembersModal({
       onMemberUpdated?.();
     } catch (err) {
       console.error('Error removing member:', err);
-      setError('Failed to remove member');
+      setError(err.message || 'Failed to remove member');
     }
   };
 
@@ -124,7 +125,7 @@ export default function MembersModal({
       onMemberUpdated?.();
     } catch (err) {
       console.error('Error updating role:', err);
-      setError('Failed to update role');
+      setError(err.message || 'Failed to update role');
     }
   };
 

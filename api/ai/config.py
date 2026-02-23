@@ -69,13 +69,10 @@ class Config:
         # Core settings
         self.database_url: Optional[str] = None
         self.port: str = "8002"
-        self.redis_url: Optional[str] = None
 
-        # Supabase
-        self.supabase_url: Optional[str] = None
-        self.supabase_anon_key: Optional[str] = None
-        self.supabase_service_role_key: Optional[str] = None
-        self.supabase_jwt_secret: Optional[str] = None
+        # OIDC Authentication
+        self.oidc_issuer: Optional[str] = None
+        self.oidc_client_id: Optional[str] = None
 
         # External services
         self.anthropic_api_key: Optional[str] = None
@@ -84,11 +81,27 @@ class Config:
         # AI Analytics
         self.ai_analytics: Optional[AIAnalyticsConfig] = None
 
+        # AI Agent System Prompt
+        self.ai_agent_system_prompt: Optional[str] = """
+        You are an expert SRE agent.
+        """
+
         # Load configuration
         self._load_config()
 
     def _find_config_file(self) -> Optional[Path]:
         """Find config file in search paths"""
+        # Check SLAR_CONFIG_PATH env var first (explicit config path)
+        env_config_path = os.getenv("SLAR_CONFIG_PATH")
+        if env_config_path:
+            config_path = Path(env_config_path)
+            if config_path.exists():
+                logger.info(f"✅ Found config file from SLAR_CONFIG_PATH: {config_path}")
+                return config_path
+            else:
+                logger.warning(f"⚠️  SLAR_CONFIG_PATH set but file not found: {env_config_path}")
+
+        # Default search paths
         search_paths = [
             Path(__file__).parent.parent / "config" / "dev.config.yaml",  # api/config/dev.config.yaml
             Path(__file__).parent.parent / "cmd" / "server" / "dev.config.yaml",  # Legacy
@@ -121,13 +134,13 @@ class Config:
         # Core settings (env var overrides config file)
         self.database_url = os.getenv("DATABASE_URL") or config_dict.get("database_url")
         self.port = os.getenv("AI_PORT") or os.getenv("PORT") or config_dict.get("port", "8002")
-        self.redis_url = os.getenv("REDIS_URL") or config_dict.get("redis_url")
 
-        # Supabase
-        self.supabase_url = os.getenv("SUPABASE_URL") or config_dict.get("supabase_url")
-        self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY") or config_dict.get("supabase_anon_key")
-        self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or config_dict.get("supabase_service_role_key")
-        self.supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET") or config_dict.get("supabase_jwt_secret")
+        # Authentication
+        # OIDC for backward compatibility (RS256 via JWKS)
+        self.oidc_issuer = os.getenv("OIDC_ISSUER") or config_dict.get("oidc_issuer")
+        self.oidc_client_id = os.getenv("OIDC_CLIENT_ID") or config_dict.get("oidc_client_id")
+        # Backend session token (HS256 - fast path, shared with Go backend)
+        self.session_secret = os.getenv("SESSION_SECRET") or config_dict.get("session_secret")
 
         # External services
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY") or config_dict.get("anthropic_api_key")
@@ -137,6 +150,11 @@ class Config:
         ai_analytics_dict = config_dict.get("ai_incident_analytics", {})
         self.ai_analytics = AIAnalyticsConfig(ai_analytics_dict)
 
+        # AI Agent System Prompt
+        self.ai_agent_system_prompt = os.getenv("AI_AGENT_SYSTEM_PROMPT") or config_dict.get("ai_agent_system_prompt", """
+        You are an expert SRE agent.
+        """)
+
         # Log what was loaded
         self._log_config()
 
@@ -145,10 +163,16 @@ class Config:
         logger.info("📋 Configuration loaded:")
         logger.info(f"  • Database: {'✅' if self.database_url else '❌'}")
         logger.info(f"  • Port: {self.port}")
-        logger.info(f"  • Redis: {'✅' if self.redis_url else '❌'}")
-        logger.info(f"  • Supabase: {'✅' if self.supabase_url else '❌'}")
+        logger.info(f"  • Session Secret: {'✅' if self.session_secret else '❌'} (shared with Go backend)")
+        logger.info(f"  • OIDC: {'✅' if self.oidc_issuer else '❌'} ({self.oidc_issuer or 'not configured'})")
         logger.info(f"  • Anthropic API: {'✅' if self.anthropic_api_key else '❌'}")
         logger.info(f"  • AI Analytics: enabled={self.ai_analytics.enabled}, model={self.ai_analytics.model}")
+
+        # Warn if authentication is not configured
+        if not self.session_secret and not self.oidc_issuer:
+            logger.warning("⚠️  No authentication configured - all requests will fail!")
+            logger.warning("   Set SESSION_SECRET (for backend session tokens) or OIDC_ISSUER (for OIDC tokens)")
+            logger.warning("   Example: SESSION_SECRET=your-secret-key OIDC_ISSUER=https://auth.your-domain.com")
 
 
 # Global singleton instance

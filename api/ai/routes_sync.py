@@ -13,15 +13,13 @@ NOTE: Bucket sync removed - plugins now come from git clone, MCP from PostgreSQL
 import logging
 from fastapi import APIRouter, Request
 
-from supabase_storage import (
-    extract_user_id_from_token,
+from workspace_service import (
     get_user_mcp_servers,
     get_user_workspace_path,
     sync_memory_to_workspace,
     sync_user_skills,
-    unzip_installed_plugins,
 )
-from database_util import execute_query
+from database_util import execute_query, resolve_user_id_from_token
 from git_utils import (
     fetch_and_reset,
     get_marketplace_dir,
@@ -84,49 +82,30 @@ async def sync_workspace(request: Request):
                 "message": "No auth token provided",
             }
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "message": "Invalid auth token"}
 
-        logger.info(f"Starting workspace sync for user: {user_id}")
+        project_id = body.get("project_id", "")
 
-        # Step 1: Sync memory (CLAUDE.md) from PostgreSQL to workspace
-        memory_result = await sync_memory_to_workspace(user_id)
+        logger.info(f"Starting workspace sync for user: {user_id}, project: {project_id}")
+
+        # Sync memory (CLAUDE.md) from PostgreSQL to workspace (project-scoped)
+        memory_result = await sync_memory_to_workspace(user_id, project_id=project_id)
         if memory_result["success"]:
             logger.info(f"Memory synced: {memory_result['message']}")
         else:
             logger.warning(f"Memory sync failed: {memory_result['message']}")
 
-        # Step 2: Verify installed plugins exist (git-based approach)
-        logger.info(f"Verifying installed plugins for user: {user_id}")
-        verify_result = await unzip_installed_plugins(user_id)
+        # NOTE: Plugin verification removed — git flow ensures plugin files
+        # are already in workspace from marketplace clone. No need to verify
+        # or auto-clone on every sync.
 
-        verified_count = verify_result.get("verified_count", 0)
-        missing_plugins = verify_result.get("missing_plugins", [])
-
-        if verify_result["success"]:
-            logger.info(f"Verified {verified_count} plugins")
-
-            message = f"Verified {verified_count} plugins"
-            if missing_plugins:
-                message += f" ({len(missing_plugins)} missing)"
-
-            return {
-                "success": True,
-                "message": message,
-                "plugins_verified": verified_count,
-                "missing_plugins": missing_plugins,
-                "memory_synced": memory_result["success"],
-            }
-        else:
-            logger.warning(f"Failed to verify plugins: {verify_result['message']}")
-            return {
-                "success": True,  # Still success, just plugin verification issue
-                "message": f"Memory synced, but failed to verify plugins: {verify_result['message']}",
-                "plugins_verified": 0,
-                "missing_plugins": [],
-                "memory_synced": memory_result["success"],
-            }
+        return {
+            "success": True,
+            "message": "Workspace synced",
+            "memory_synced": memory_result["success"],
+        }
 
     except Exception as e:
         return {
@@ -160,7 +139,7 @@ async def sync_marketplaces(request: Request):
         if not auth_token:
             return {"success": False, "error": "Missing auth_token"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
         if not user_id:
             return {"success": False, "error": "Invalid auth token"}
 
@@ -198,8 +177,10 @@ async def sync_marketplaces(request: Request):
                 })
                 continue
 
-            # Fetch and reset
-            success, result, had_changes = await fetch_and_reset(mp_dir, mp_branch)
+            # Fetch and reset (with Vault credentials for private repos)
+            success, result, had_changes = await fetch_and_reset(
+                mp_dir, mp_branch, user_id=user_id
+            )
 
             if success:
                 # Update commit SHA in database
@@ -270,7 +251,7 @@ async def sync_mcp_config(request: Request):
             logger.warning("No auth token provided for sync")
             return {"success": False, "message": "No auth token provided"}
 
-        user_id = extract_user_id_from_token(auth_token)
+        user_id = resolve_user_id_from_token(auth_token)
 
         if not user_id:
             logger.warning("Could not extract user_id from token")
