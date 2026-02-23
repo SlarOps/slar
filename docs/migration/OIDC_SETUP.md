@@ -1,3 +1,8 @@
+---
+title: "OIDC Authentication Setup"
+description: "Configure OIDC-compliant identity providers (Google, GitHub, Keycloak, Dex) for SLAR authentication"
+---
+
 # OIDC Authentication Setup Guide
 
 SLAR supports authentication via any **OIDC-compliant identity provider**. This guide covers setup for popular providers.
