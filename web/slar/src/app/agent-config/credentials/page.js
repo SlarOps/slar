@@ -189,7 +189,7 @@ const CredentialsPage = () => {
                         <div>
                             <p className="text-sm font-medium text-red-900 dark:text-red-100">No Access</p>
                             <p className="text-xs text-red-700 dark:text-red-300">
-                                You don't have access to this project's credentials.
+                                You don&apos;t have access to this project&apos;s credentials.
                             </p>
                         </div>
                     </div>

@@ -56,8 +56,6 @@ def get_oidc_discovery(issuer: str) -> Optional[Dict[str, Any]]:
     Returns:
         Discovery document or None if fetch fails
     """
-    global _discovery_cache
-
     # Normalize issuer
     issuer = _normalize_issuer(issuer)
 
@@ -97,8 +95,6 @@ def _get_jwks(issuer: str) -> Optional[JsonWebKey]:
 
     Uses authlib's JsonWebKey for proper key handling.
     """
-    global _jwks_cache, _jwks_cache_time
-
     issuer = _normalize_issuer(issuer)
     current_time = time.time()
 
