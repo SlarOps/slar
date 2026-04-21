@@ -28,8 +28,8 @@ pydantic==2.12.3
 pydantic-settings==2.11.0
 pydantic_core==2.41.4
 PyJWT==2.10.1
-Authlib==1.6.9
-python-dotenv==1.2.1
+Authlib==1.6.11
+python-dotenv==1.2.2
 python-multipart==0.0.26
 PyYAML==6.0.3
 referencing==0.37.0
